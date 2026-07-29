@@ -1,0 +1,274 @@
+"use client";
+
+import { useTransition } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { toast } from "sonner";
+
+import type { Tables } from "@/types/database.types";
+import type { MailboxSafe } from "@/lib/db";
+import { mailboxSchema, type MailboxInput } from "@/lib/validations/mailboxes";
+import { createMailboxAction, updateMailboxAction } from "@/app/(app)/mailboxes/actions";
+import { Button } from "@/components/ui/button";
+import { DialogFooter } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+
+const NO_DOMAIN = "none";
+
+type MailboxFormProps =
+  | { mode: "create"; mailbox?: undefined; domains: Tables<"domains">[]; onSuccess: () => void }
+  | { mode: "edit"; mailbox: MailboxSafe; domains: Tables<"domains">[]; onSuccess: () => void };
+
+export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormProps) {
+  const [isPending, startTransition] = useTransition();
+
+  const form = useForm<MailboxInput>({
+    resolver: zodResolver(mailboxSchema),
+    defaultValues:
+      mode === "edit"
+        ? {
+            email: mailbox.email,
+            displayName: mailbox.display_name ?? "",
+            smtpHost: mailbox.smtp_host,
+            smtpPort: mailbox.smtp_port,
+            smtpUsername: mailbox.smtp_username,
+            smtpPassword: "",
+            dailyLimit: mailbox.daily_limit,
+            warmupEnabled: mailbox.warmup_enabled,
+            domainId: mailbox.domain_id ?? "",
+            status: mailbox.status as MailboxInput["status"],
+          }
+        : {
+            email: "",
+            displayName: "",
+            smtpHost: "",
+            smtpPort: 587,
+            smtpUsername: "",
+            smtpPassword: "",
+            dailyLimit: 50,
+            warmupEnabled: false,
+            domainId: "",
+          },
+  });
+
+  function onSubmit(values: MailboxInput) {
+    startTransition(async () => {
+      try {
+        if (mode === "create") {
+          await createMailboxAction(values);
+          toast.success("Mailbox connected.");
+        } else {
+          await updateMailboxAction(mailbox.id, values);
+          toast.success("Mailbox updated.");
+        }
+        onSuccess();
+      } catch {
+        toast.error(
+          mode === "create" ? "Couldn't connect the mailbox. Try again." : "Couldn't update the mailbox. Try again.",
+        );
+      }
+    });
+  }
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="email"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Email</FormLabel>
+                <FormControl>
+                  <Input placeholder="jane@yourdomain.com" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="displayName"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Display name</FormLabel>
+                <FormControl>
+                  <Input placeholder="Jane Cooper" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+          <FormField
+            control={form.control}
+            name="smtpHost"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>SMTP host</FormLabel>
+                <FormControl>
+                  <Input placeholder="smtp.yourdomain.com" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="smtpPort"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Port</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    name={field.name}
+                    ref={field.ref}
+                    value={field.value}
+                    onBlur={field.onBlur}
+                    onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <FormField
+          control={form.control}
+          name="smtpUsername"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>SMTP username</FormLabel>
+              <FormControl>
+                <Input placeholder="jane@yourdomain.com" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="smtpPassword"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                SMTP password
+                {mode === "edit" && (
+                  <span className="font-normal text-muted-foreground"> (leave blank to keep current)</span>
+                )}
+              </FormLabel>
+              <FormControl>
+                <Input type="password" autoComplete="new-password" required={mode === "create"} {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="dailyLimit"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Daily send limit</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    name={field.name}
+                    ref={field.ref}
+                    value={field.value}
+                    onBlur={field.onBlur}
+                    onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="domainId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Domain</FormLabel>
+                <Select
+                  value={field.value || NO_DOMAIN}
+                  onValueChange={(value) => field.onChange(value === NO_DOMAIN ? "" : value)}
+                >
+                  <FormControl>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="No domain" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value={NO_DOMAIN}>No domain</SelectItem>
+                    {domains.map((domain) => (
+                      <SelectItem key={domain.id} value={domain.id}>
+                        {domain.domain}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        {mode === "edit" && (
+          <FormField
+            control={form.control}
+            name="status"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Status</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="paused">Paused</SelectItem>
+                    <SelectItem value="error">Error</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        <FormField
+          control={form.control}
+          name="warmupEnabled"
+          render={({ field }) => (
+            <FormItem className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
+              <FormLabel className="cursor-pointer">Enable warmup</FormLabel>
+              <FormControl>
+                <Switch checked={field.value} onCheckedChange={field.onChange} />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+
+        <DialogFooter>
+          <Button type="submit" disabled={isPending}>
+            {isPending ? "Saving…" : mode === "create" ? "Connect mailbox" : "Save changes"}
+          </Button>
+        </DialogFooter>
+      </form>
+    </Form>
+  );
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const p=require\\('@supabase/ssr/package.json'\\); console.log\\(p.version\\)\")",
+      "Bash(npm run *)",
+      "Bash(npm view *)",
+      "Bash(npm install *)",
+      "Bash(node -e \"const z = require\\('zod'\\); console.log\\(Object.keys\\(z\\).filter\\(k => k.toLowerCase\\(\\).includes\\('email'\\)\\)\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(xargs grep -l \"script\" -i)"
+    ]
+  }
+}

@@ -1,0 +1,154 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import { MailPlusIcon, PencilIcon, Trash2Icon } from "lucide-react";
+
+import type { Tables } from "@/types/database.types";
+import type { MailboxSafe } from "@/lib/db";
+import { deleteMailboxAction } from "@/app/(app)/mailboxes/actions";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { MailboxForm } from "./mailbox-form";
+
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  active: "default",
+  paused: "secondary",
+  error: "destructive",
+};
+
+function statusLabel(status: string) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; domains: Tables<"domains">[] }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<MailboxSafe | null>(null);
+  const [deleting, setDeleting] = useState<MailboxSafe | null>(null);
+  const [isDeleting, startDeleteTransition] = useTransition();
+
+  function handleDelete() {
+    if (!deleting) return;
+    const target = deleting;
+    startDeleteTransition(async () => {
+      try {
+        await deleteMailboxAction(target.id);
+        toast.success("Mailbox removed.");
+        setDeleting(null);
+      } catch {
+        toast.error("Couldn't remove the mailbox. Try again.");
+      }
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-4">
+        <div>
+          <CardTitle>Connected mailboxes</CardTitle>
+          <CardDescription>SMTP accounts you can send campaigns from.</CardDescription>
+        </div>
+        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm">
+              <MailPlusIcon />
+              Add mailbox
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Connect a mailbox</DialogTitle>
+              <DialogDescription>Add the SMTP credentials for the account you&apos;ll send from.</DialogDescription>
+            </DialogHeader>
+            <MailboxForm mode="create" domains={domains} onSuccess={() => setAddOpen(false)} />
+          </DialogContent>
+        </Dialog>
+      </CardHeader>
+
+      <CardContent>
+        {mailboxes.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-sm font-medium">No mailboxes connected yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Add a sending account to start launching campaigns.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {mailboxes.map((mailbox) => (
+              <li key={mailbox.id} className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate font-medium">{mailbox.display_name || mailbox.email}</p>
+                    <Badge variant={STATUS_VARIANT[mailbox.status] ?? "outline"}>{statusLabel(mailbox.status)}</Badge>
+                  </div>
+                  <p className="truncate text-sm text-muted-foreground">
+                    {mailbox.email} · {mailbox.smtp_host}:{mailbox.smtp_port} · {mailbox.daily_limit}/day
+                    {mailbox.warmup_enabled && " · Warmup on"}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Edit ${mailbox.email}`}
+                    onClick={() => setEditing(mailbox)}
+                  >
+                    <PencilIcon className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${mailbox.email}`}
+                    onClick={() => setDeleting(mailbox)}
+                  >
+                    <Trash2Icon className="size-4" />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+
+      <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit mailbox</DialogTitle>
+            <DialogDescription>Update the SMTP credentials for this sending account.</DialogDescription>
+          </DialogHeader>
+          {editing && (
+            <MailboxForm mode="edit" mailbox={editing} domains={domains} onSuccess={() => setEditing(null)} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove mailbox?</DialogTitle>
+            <DialogDescription>
+              This removes {deleting?.email} permanently. Campaigns sending from it will need a new mailbox.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleting(null)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? "Removing…" : "Remove mailbox"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}

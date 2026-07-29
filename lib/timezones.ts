@@ -1,0 +1,27 @@
+// Curated common IANA timezones for settings pickers — not the full ~400
+// entry list, which is more noise than help in a select dropdown.
+export const TIMEZONES = [
+  "UTC",
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "America/Sao_Paulo",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Europe/Madrid",
+  "Africa/Cairo",
+  "Africa/Johannesburg",
+  "Asia/Dubai",
+  "Asia/Karachi",
+  "Asia/Kolkata",
+  "Asia/Dhaka",
+  "Asia/Bangkok",
+  "Asia/Singapore",
+  "Asia/Shanghai",
+  "Asia/Tokyo",
+  "Asia/Seoul",
+  "Australia/Sydney",
+  "Pacific/Auckland",
+] as const;

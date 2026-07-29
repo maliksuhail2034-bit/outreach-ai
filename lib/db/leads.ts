@@ -59,3 +59,16 @@ export async function deleteLead(supabase: Client, userId: string, id: string) {
   const { error } = await supabase.from("leads").delete().eq("user_id", userId).eq("id", id);
   if (error) throw error;
 }
+
+export async function deleteLeads(supabase: Client, userId: string, ids: string[]) {
+  const { error } = await supabase.from("leads").delete().eq("user_id", userId).in("id", ids);
+  if (error) throw error;
+}
+
+// Deletes every lead for the user, not just the ones currently loaded in the
+// UI (listLeads caps at DEFAULT_LIST_LIMIT) — scoped by user_id alone rather
+// than an id list.
+export async function deleteAllLeads(supabase: Client, userId: string) {
+  const { error } = await supabase.from("leads").delete().eq("user_id", userId);
+  if (error) throw error;
+}

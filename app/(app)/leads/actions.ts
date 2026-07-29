@@ -6,8 +6,10 @@ import { createClient } from "@/lib/supabase/server";
 import {
   createLead,
   createLeadList,
+  deleteAllLeads,
   deleteLead,
   deleteLeadList,
+  deleteLeads,
   updateLead,
   updateLeadList,
 } from "@/lib/db";
@@ -97,6 +99,26 @@ export async function deleteLeadAction(id: string) {
   const supabase = await createClient();
 
   await deleteLead(supabase, user.id, id);
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+}
+
+export async function deleteLeadsAction(ids: string[]) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await deleteLeads(supabase, user.id, ids);
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+}
+
+export async function deleteAllLeadsAction() {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await deleteAllLeads(supabase, user.id);
 
   revalidatePath("/leads");
   revalidatePath("/dashboard");

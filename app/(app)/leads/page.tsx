@@ -1,6 +1,6 @@
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { countLeadsInList, listLeadLists, listLeads } from "@/lib/db";
+import { countLeads, countLeadsInList, listLeadLists, listLeads } from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
 import { LeadListsPanel } from "@/components/leads/lead-lists-panel";
 import { LeadTable } from "@/components/leads/lead-table";
@@ -12,9 +12,10 @@ export default async function LeadsPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const [leads, leadLists] = await Promise.all([
+  const [leads, leadLists, leadCount] = await Promise.all([
     listLeads(supabase, user.id),
     listLeadLists(supabase, user.id),
+    countLeads(supabase, user.id),
   ]);
 
   const leadListsWithCounts = await Promise.all(
@@ -37,7 +38,7 @@ export default async function LeadsPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <FadeIn delay={0.05} className="lg:col-span-2">
-          <LeadTable leads={leads ?? []} leadLists={leadLists ?? []} />
+          <LeadTable leads={leads ?? []} leadLists={leadLists ?? []} leadCount={leadCount} />
         </FadeIn>
         <FadeIn delay={0.1} className="lg:col-span-1">
           <LeadListsPanel leadLists={leadListsWithCounts} />

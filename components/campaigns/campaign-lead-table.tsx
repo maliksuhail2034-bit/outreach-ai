@@ -1,0 +1,313 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import { Trash2Icon } from "lucide-react";
+
+import type { MailboxSafe } from "@/lib/db";
+import type { Tables } from "@/types/database.types";
+import { CAMPAIGN_LEAD_STATUSES } from "@/lib/validations/campaign-leads";
+import { removeCampaignLeadAction, updateCampaignLeadAction } from "@/app/(app)/campaigns/[campaignId]/actions";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EnrollDialog } from "./enroll-dialog";
+
+type CampaignLead = Tables<"campaign_leads">;
+type Lead = Tables<"leads">;
+type LeadList = Tables<"lead_lists">;
+
+const USE_DEFAULT = "default";
+
+function statusLabel(status: string) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function leadDisplay(lead: Lead | undefined) {
+  if (!lead) return "Unknown lead";
+  const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
+  return name || lead.email;
+}
+
+export function CampaignLeadTable({
+  campaignId,
+  campaignLeads,
+  leads,
+  availableLeads,
+  leadLists,
+  mailboxes,
+}: {
+  campaignId: string;
+  campaignLeads: CampaignLead[];
+  leads: Lead[];
+  availableLeads: Lead[];
+  leadLists: LeadList[];
+  mailboxes: MailboxSafe[];
+}) {
+  const leadById = new Map(leads.map((lead) => [lead.id, lead]));
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [removing, setRemoving] = useState<CampaignLead | null>(null);
+  const [isRemoving, startRemoveTransition] = useTransition();
+  const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false);
+  const [isBulkRemoving, startBulkRemoveTransition] = useTransition();
+  const [, startUpdateTransition] = useTransition();
+
+  const visibleIds = new Set(campaignLeads.map((row) => row.id));
+  const selectedIds = [...selected].filter((id) => visibleIds.has(id));
+  const allSelected = campaignLeads.length > 0 && selectedIds.length === campaignLeads.length;
+
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(visibleIds));
+  }
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function handleStatusChange(row: CampaignLead, status: string) {
+    startUpdateTransition(async () => {
+      try {
+        await updateCampaignLeadAction(campaignId, row.id, {
+          mailboxId: row.mailbox_id ?? "",
+          status: status as (typeof CAMPAIGN_LEAD_STATUSES)[number],
+        });
+      } catch {
+        toast.error("Couldn't update this lead's status.");
+      }
+    });
+  }
+
+  function handleMailboxChange(row: CampaignLead, mailboxId: string) {
+    startUpdateTransition(async () => {
+      try {
+        await updateCampaignLeadAction(campaignId, row.id, {
+          mailboxId: mailboxId === USE_DEFAULT ? "" : mailboxId,
+          status: row.status as (typeof CAMPAIGN_LEAD_STATUSES)[number],
+        });
+      } catch {
+        toast.error("Couldn't update the mailbox for this lead.");
+      }
+    });
+  }
+
+  function handleRemove() {
+    if (!removing) return;
+    const target = removing;
+    startRemoveTransition(async () => {
+      try {
+        await removeCampaignLeadAction(campaignId, target.id);
+        toast.success("Lead removed from campaign.");
+        setRemoving(null);
+      } catch {
+        toast.error("Couldn't remove this lead from the campaign.");
+      }
+    });
+  }
+
+  function handleBulkRemove() {
+    const ids = selectedIds;
+    if (ids.length === 0) return;
+    startBulkRemoveTransition(async () => {
+      try {
+        await Promise.all(ids.map((id) => removeCampaignLeadAction(campaignId, id)));
+        toast.success(`${ids.length} lead${ids.length === 1 ? "" : "s"} removed from campaign.`);
+        setSelected(new Set());
+        setBulkRemoveOpen(false);
+      } catch {
+        toast.error("Couldn't remove the selected leads.");
+      }
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-4">
+        <div>
+          <CardTitle>Enrolled leads</CardTitle>
+          <CardDescription>
+            {campaignLeads.length} lead{campaignLeads.length === 1 ? "" : "s"} in this campaign.
+          </CardDescription>
+        </div>
+        <EnrollDialog
+          campaignId={campaignId}
+          availableLeads={availableLeads}
+          leadLists={leadLists}
+          mailboxes={mailboxes}
+        />
+      </CardHeader>
+
+      <CardContent>
+        {campaignLeads.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-sm font-medium">No leads enrolled yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Enroll a lead or an entire list to get started.</p>
+          </div>
+        ) : (
+          <>
+            {selectedIds.length > 0 && (
+              <div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+                <span className="font-medium">{selectedIds.length} selected</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                    Clear
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={() => setBulkRemoveOpen(true)}>
+                    <Trash2Icon />
+                    Remove selected
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs text-muted-foreground">
+                    <th className="w-8 py-2 pr-2">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded-sm border-input accent-primary"
+                        checked={allSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = selectedIds.length > 0 && !allSelected;
+                        }}
+                        onChange={toggleAll}
+                        aria-label="Select all enrolled leads"
+                      />
+                    </th>
+                    <th className="py-2 pr-4 font-medium">Lead</th>
+                    <th className="py-2 pr-4 font-medium">Mailbox</th>
+                    <th className="py-2 pr-4 font-medium">Status</th>
+                    <th className="py-2 pl-4 text-right font-medium">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {campaignLeads.map((row) => {
+                    const lead = leadById.get(row.lead_id);
+
+                    return (
+                      <tr key={row.id} className={selected.has(row.id) ? "bg-muted/30" : undefined}>
+                        <td className="py-3 pr-2">
+                          <input
+                            type="checkbox"
+                            className="size-4 rounded-sm border-input accent-primary"
+                            checked={selected.has(row.id)}
+                            onChange={() => toggleOne(row.id)}
+                            aria-label={`Select ${leadDisplay(lead)}`}
+                          />
+                        </td>
+                        <td className="max-w-48 truncate py-3 pr-4">
+                          <p className="truncate font-medium">{leadDisplay(lead)}</p>
+                          {lead && <p className="truncate text-xs text-muted-foreground">{lead.email}</p>}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Select
+                            value={row.mailbox_id ?? USE_DEFAULT}
+                            onValueChange={(value) => handleMailboxChange(row, value)}
+                          >
+                            <SelectTrigger size="sm" className="w-full min-w-40">
+                              <SelectValue placeholder="Campaign default" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={USE_DEFAULT}>Campaign default</SelectItem>
+                              {mailboxes.map((mailbox) => (
+                                <SelectItem key={mailbox.id} value={mailbox.id}>
+                                  {mailbox.display_name || mailbox.email}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Select value={row.status} onValueChange={(value) => handleStatusChange(row, value)}>
+                            <SelectTrigger size="sm" className="w-full min-w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CAMPAIGN_LEAD_STATUSES.map((status) => (
+                                <SelectItem key={status} value={status}>
+                                  {statusLabel(status)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="py-3 pl-4">
+                          <div className="flex items-center justify-end">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Remove ${leadDisplay(lead)} from campaign`}
+                              onClick={() => setRemoving(row)}
+                            >
+                              <Trash2Icon className="size-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardContent>
+
+      <Dialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove from campaign?</DialogTitle>
+            <DialogDescription>
+              This removes {leadDisplay(removing ? leadById.get(removing.lead_id) : undefined)} from this campaign.
+              The lead itself isn&apos;t deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)} disabled={isRemoving}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRemove} disabled={isRemoving}>
+              {isRemoving ? "Removing…" : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkRemoveOpen} onOpenChange={setBulkRemoveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {selectedIds.length} leads?</DialogTitle>
+            <DialogDescription>
+              This removes the selected leads from this campaign. The leads themselves aren&apos;t deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkRemoveOpen(false)} disabled={isBulkRemoving}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBulkRemove} disabled={isBulkRemoving}>
+              {isBulkRemoving ? "Removing…" : `Remove ${selectedIds.length} leads`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}

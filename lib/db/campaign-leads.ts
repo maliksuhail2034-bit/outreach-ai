@@ -40,3 +40,34 @@ export async function removeCampaignLead(supabase: Client, id: string) {
   const { error } = await supabase.from("campaign_leads").delete().eq("id", id);
   if (error) throw error;
 }
+
+// Bulk-enrolls leads not already in the campaign (campaign_leads has a
+// unique(campaign_id, lead_id) constraint as a DB-level backstop, but
+// pre-filtering here gives an accurate inserted/skipped count for the UI
+// instead of relying on parsing constraint-violation errors per row).
+export async function addLeadsToCampaign(
+  supabase: Client,
+  campaignId: string,
+  leadIds: string[],
+  mailboxId: string | null,
+) {
+  const { data: existing, error: existingError } = await supabase
+    .from("campaign_leads")
+    .select("lead_id")
+    .eq("campaign_id", campaignId);
+  if (existingError) throw existingError;
+
+  const alreadyEnrolled = new Set(existing.map((row) => row.lead_id));
+  const toInsert = leadIds
+    .filter((leadId) => !alreadyEnrolled.has(leadId))
+    .map((leadId) => ({ campaign_id: campaignId, lead_id: leadId, mailbox_id: mailboxId }));
+
+  if (toInsert.length === 0) {
+    return { inserted: 0, skipped: leadIds.length };
+  }
+
+  const { error } = await supabase.from("campaign_leads").insert(toInsert);
+  if (error) throw error;
+
+  return { inserted: toInsert.length, skipped: leadIds.length - toInsert.length };
+}

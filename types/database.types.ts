@@ -239,6 +239,7 @@ export interface Database {
           status: string;
           sending_window: Json;
           daily_limit: number;
+          default_mailbox_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -249,6 +250,7 @@ export interface Database {
           status?: string;
           sending_window?: Json;
           daily_limit?: number;
+          default_mailbox_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -259,10 +261,19 @@ export interface Database {
           status?: string;
           sending_window?: Json;
           daily_limit?: number;
+          default_mailbox_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_default_mailbox_id_fkey";
+            columns: ["default_mailbox_id"];
+            isOneToOne: false;
+            referencedRelation: "mailboxes";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       campaign_leads: {
         Row: {

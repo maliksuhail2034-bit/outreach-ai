@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EnrollDialog } from "./enroll-dialog";
 
@@ -26,6 +27,7 @@ type Lead = Tables<"leads">;
 type LeadList = Tables<"lead_lists">;
 
 const USE_DEFAULT = "default";
+const ALL_STATUSES = "all";
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -60,10 +62,22 @@ export function CampaignLeadTable({
   const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false);
   const [isBulkRemoving, startBulkRemoveTransition] = useTransition();
   const [, startUpdateTransition] = useTransition();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
 
-  const visibleIds = new Set(campaignLeads.map((row) => row.id));
+  const filteredLeads = campaignLeads.filter((row) => {
+    if (statusFilter !== ALL_STATUSES && row.status !== statusFilter) return false;
+    if (search.trim()) {
+      const lead = leadById.get(row.lead_id);
+      const haystack = `${leadDisplay(lead)} ${lead?.email ?? ""}`.toLowerCase();
+      if (!haystack.includes(search.trim().toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const visibleIds = new Set(filteredLeads.map((row) => row.id));
   const selectedIds = [...selected].filter((id) => visibleIds.has(id));
-  const allSelected = campaignLeads.length > 0 && selectedIds.length === campaignLeads.length;
+  const allSelected = filteredLeads.length > 0 && selectedIds.length === filteredLeads.length;
 
   function toggleAll() {
     setSelected(allSelected ? new Set() : new Set(visibleIds));
@@ -158,6 +172,29 @@ export function CampaignLeadTable({
           </div>
         ) : (
           <>
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name or email"
+                aria-label="Search enrolled leads"
+                className="sm:flex-1"
+              />
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full sm:w-48" aria-label="Filter by status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_STATUSES}>All statuses</SelectItem>
+                  {CAMPAIGN_LEAD_STATUSES.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {statusLabel(status)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {selectedIds.length > 0 && (
               <div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
                 <span className="font-medium">{selectedIds.length} selected</span>
@@ -173,99 +210,106 @@ export function CampaignLeadTable({
               </div>
             )}
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="w-8 py-2 pr-2">
-                      <input
-                        type="checkbox"
-                        className="size-4 rounded-sm border-input accent-primary"
-                        checked={allSelected}
-                        ref={(el) => {
-                          if (el) el.indeterminate = selectedIds.length > 0 && !allSelected;
-                        }}
-                        onChange={toggleAll}
-                        aria-label="Select all enrolled leads"
-                      />
-                    </th>
-                    <th className="py-2 pr-4 font-medium">Lead</th>
-                    <th className="py-2 pr-4 font-medium">Mailbox</th>
-                    <th className="py-2 pr-4 font-medium">Status</th>
-                    <th className="py-2 pl-4 text-right font-medium">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {campaignLeads.map((row) => {
-                    const lead = leadById.get(row.lead_id);
+            {filteredLeads.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border p-8 text-center">
+                <p className="text-sm font-medium">No leads match your search</p>
+                <p className="mt-1 text-sm text-muted-foreground">Try a different name, email, or status filter.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-muted-foreground">
+                      <th className="w-8 py-2 pr-2">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded-sm border-input accent-primary"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = selectedIds.length > 0 && !allSelected;
+                          }}
+                          onChange={toggleAll}
+                          aria-label="Select all enrolled leads"
+                        />
+                      </th>
+                      <th className="py-2 pr-4 font-medium">Lead</th>
+                      <th className="py-2 pr-4 font-medium">Mailbox</th>
+                      <th className="py-2 pr-4 font-medium">Status</th>
+                      <th className="py-2 pl-4 text-right font-medium">
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredLeads.map((row) => {
+                      const lead = leadById.get(row.lead_id);
 
-                    return (
-                      <tr key={row.id} className={selected.has(row.id) ? "bg-muted/30" : undefined}>
-                        <td className="py-3 pr-2">
-                          <input
-                            type="checkbox"
-                            className="size-4 rounded-sm border-input accent-primary"
-                            checked={selected.has(row.id)}
-                            onChange={() => toggleOne(row.id)}
-                            aria-label={`Select ${leadDisplay(lead)}`}
-                          />
-                        </td>
-                        <td className="max-w-48 truncate py-3 pr-4">
-                          <p className="truncate font-medium">{leadDisplay(lead)}</p>
-                          {lead && <p className="truncate text-xs text-muted-foreground">{lead.email}</p>}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Select
-                            value={row.mailbox_id ?? USE_DEFAULT}
-                            onValueChange={(value) => handleMailboxChange(row, value)}
-                          >
-                            <SelectTrigger size="sm" className="w-full min-w-40">
-                              <SelectValue placeholder="Campaign default" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={USE_DEFAULT}>Campaign default</SelectItem>
-                              {mailboxes.map((mailbox) => (
-                                <SelectItem key={mailbox.id} value={mailbox.id}>
-                                  {mailbox.display_name || mailbox.email}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Select value={row.status} onValueChange={(value) => handleStatusChange(row, value)}>
-                            <SelectTrigger size="sm" className="w-full min-w-32">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CAMPAIGN_LEAD_STATUSES.map((status) => (
-                                <SelectItem key={status} value={status}>
-                                  {statusLabel(status)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </td>
-                        <td className="py-3 pl-4">
-                          <div className="flex items-center justify-end">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Remove ${leadDisplay(lead)} from campaign`}
-                              onClick={() => setRemoving(row)}
+                      return (
+                        <tr key={row.id} className={selected.has(row.id) ? "bg-muted/30" : undefined}>
+                          <td className="py-3 pr-2">
+                            <input
+                              type="checkbox"
+                              className="size-4 rounded-sm border-input accent-primary"
+                              checked={selected.has(row.id)}
+                              onChange={() => toggleOne(row.id)}
+                              aria-label={`Select ${leadDisplay(lead)}`}
+                            />
+                          </td>
+                          <td className="max-w-48 truncate py-3 pr-4">
+                            <p className="truncate font-medium">{leadDisplay(lead)}</p>
+                            {lead && <p className="truncate text-xs text-muted-foreground">{lead.email}</p>}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <Select
+                              value={row.mailbox_id ?? USE_DEFAULT}
+                              onValueChange={(value) => handleMailboxChange(row, value)}
                             >
-                              <Trash2Icon className="size-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                              <SelectTrigger size="sm" className="w-full min-w-40">
+                                <SelectValue placeholder="Campaign default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={USE_DEFAULT}>Campaign default</SelectItem>
+                                {mailboxes.map((mailbox) => (
+                                  <SelectItem key={mailbox.id} value={mailbox.id}>
+                                    {mailbox.display_name || mailbox.email}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="py-3 pr-4">
+                            <Select value={row.status} onValueChange={(value) => handleStatusChange(row, value)}>
+                              <SelectTrigger size="sm" className="w-full min-w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CAMPAIGN_LEAD_STATUSES.map((status) => (
+                                  <SelectItem key={status} value={status}>
+                                    {statusLabel(status)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="py-3 pl-4">
+                            <div className="flex items-center justify-end">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Remove ${leadDisplay(lead)} from campaign`}
+                                onClick={() => setRemoving(row)}
+                              >
+                                <Trash2Icon className="size-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
       </CardContent>

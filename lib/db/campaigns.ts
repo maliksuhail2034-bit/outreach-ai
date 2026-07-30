@@ -26,6 +26,15 @@ export async function getCampaign(supabase: Client, userId: string, id: string) 
   return unwrap<Tables<"campaigns">>(result);
 }
 
+// Admin-context read used by the sending worker, which has no user in the
+// loop and can't supply the userId getCampaign() requires — same carve-out
+// as getMailboxCredentials in lib/db/mailboxes.ts. Restricted to trusted
+// server-only callers.
+export async function getCampaignById(supabase: Client, id: string) {
+  const result = await supabase.from("campaigns").select("*").eq("id", id).single();
+  return unwrap<Tables<"campaigns">>(result);
+}
+
 export async function createCampaign(supabase: Client, values: TablesInsert<"campaigns">) {
   const result = await supabase.from("campaigns").insert(values).select("*").single();
   return unwrap<Tables<"campaigns">>(result);

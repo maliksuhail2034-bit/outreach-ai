@@ -30,10 +30,12 @@ export function SequenceStepsPanel({
   campaignId,
   sequenceId,
   steps,
+  templates,
 }: {
   campaignId: string;
   sequenceId: string | null;
   steps: SequenceStep[];
+  templates: Tables<"templates">[];
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<SequenceStep | null>(null);
@@ -87,7 +89,12 @@ export function SequenceStepsPanel({
               <DialogTitle>Add a step</DialogTitle>
               <DialogDescription>Appended to the end of the sequence.</DialogDescription>
             </DialogHeader>
-            <SequenceStepForm mode="create" campaignId={campaignId} onSuccess={() => setAddOpen(false)} />
+            <SequenceStepForm
+              mode="create"
+              campaignId={campaignId}
+              templates={templates}
+              onSuccess={() => setAddOpen(false)}
+            />
           </DialogContent>
         </Dialog>
       </CardHeader>
@@ -149,7 +156,13 @@ export function SequenceStepsPanel({
             <DialogTitle>Edit step</DialogTitle>
           </DialogHeader>
           {editing && (
-            <SequenceStepForm mode="edit" campaignId={campaignId} step={editing} onSuccess={() => setEditing(null)} />
+            <SequenceStepForm
+              mode="edit"
+              campaignId={campaignId}
+              step={editing}
+              templates={templates}
+              onSuccess={() => setEditing(null)}
+            />
           )}
         </DialogContent>
       </Dialog>

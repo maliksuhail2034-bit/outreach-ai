@@ -20,6 +20,7 @@ export async function createCampaignAction(input: CampaignInput) {
     name: parsed.name,
     daily_limit: parsed.dailyLimit,
     default_mailbox_id: parsed.defaultMailboxId ? parsed.defaultMailboxId : null,
+    sending_window: parsed.sendingWindow,
     ...(parsed.status ? { status: parsed.status } : {}),
   });
 
@@ -35,6 +36,7 @@ export async function updateCampaignAction(id: string, input: CampaignInput) {
     name: parsed.name,
     daily_limit: parsed.dailyLimit,
     default_mailbox_id: parsed.defaultMailboxId ? parsed.defaultMailboxId : null,
+    sending_window: parsed.sendingWindow,
     ...(parsed.status ? { status: parsed.status } : {}),
   });
 

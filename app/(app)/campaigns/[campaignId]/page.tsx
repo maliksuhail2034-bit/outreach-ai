@@ -9,7 +9,9 @@ import {
   listMailboxes,
   listSequences,
   listSequenceSteps,
+  listTemplates,
 } from "@/lib/db";
+import { resolveSendingWindow } from "@/lib/email/scheduling";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,12 +46,13 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     notFound();
   }
 
-  const [campaignLeads, leads, leadLists, mailboxes, sequences] = await Promise.all([
+  const [campaignLeads, leads, leadLists, mailboxes, sequences, templates] = await Promise.all([
     listCampaignLeads(supabase, campaignId),
     listLeads(supabase, user.id, { limit: 10000 }),
     listLeadLists(supabase, user.id),
     listMailboxes(supabase, user.id),
     listSequences(supabase, campaignId),
+    listTemplates(supabase, user.id),
   ]);
 
   const allLeads = leads ?? [];
@@ -79,6 +82,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
             availableLeads={availableLeads}
             leadLists={leadLists ?? []}
             mailboxes={mailboxes}
+            steps={sequenceSteps ?? []}
           />
         </FadeIn>
 
@@ -89,14 +93,24 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
               <CardDescription>Name, status, and sending defaults.</CardDescription>
             </CardHeader>
             <CardContent>
-              <CampaignForm mode="edit" campaign={campaign} mailboxes={mailboxes} />
+              <CampaignForm
+                mode="edit"
+                campaign={campaign}
+                sendingWindow={resolveSendingWindow(campaign.sending_window)}
+                mailboxes={mailboxes}
+              />
             </CardContent>
           </Card>
         </FadeIn>
       </div>
 
       <FadeIn delay={0.15}>
-        <SequenceStepsPanel campaignId={campaignId} sequenceId={sequence?.id ?? null} steps={sequenceSteps ?? []} />
+        <SequenceStepsPanel
+          campaignId={campaignId}
+          sequenceId={sequence?.id ?? null}
+          steps={sequenceSteps ?? []}
+          templates={templates ?? []}
+        />
       </FadeIn>
     </div>
   );

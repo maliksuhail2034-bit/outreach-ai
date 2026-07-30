@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sendingWindowSchema } from "./sending-window";
 
 export const CAMPAIGN_STATUSES = ["draft", "active", "paused", "completed"] as const;
 
@@ -9,5 +10,6 @@ export const campaignSchema = z.object({
   status: z.enum(CAMPAIGN_STATUSES).optional(),
   dailyLimit: z.number().int().min(1, { message: "Must be at least 1." }).max(10000),
   defaultMailboxId: z.string().trim().optional().or(z.literal("")),
+  sendingWindow: sendingWindowSchema,
 });
 export type CampaignInput = z.infer<typeof campaignSchema>;

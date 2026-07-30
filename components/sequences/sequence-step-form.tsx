@@ -13,12 +13,14 @@ import { DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { TemplatePicker } from "./template-picker";
 
-type SequenceStepFormProps =
+type SequenceStepFormProps = (
   | { mode: "create"; campaignId: string; step?: undefined; onSuccess?: () => void }
-  | { mode: "edit"; campaignId: string; step: Tables<"sequence_steps">; onSuccess?: () => void };
+  | { mode: "edit"; campaignId: string; step: Tables<"sequence_steps">; onSuccess?: () => void }
+) & { templates: Tables<"templates">[] };
 
-export function SequenceStepForm({ mode, campaignId, step, onSuccess }: SequenceStepFormProps) {
+export function SequenceStepForm({ mode, campaignId, step, templates, onSuccess }: SequenceStepFormProps) {
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<SequenceStepInput>({
@@ -57,6 +59,8 @@ export function SequenceStepForm({ mode, campaignId, step, onSuccess }: Sequence
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <TemplatePicker templates={templates} setValue={form.setValue} />
+
         <FormField
           control={form.control}
           name="dayDelay"

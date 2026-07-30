@@ -8,24 +8,38 @@ import { toast } from "sonner";
 import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { CAMPAIGN_STATUSES, campaignSchema, type CampaignInput } from "@/lib/validations/campaigns";
+import { SENDING_WINDOW_DAYS, type SendingWindow } from "@/lib/validations/sending-window";
 import { createCampaignAction, updateCampaignAction } from "@/app/(app)/campaigns/actions";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SendingWindowEditor } from "./sending-window-editor";
 
 const NO_MAILBOX = "none";
+
+// Matches lib/email/scheduling.ts's DEFAULT_SENDING_WINDOW values (all 7
+// days, 9-17, UTC). Not imported directly to avoid pulling that module
+// (and luxon) into the client bundle — a new campaign has nothing to
+// resolve, so this is a plain starting value, not a re-implementation of
+// resolveSendingWindow's fallback logic.
+const DEFAULT_FORM_SENDING_WINDOW: SendingWindow = {
+  days: [...SENDING_WINDOW_DAYS],
+  startHour: 9,
+  endHour: 17,
+  timezone: "UTC",
+};
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 type CampaignFormProps =
-  | { mode: "create"; campaign?: undefined; mailboxes: MailboxSafe[]; onSuccess?: () => void }
-  | { mode: "edit"; campaign: Tables<"campaigns">; mailboxes: MailboxSafe[]; onSuccess?: () => void };
+  | { mode: "create"; campaign?: undefined; sendingWindow?: undefined; mailboxes: MailboxSafe[]; onSuccess?: () => void }
+  | { mode: "edit"; campaign: Tables<"campaigns">; sendingWindow: SendingWindow; mailboxes: MailboxSafe[]; onSuccess?: () => void };
 
-export function CampaignForm({ mode, campaign, mailboxes, onSuccess }: CampaignFormProps) {
+export function CampaignForm({ mode, campaign, sendingWindow, mailboxes, onSuccess }: CampaignFormProps) {
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<CampaignInput>({
@@ -37,11 +51,13 @@ export function CampaignForm({ mode, campaign, mailboxes, onSuccess }: CampaignF
             status: campaign.status as CampaignInput["status"],
             dailyLimit: campaign.daily_limit,
             defaultMailboxId: campaign.default_mailbox_id ?? "",
+            sendingWindow,
           }
         : {
             name: "",
             dailyLimit: 50,
             defaultMailboxId: "",
+            sendingWindow: DEFAULT_FORM_SENDING_WINDOW,
           },
   });
 
@@ -159,6 +175,14 @@ export function CampaignForm({ mode, campaign, mailboxes, onSuccess }: CampaignF
             )}
           />
         )}
+
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium">Sending window</h3>
+          <p className="text-xs text-muted-foreground">
+            Emails for this campaign only send on these days and within this hour range.
+          </p>
+        </div>
+        <SendingWindowEditor control={form.control} />
 
         <DialogFooter>
           <Button type="submit" disabled={isPending}>

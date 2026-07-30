@@ -11,3 +11,5 @@ export * from "./sequences";
 export * from "./sequence-steps";
 export * from "./templates";
 export * from "./email-events";
+export * from "./suppressions";
+export * from "./send-attempts";

@@ -63,11 +63,25 @@ export async function addLeadsToCampaign(
     .map((leadId) => ({ campaign_id: campaignId, lead_id: leadId, mailbox_id: mailboxId }));
 
   if (toInsert.length === 0) {
-    return { inserted: 0, skipped: leadIds.length };
+    return { inserted: 0, skipped: leadIds.length, rows: [] as Tables<"campaign_leads">[] };
   }
 
-  const { error } = await supabase.from("campaign_leads").insert(toInsert);
+  // .select("*") on the same insert (no extra query) so callers can
+  // schedule each newly-enrolled row without a second round-trip — see
+  // scheduleOnEnrollment in app/(app)/campaigns/[campaignId]/actions.ts.
+  const { data, error } = await supabase.from("campaign_leads").insert(toInsert).select("*");
   if (error) throw error;
 
-  return { inserted: toInsert.length, skipped: leadIds.length - toInsert.length };
+  return { inserted: toInsert.length, skipped: leadIds.length - toInsert.length, rows: data ?? [] };
+}
+
+// Wraps claim_due_sends() (supabase/migrations/20260730100020_claim_due_sends.sql).
+// Must be called with lib/supabase/admin.ts — same carve-out as
+// recordEmailEvent/getMailboxCredentials: privileged, no user in the loop.
+// Locking/eligibility/daily-limit logic all lives in the RPC itself; this
+// is a thin wrapper only.
+export async function claimDueSends(supabase: Client, limit = 25) {
+  const { data, error } = await supabase.rpc("claim_due_sends", { p_limit: limit });
+  if (error) throw error;
+  return data;
 }

@@ -39,6 +39,14 @@ export async function getLead(supabase: Client, userId: string, id: string) {
   return unwrap<Tables<"leads">>(result);
 }
 
+// Admin-context read used by the sending worker — same carve-out as
+// getMailboxCredentials/getCampaignById. Restricted to trusted server-only
+// callers.
+export async function getLeadById(supabase: Client, id: string) {
+  const result = await supabase.from("leads").select("*").eq("id", id).single();
+  return unwrap<Tables<"leads">>(result);
+}
+
 export async function createLead(supabase: Client, values: TablesInsert<"leads">) {
   const result = await supabase.from("leads").insert(values).select("*").single();
   return unwrap<Tables<"leads">>(result);

@@ -8,6 +8,7 @@ import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { CAMPAIGN_LEAD_STATUSES } from "@/lib/validations/campaign-leads";
 import { removeCampaignLeadAction, updateCampaignLeadAction } from "@/app/(app)/campaigns/[campaignId]/actions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -25,18 +26,37 @@ import { EnrollDialog } from "./enroll-dialog";
 type CampaignLead = Tables<"campaign_leads">;
 type Lead = Tables<"leads">;
 type LeadList = Tables<"lead_lists">;
+type SequenceStep = Tables<"sequence_steps">;
 
 const USE_DEFAULT = "default";
 const ALL_STATUSES = "all";
 
+// "needs_review"/"failed" only ever come from the send worker (never set
+// via the status Select below, which still only offers CAMPAIGN_LEAD_STATUSES)
+// so this just needs to render them legibly, not drive any behavior.
 function statusLabel(status: string) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
+  return status
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function leadDisplay(lead: Lead | undefined) {
   if (!lead) return "Unknown lead";
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
   return name || lead.email;
+}
+
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function formatDateTime(value: string | null) {
+  if (!value) return null;
+  return dateTimeFormatter.format(new Date(value));
 }
 
 export function CampaignLeadTable({
@@ -46,6 +66,7 @@ export function CampaignLeadTable({
   availableLeads,
   leadLists,
   mailboxes,
+  steps,
 }: {
   campaignId: string;
   campaignLeads: CampaignLead[];
@@ -53,8 +74,14 @@ export function CampaignLeadTable({
   availableLeads: Lead[];
   leadLists: LeadList[];
   mailboxes: MailboxSafe[];
+  steps: SequenceStep[];
 }) {
   const leadById = new Map(leads.map((lead) => [lead.id, lead]));
+  // steps is already ordered by step_order (see listSequenceSteps), so
+  // position in this array is the 1-based step number shown elsewhere
+  // (SequenceStepsPanel's "Step 1"/"Step 2" labels) — no re-sorting or new
+  // query needed to resolve current_step_id to a human-readable position.
+  const stepPositionById = new Map(steps.map((step, index) => [step.id, index + 1]));
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState<CampaignLead | null>(null);
@@ -235,6 +262,7 @@ export function CampaignLeadTable({
                       <th className="py-2 pr-4 font-medium">Lead</th>
                       <th className="py-2 pr-4 font-medium">Mailbox</th>
                       <th className="py-2 pr-4 font-medium">Status</th>
+                      <th className="py-2 pr-4 font-medium">Schedule</th>
                       <th className="py-2 pl-4 text-right font-medium">
                         <span className="sr-only">Actions</span>
                       </th>
@@ -290,6 +318,34 @@ export function CampaignLeadTable({
                                 ))}
                               </SelectContent>
                             </Select>
+                          </td>
+                          <td className="max-w-56 py-3 pr-4 align-top">
+                            <div className="space-y-1">
+                              {(row.status === "needs_review" || row.status === "failed") && (
+                                <Badge variant="destructive">{statusLabel(row.status)}</Badge>
+                              )}
+                              {row.current_step_id && stepPositionById.has(row.current_step_id) && (
+                                <p className="text-xs text-muted-foreground">
+                                  Step {stepPositionById.get(row.current_step_id)}
+                                </p>
+                              )}
+                              {row.next_send_at && (
+                                <p className="text-xs text-muted-foreground">
+                                  Next send {formatDateTime(row.next_send_at)}
+                                </p>
+                              )}
+                              {row.locked_until && new Date(row.locked_until) > new Date() && (
+                                <Badge variant="secondary">Sending…</Badge>
+                              )}
+                              {row.last_error && (
+                                <p className="truncate text-xs text-destructive" title={row.last_error}>
+                                  {row.last_error}
+                                </p>
+                              )}
+                              {!row.current_step_id && !row.next_send_at && !row.last_error && (
+                                <p className="text-xs text-muted-foreground">Not scheduled</p>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 pl-4">
                             <div className="flex items-center justify-end">

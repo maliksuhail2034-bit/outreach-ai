@@ -1,536 +1,859 @@
-// Hand-maintained to match the schema defined in supabase/migrations/.
-// Shape matches what `supabase gen types typescript` produces, so this file
-// can be replaced by that command's output once the project is linked to a
-// live Supabase project without changing any calling code.
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[]
 
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
-
-export interface Database {
+export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
-      profiles: {
-        Row: {
-          id: string;
-          user_id: string;
-          full_name: string | null;
-          avatar_url: string | null;
-          timezone: string;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          full_name?: string | null;
-          avatar_url?: string | null;
-          timezone?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          full_name?: string | null;
-          avatar_url?: string | null;
-          timezone?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
-      domains: {
-        Row: {
-          id: string;
-          user_id: string;
-          domain: string;
-          status: string;
-          spf_verified: boolean;
-          dkim_verified: boolean;
-          dmarc_verified: boolean;
-          tracking_domain: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          domain: string;
-          status?: string;
-          spf_verified?: boolean;
-          dkim_verified?: boolean;
-          dmarc_verified?: boolean;
-          tracking_domain?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          domain?: string;
-          status?: string;
-          spf_verified?: boolean;
-          dkim_verified?: boolean;
-          dmarc_verified?: boolean;
-          tracking_domain?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
-      mailboxes: {
-        Row: {
-          id: string;
-          user_id: string;
-          domain_id: string | null;
-          email: string;
-          display_name: string | null;
-          smtp_host: string;
-          smtp_port: number;
-          smtp_username: string;
-          encrypted_smtp_password: string;
-          daily_limit: number;
-          warmup_enabled: boolean;
-          status: string;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          domain_id?: string | null;
-          email: string;
-          display_name?: string | null;
-          smtp_host: string;
-          smtp_port?: number;
-          smtp_username: string;
-          encrypted_smtp_password: string;
-          daily_limit?: number;
-          warmup_enabled?: boolean;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          domain_id?: string | null;
-          email?: string;
-          display_name?: string | null;
-          smtp_host?: string;
-          smtp_port?: number;
-          smtp_username?: string;
-          encrypted_smtp_password?: string;
-          daily_limit?: number;
-          warmup_enabled?: boolean;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "mailboxes_domain_id_fkey";
-            columns: ["domain_id"];
-            isOneToOne: false;
-            referencedRelation: "domains";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      lead_lists: {
-        Row: {
-          id: string;
-          user_id: string;
-          name: string;
-          description: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          name: string;
-          description?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          name?: string;
-          description?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
-      leads: {
-        Row: {
-          id: string;
-          user_id: string;
-          list_id: string | null;
-          first_name: string | null;
-          last_name: string | null;
-          company: string | null;
-          title: string | null;
-          website: string | null;
-          linkedin: string | null;
-          email: string;
-          phone: string | null;
-          city: string | null;
-          country: string | null;
-          custom_fields: Json;
-          status: string;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          list_id?: string | null;
-          first_name?: string | null;
-          last_name?: string | null;
-          company?: string | null;
-          title?: string | null;
-          website?: string | null;
-          linkedin?: string | null;
-          email: string;
-          phone?: string | null;
-          city?: string | null;
-          country?: string | null;
-          custom_fields?: Json;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          list_id?: string | null;
-          first_name?: string | null;
-          last_name?: string | null;
-          company?: string | null;
-          title?: string | null;
-          website?: string | null;
-          linkedin?: string | null;
-          email?: string;
-          phone?: string | null;
-          city?: string | null;
-          country?: string | null;
-          custom_fields?: Json;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "leads_list_id_fkey";
-            columns: ["list_id"];
-            isOneToOne: false;
-            referencedRelation: "lead_lists";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      campaigns: {
-        Row: {
-          id: string;
-          user_id: string;
-          name: string;
-          status: string;
-          sending_window: Json;
-          daily_limit: number;
-          default_mailbox_id: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          name: string;
-          status?: string;
-          sending_window?: Json;
-          daily_limit?: number;
-          default_mailbox_id?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          name?: string;
-          status?: string;
-          sending_window?: Json;
-          daily_limit?: number;
-          default_mailbox_id?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "campaigns_default_mailbox_id_fkey";
-            columns: ["default_mailbox_id"];
-            isOneToOne: false;
-            referencedRelation: "mailboxes";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       campaign_leads: {
         Row: {
-          id: string;
-          campaign_id: string;
-          lead_id: string;
-          mailbox_id: string | null;
-          status: string;
-          created_at: string;
-          updated_at: string;
-        };
+          campaign_id: string
+          created_at: string
+          current_step_id: string | null
+          enrolled_at: string
+          id: string
+          last_error: string | null
+          lead_id: string
+          locked_until: string | null
+          mailbox_id: string | null
+          next_send_at: string | null
+          status: string
+          updated_at: string
+        }
         Insert: {
-          id?: string;
-          campaign_id: string;
-          lead_id: string;
-          mailbox_id?: string | null;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
+          campaign_id: string
+          created_at?: string
+          current_step_id?: string | null
+          enrolled_at?: string
+          id?: string
+          last_error?: string | null
+          lead_id: string
+          locked_until?: string | null
+          mailbox_id?: string | null
+          next_send_at?: string | null
+          status?: string
+          updated_at?: string
+        }
         Update: {
-          id?: string;
-          campaign_id?: string;
-          lead_id?: string;
-          mailbox_id?: string | null;
-          status?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
+          campaign_id?: string
+          created_at?: string
+          current_step_id?: string | null
+          enrolled_at?: string
+          id?: string
+          last_error?: string | null
+          lead_id?: string
+          locked_until?: string | null
+          mailbox_id?: string | null
+          next_send_at?: string | null
+          status?: string
+          updated_at?: string
+        }
         Relationships: [
           {
-            foreignKeyName: "campaign_leads_campaign_id_fkey";
-            columns: ["campaign_id"];
-            isOneToOne: false;
-            referencedRelation: "campaigns";
-            referencedColumns: ["id"];
+            foreignKeyName: "campaign_leads_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "campaign_leads_lead_id_fkey";
-            columns: ["lead_id"];
-            isOneToOne: false;
-            referencedRelation: "leads";
-            referencedColumns: ["id"];
+            foreignKeyName: "campaign_leads_current_step_id_fkey"
+            columns: ["current_step_id"]
+            isOneToOne: false
+            referencedRelation: "sequence_steps"
+            referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "campaign_leads_mailbox_id_fkey";
-            columns: ["mailbox_id"];
-            isOneToOne: false;
-            referencedRelation: "mailboxes";
-            referencedColumns: ["id"];
+            foreignKeyName: "campaign_leads_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
           },
-        ];
-      };
-      sequences: {
+          {
+            foreignKeyName: "campaign_leads_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      campaigns: {
         Row: {
-          id: string;
-          campaign_id: string;
-          name: string;
-          created_at: string;
-          updated_at: string;
-        };
+          created_at: string
+          daily_limit: number
+          default_mailbox_id: string | null
+          id: string
+          name: string
+          sending_window: Json
+          status: string
+          updated_at: string
+          user_id: string
+        }
         Insert: {
-          id?: string;
-          campaign_id: string;
-          name: string;
-          created_at?: string;
-          updated_at?: string;
-        };
+          created_at?: string
+          daily_limit?: number
+          default_mailbox_id?: string | null
+          id?: string
+          name: string
+          sending_window?: Json
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
         Update: {
-          id?: string;
-          campaign_id?: string;
-          name?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
+          created_at?: string
+          daily_limit?: number
+          default_mailbox_id?: string | null
+          id?: string
+          name?: string
+          sending_window?: Json
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
         Relationships: [
           {
-            foreignKeyName: "sequences_campaign_id_fkey";
-            columns: ["campaign_id"];
-            isOneToOne: false;
-            referencedRelation: "campaigns";
-            referencedColumns: ["id"];
+            foreignKeyName: "campaigns_default_mailbox_id_fkey"
+            columns: ["default_mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
           },
-        ];
-      };
-      sequence_steps: {
+        ]
+      }
+      domains: {
         Row: {
-          id: string;
-          sequence_id: string;
-          day_delay: number;
-          subject: string | null;
-          body: string | null;
-          step_order: number;
-          created_at: string;
-          updated_at: string;
-        };
+          created_at: string
+          dkim_verified: boolean
+          dmarc_verified: boolean
+          domain: string
+          id: string
+          spf_verified: boolean
+          status: string
+          tracking_domain: string | null
+          updated_at: string
+          user_id: string
+        }
         Insert: {
-          id?: string;
-          sequence_id: string;
-          day_delay?: number;
-          subject?: string | null;
-          body?: string | null;
-          step_order: number;
-          created_at?: string;
-          updated_at?: string;
-        };
+          created_at?: string
+          dkim_verified?: boolean
+          dmarc_verified?: boolean
+          domain: string
+          id?: string
+          spf_verified?: boolean
+          status?: string
+          tracking_domain?: string | null
+          updated_at?: string
+          user_id: string
+        }
         Update: {
-          id?: string;
-          sequence_id?: string;
-          day_delay?: number;
-          subject?: string | null;
-          body?: string | null;
-          step_order?: number;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "sequence_steps_sequence_id_fkey";
-            columns: ["sequence_id"];
-            isOneToOne: false;
-            referencedRelation: "sequences";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      templates: {
-        Row: {
-          id: string;
-          user_id: string;
-          name: string;
-          subject: string | null;
-          body: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          name: string;
-          subject?: string | null;
-          body?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          name?: string;
-          subject?: string | null;
-          body?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
+          created_at?: string
+          dkim_verified?: boolean
+          dmarc_verified?: boolean
+          domain?: string
+          id?: string
+          spf_verified?: boolean
+          status?: string
+          tracking_domain?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       email_events: {
         Row: {
-          id: string;
-          campaign_id: string;
-          lead_id: string;
-          mailbox_id: string | null;
-          event_type: string;
-          provider_message_id: string | null;
-          metadata: Json;
-          created_at: string;
-          updated_at: string;
-        };
+          campaign_id: string
+          created_at: string
+          event_type: string
+          id: string
+          lead_id: string
+          mailbox_id: string | null
+          metadata: Json
+          provider_message_id: string | null
+          updated_at: string
+        }
         Insert: {
-          id?: string;
-          campaign_id: string;
-          lead_id: string;
-          mailbox_id?: string | null;
-          event_type: string;
-          provider_message_id?: string | null;
-          metadata?: Json;
-          created_at?: string;
-          updated_at?: string;
-        };
+          campaign_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          lead_id: string
+          mailbox_id?: string | null
+          metadata?: Json
+          provider_message_id?: string | null
+          updated_at?: string
+        }
         Update: {
-          id?: string;
-          campaign_id?: string;
-          lead_id?: string;
-          mailbox_id?: string | null;
-          event_type?: string;
-          provider_message_id?: string | null;
-          metadata?: Json;
-          created_at?: string;
-          updated_at?: string;
-        };
+          campaign_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          lead_id?: string
+          mailbox_id?: string | null
+          metadata?: Json
+          provider_message_id?: string | null
+          updated_at?: string
+        }
         Relationships: [
           {
-            foreignKeyName: "email_events_campaign_id_fkey";
-            columns: ["campaign_id"];
-            isOneToOne: false;
-            referencedRelation: "campaigns";
-            referencedColumns: ["id"];
+            foreignKeyName: "email_events_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "email_events_lead_id_fkey";
-            columns: ["lead_id"];
-            isOneToOne: false;
-            referencedRelation: "leads";
-            referencedColumns: ["id"];
+            foreignKeyName: "email_events_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "email_events_mailbox_id_fkey";
-            columns: ["mailbox_id"];
-            isOneToOne: false;
-            referencedRelation: "mailboxes";
-            referencedColumns: ["id"];
+            foreignKeyName: "email_events_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
           },
-        ];
-      };
+        ]
+      }
+      lead_lists: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      leads: {
+        Row: {
+          city: string | null
+          company: string | null
+          country: string | null
+          created_at: string
+          custom_fields: Json
+          email: string
+          first_name: string | null
+          id: string
+          last_name: string | null
+          linkedin: string | null
+          list_id: string | null
+          phone: string | null
+          status: string
+          title: string | null
+          updated_at: string
+          user_id: string
+          website: string | null
+        }
+        Insert: {
+          city?: string | null
+          company?: string | null
+          country?: string | null
+          created_at?: string
+          custom_fields?: Json
+          email: string
+          first_name?: string | null
+          id?: string
+          last_name?: string | null
+          linkedin?: string | null
+          list_id?: string | null
+          phone?: string | null
+          status?: string
+          title?: string | null
+          updated_at?: string
+          user_id: string
+          website?: string | null
+        }
+        Update: {
+          city?: string | null
+          company?: string | null
+          country?: string | null
+          created_at?: string
+          custom_fields?: Json
+          email?: string
+          first_name?: string | null
+          id?: string
+          last_name?: string | null
+          linkedin?: string | null
+          list_id?: string | null
+          phone?: string | null
+          status?: string
+          title?: string | null
+          updated_at?: string
+          user_id?: string
+          website?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_list_id_fkey"
+            columns: ["list_id"]
+            isOneToOne: false
+            referencedRelation: "lead_lists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mailboxes: {
+        Row: {
+          created_at: string
+          daily_limit: number
+          display_name: string | null
+          domain_id: string | null
+          email: string
+          encrypted_smtp_password: string
+          id: string
+          smtp_host: string
+          smtp_port: number
+          smtp_username: string
+          status: string
+          updated_at: string
+          user_id: string
+          warmup_enabled: boolean
+        }
+        Insert: {
+          created_at?: string
+          daily_limit?: number
+          display_name?: string | null
+          domain_id?: string | null
+          email: string
+          encrypted_smtp_password: string
+          id?: string
+          smtp_host: string
+          smtp_port?: number
+          smtp_username: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          warmup_enabled?: boolean
+        }
+        Update: {
+          created_at?: string
+          daily_limit?: number
+          display_name?: string | null
+          domain_id?: string | null
+          email?: string
+          encrypted_smtp_password?: string
+          id?: string
+          smtp_host?: string
+          smtp_port?: number
+          smtp_username?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          warmup_enabled?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mailboxes_domain_id_fkey"
+            columns: ["domain_id"]
+            isOneToOne: false
+            referencedRelation: "domains"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          timezone: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          timezone?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          timezone?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      send_attempts: {
+        Row: {
+          attempt_count: number
+          campaign_lead_id: string
+          claimed_at: string
+          created_at: string
+          id: string
+          last_error: string | null
+          provider_message_id: string | null
+          resolved_at: string | null
+          resolved_manually: boolean
+          sequence_step_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          campaign_lead_id: string
+          claimed_at?: string
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          provider_message_id?: string | null
+          resolved_at?: string | null
+          resolved_manually?: boolean
+          sequence_step_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          campaign_lead_id?: string
+          claimed_at?: string
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          provider_message_id?: string | null
+          resolved_at?: string | null
+          resolved_manually?: boolean
+          sequence_step_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "send_attempts_campaign_lead_id_fkey"
+            columns: ["campaign_lead_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "send_attempts_sequence_step_id_fkey"
+            columns: ["sequence_step_id"]
+            isOneToOne: false
+            referencedRelation: "sequence_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sequence_steps: {
+        Row: {
+          body: string | null
+          created_at: string
+          day_delay: number
+          id: string
+          sequence_id: string
+          step_order: number
+          subject: string | null
+          updated_at: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          day_delay?: number
+          id?: string
+          sequence_id: string
+          step_order: number
+          subject?: string | null
+          updated_at?: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          day_delay?: number
+          id?: string
+          sequence_id?: string
+          step_order?: number
+          subject?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sequence_steps_sequence_id_fkey"
+            columns: ["sequence_id"]
+            isOneToOne: false
+            referencedRelation: "sequences"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sequences: {
+        Row: {
+          campaign_id: string
+          created_at: string
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          campaign_id: string
+          created_at?: string
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          campaign_id?: string
+          created_at?: string
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sequences_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       settings: {
         Row: {
-          id: string;
-          user_id: string;
-          signature: string | null;
-          unsubscribe_text: string | null;
-          tracking_enabled: boolean;
-          timezone: string;
-          created_at: string;
-          updated_at: string;
-        };
+          created_at: string
+          id: string
+          signature: string | null
+          timezone: string
+          tracking_enabled: boolean
+          unsubscribe_text: string | null
+          updated_at: string
+          user_id: string
+        }
         Insert: {
-          id?: string;
-          user_id: string;
-          signature?: string | null;
-          unsubscribe_text?: string | null;
-          tracking_enabled?: boolean;
-          timezone?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
+          created_at?: string
+          id?: string
+          signature?: string | null
+          timezone?: string
+          tracking_enabled?: boolean
+          unsubscribe_text?: string | null
+          updated_at?: string
+          user_id: string
+        }
         Update: {
-          id?: string;
-          user_id?: string;
-          signature?: string | null;
-          unsubscribe_text?: string | null;
-          tracking_enabled?: boolean;
-          timezone?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
-    };
-    Views: Record<string, never>;
-    Functions: Record<string, never>;
-    Enums: Record<string, never>;
-    CompositeTypes: Record<string, never>;
-  };
+          created_at?: string
+          id?: string
+          signature?: string | null
+          timezone?: string
+          tracking_enabled?: boolean
+          unsubscribe_text?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      suppressions: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          reason: string
+          source_campaign_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: string
+          reason: string
+          source_campaign_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          reason?: string
+          source_campaign_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suppressions_source_campaign_id_fkey"
+            columns: ["source_campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      templates: {
+        Row: {
+          body: string | null
+          created_at: string
+          id: string
+          name: string
+          subject: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          subject?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          subject?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      claim_due_sends: {
+        Args: { p_limit?: number }
+        Returns: {
+          campaign_id: string
+          created_at: string
+          current_step_id: string | null
+          enrolled_at: string
+          id: string
+          last_error: string | null
+          lead_id: string
+          locked_until: string | null
+          mailbox_id: string | null
+          next_send_at: string | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "campaign_leads"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_send_attempt: {
+        Args: { p_campaign_lead_id: string; p_sequence_step_id: string }
+        Returns: {
+          attempt_count: number
+          campaign_lead_id: string
+          claimed_at: string
+          created_at: string
+          id: string
+          last_error: string | null
+          provider_message_id: string | null
+          resolved_at: string | null
+          resolved_manually: boolean
+          sequence_step_id: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "send_attempts"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      record_send_failure: {
+        Args: {
+          p_campaign_id: string
+          p_campaign_lead_id: string
+          p_error_message: string
+          p_lead_id: string
+          p_mailbox_id: string
+          p_next_send_at?: string
+          p_outcome: string
+          p_send_attempt_id: string
+        }
+        Returns: undefined
+      }
+      record_send_success: {
+        Args: {
+          p_campaign_id: string
+          p_campaign_lead_id: string
+          p_lead_id: string
+          p_mailbox_id: string
+          p_next_send_at?: string
+          p_next_status: string
+          p_next_step_id?: string
+          p_provider_message_id: string
+          p_send_attempt_id: string
+        }
+        Returns: undefined
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
 }
 
-type PublicSchema = Database["public"];
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
-export type Tables<T extends keyof PublicSchema["Tables"]> = PublicSchema["Tables"][T]["Row"];
-export type TablesInsert<T extends keyof PublicSchema["Tables"]> = PublicSchema["Tables"][T]["Insert"];
-export type TablesUpdate<T extends keyof PublicSchema["Tables"]> = PublicSchema["Tables"][T]["Update"];
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {},
+  },
+} as const

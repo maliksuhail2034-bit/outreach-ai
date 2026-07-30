@@ -1,12 +1,21 @@
 import { notFound } from "next/navigation";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getCampaign, listCampaignLeads, listLeadLists, listLeads, listMailboxes } from "@/lib/db";
+import {
+  getCampaign,
+  listCampaignLeads,
+  listLeadLists,
+  listLeads,
+  listMailboxes,
+  listSequences,
+  listSequenceSteps,
+} from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignForm } from "@/components/campaigns/campaign-form";
 import { CampaignLeadTable } from "@/components/campaigns/campaign-lead-table";
+import { SequenceStepsPanel } from "@/components/sequences/sequence-steps-panel";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   draft: "outline",
@@ -35,16 +44,22 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     notFound();
   }
 
-  const [campaignLeads, leads, leadLists, mailboxes] = await Promise.all([
+  const [campaignLeads, leads, leadLists, mailboxes, sequences] = await Promise.all([
     listCampaignLeads(supabase, campaignId),
     listLeads(supabase, user.id, { limit: 10000 }),
     listLeadLists(supabase, user.id),
     listMailboxes(supabase, user.id),
+    listSequences(supabase, campaignId),
   ]);
 
   const allLeads = leads ?? [];
   const enrolledLeadIds = new Set((campaignLeads ?? []).map((row) => row.lead_id));
   const availableLeads = allLeads.filter((lead) => !enrolledLeadIds.has(lead.id));
+
+  // Sequences aren't a user-facing concept yet — every campaign has at most
+  // one, created lazily on first step add. See getOrCreateDefaultSequence.
+  const sequence = sequences?.[0] ?? null;
+  const sequenceSteps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -79,6 +94,10 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           </Card>
         </FadeIn>
       </div>
+
+      <FadeIn delay={0.15}>
+        <SequenceStepsPanel campaignId={campaignId} sequenceId={sequence?.id ?? null} steps={sequenceSteps ?? []} />
+      </FadeIn>
     </div>
   );
 }

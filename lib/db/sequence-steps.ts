@@ -34,3 +34,21 @@ export async function deleteSequenceStep(supabase: Client, id: string) {
   const { error } = await supabase.from("sequence_steps").delete().eq("id", id);
   if (error) throw error;
 }
+
+// Swaps two steps' step_order. Goes through a temporary value first because
+// (sequence_id, step_order) is unique and checked immediately (not
+// deferred) — writing stepB's target order straight onto stepA while stepB
+// still holds it would violate the constraint.
+export async function swapSequenceStepOrder(supabase: Client, sequenceId: string, stepAId: string, stepBId: string) {
+  const steps = await listSequenceSteps(supabase, sequenceId);
+  const stepA = steps.find((step) => step.id === stepAId);
+  const stepB = steps.find((step) => step.id === stepBId);
+  if (!stepA || !stepB) {
+    throw new Error("Step not found in this sequence.");
+  }
+
+  const tempOrder = Math.max(...steps.map((step) => step.step_order)) + 1;
+  await updateSequenceStep(supabase, stepA.id, { step_order: tempOrder });
+  await updateSequenceStep(supabase, stepB.id, { step_order: stepA.step_order });
+  await updateSequenceStep(supabase, stepA.id, { step_order: stepB.step_order });
+}

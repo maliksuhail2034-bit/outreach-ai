@@ -33,3 +33,13 @@ export async function deleteSequence(supabase: Client, id: string) {
   const { error } = await supabase.from("sequences").delete().eq("id", id);
   if (error) throw error;
 }
+
+// Sequences aren't exposed as their own UI concept yet (no naming/multiple
+// sequences per campaign) — every campaign gets one implicit sequence,
+// created the first time a step is added. Called only from the create-step
+// Server Function, never from a page render.
+export async function getOrCreateDefaultSequence(supabase: Client, campaignId: string) {
+  const existing = await listSequences(supabase, campaignId);
+  if (existing.length > 0) return existing[0];
+  return createSequence(supabase, { campaign_id: campaignId, name: "Default sequence" });
+}

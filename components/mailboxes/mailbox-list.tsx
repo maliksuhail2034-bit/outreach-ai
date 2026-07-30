@@ -93,6 +93,8 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                   <p className="truncate text-sm text-muted-foreground">
                     {mailbox.email} · {mailbox.smtp_host}:{mailbox.smtp_port} · {mailbox.daily_limit}/day
                     {mailbox.warmup_enabled && " · Warmup on"}
+                    {" · Added "}
+                    {new Date(mailbox.created_at).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">

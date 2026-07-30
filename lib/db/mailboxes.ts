@@ -3,13 +3,15 @@ import type { Client } from "./shared";
 import { unwrap } from "./shared";
 
 type Mailbox = Tables<"mailboxes">;
-export type MailboxSafe = Omit<Mailbox, "encrypted_smtp_password">;
+export type MailboxSafe = Omit<Mailbox, "encrypted_smtp_password" | "encrypted_imap_password">;
 
-// Strips the encrypted credential before a row can reach any user-facing
-// code path. Only getMailboxCredentials() (below) returns it.
+// Strips both encrypted credentials before a row can reach any user-facing
+// code path. Only getMailboxCredentials()/listMailboxesForReplySync()
+// (below) return them.
 function omitPassword(row: Mailbox): MailboxSafe {
   const safe: Partial<Mailbox> = { ...row };
   delete safe.encrypted_smtp_password;
+  delete safe.encrypted_imap_password;
   return safe as MailboxSafe;
 }
 
@@ -69,5 +71,37 @@ export async function updateMailbox(
 
 export async function deleteMailbox(supabase: Client, userId: string, id: string) {
   const { error } = await supabase.from("mailboxes").delete().eq("user_id", userId).eq("id", id);
+  if (error) throw error;
+}
+
+// Reply-tracking reads/writes, admin-context — same carve-out as
+// getMailboxCredentials: restricted to the trusted reply-sync worker
+// (lib/email/reply-worker.ts), never a code path reachable by a browser.
+
+// Full rows (including encrypted_imap_password), across every user, for the
+// reply-sync worker to iterate. Scoped to mailboxes that are both actively
+// sending (status='active') and have reply tracking configured.
+export async function listMailboxesForReplySync(supabase: Client): Promise<Mailbox[]> {
+  const { data, error } = await supabase
+    .from("mailboxes")
+    .select("*")
+    .eq("status", "active")
+    .eq("imap_enabled", true);
+  if (error) throw error;
+  return data;
+}
+
+// Advances a mailbox's IMAP sync cursor. Never touches any other column —
+// deliberately narrower than the general-purpose updateMailbox(), which is
+// userId-scoped and not meant for admin-context worker use.
+export async function updateMailboxSyncCursor(
+  supabase: Client,
+  id: string,
+  cursor: { uidValidity: number; lastUid: number },
+) {
+  const { error } = await supabase
+    .from("mailboxes")
+    .update({ imap_uid_validity: cursor.uidValidity, imap_last_uid: cursor.lastUid })
+    .eq("id", id);
   if (error) throw error;
 }

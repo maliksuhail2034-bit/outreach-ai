@@ -46,6 +46,26 @@ export async function countEmailEventsByType(supabase: Client, eventType: string
   return count ?? 0;
 }
 
+// Reply-tracking helper — used two ways by lib/email/reply-worker.ts: (a)
+// matching, looking up the outbound 'sent' event a reply's In-Reply-To/
+// References header points to, and (b) the idempotency check, looking up
+// whether a 'replied' event already exists for a given inbound Message-ID.
+// Both are the same lookup shape, so one function serves both instead of two.
+export async function getEmailEventByProviderMessageId(
+  supabase: Client,
+  providerMessageId: string,
+  eventType: string,
+) {
+  const { data, error } = await supabase
+    .from("email_events")
+    .select("*")
+    .eq("provider_message_id", providerMessageId)
+    .eq("event_type", eventType)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 // Typically called from the sending worker or a provider webhook handler
 // with the admin client (lib/supabase/admin.ts), since events are usually
 // recorded by a trusted backend process rather than an interactive user.

@@ -331,8 +331,16 @@ export type Database = {
           display_name: string | null
           domain_id: string | null
           email: string
+          encrypted_imap_password: string | null
           encrypted_smtp_password: string
           id: string
+          imap_enabled: boolean
+          imap_host: string | null
+          imap_last_uid: number | null
+          imap_port: number
+          imap_uid_validity: number | null
+          imap_username: string | null
+          reply_provider: string
           smtp_host: string
           smtp_port: number
           smtp_username: string
@@ -347,8 +355,16 @@ export type Database = {
           display_name?: string | null
           domain_id?: string | null
           email: string
+          encrypted_imap_password?: string | null
           encrypted_smtp_password: string
           id?: string
+          imap_enabled?: boolean
+          imap_host?: string | null
+          imap_last_uid?: number | null
+          imap_port?: number
+          imap_uid_validity?: number | null
+          imap_username?: string | null
+          reply_provider?: string
           smtp_host: string
           smtp_port?: number
           smtp_username: string
@@ -363,8 +379,16 @@ export type Database = {
           display_name?: string | null
           domain_id?: string | null
           email?: string
+          encrypted_imap_password?: string | null
           encrypted_smtp_password?: string
           id?: string
+          imap_enabled?: boolean
+          imap_host?: string | null
+          imap_last_uid?: number | null
+          imap_port?: number
+          imap_uid_validity?: number | null
+          imap_username?: string | null
+          reply_provider?: string
           smtp_host?: string
           smtp_port?: number
           smtp_username?: string

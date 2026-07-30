@@ -75,6 +75,37 @@ export async function addLeadsToCampaign(
   return { inserted: toInsert.length, skipped: leadIds.length - toInsert.length, rows: data ?? [] };
 }
 
+// Reply-tracking helper — campaign_leads has a unique(campaign_id, lead_id)
+// constraint, so a header-based reply match (which lands on an
+// email_events row carrying campaign_id + lead_id, not a campaign_lead id
+// directly) can resolve the specific enrollment via this lookup.
+export async function getCampaignLeadByCampaignAndLead(supabase: Client, campaignId: string, leadId: string) {
+  const { data, error } = await supabase
+    .from("campaign_leads")
+    .select("*")
+    .eq("campaign_id", campaignId)
+    .eq("lead_id", leadId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Reply-tracking fallback-matching helper (see lib/email/reply-worker.ts) —
+// bounded to a specific mailbox and a specific set of candidate lead ids
+// (already resolved by From-address), so the caller can require an exact
+// single match before treating it as attributable.
+export async function listActiveCampaignLeadsForMailbox(supabase: Client, mailboxId: string, leadIds: string[]) {
+  if (leadIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("campaign_leads")
+    .select("*")
+    .eq("status", "active")
+    .eq("mailbox_id", mailboxId)
+    .in("lead_id", leadIds);
+  if (error) throw error;
+  return data;
+}
+
 // Wraps claim_due_sends() (supabase/migrations/20260730100020_claim_due_sends.sql).
 // Must be called with lib/supabase/admin.ts — same carve-out as
 // recordEmailEvent/getMailboxCredentials: privileged, no user in the loop.

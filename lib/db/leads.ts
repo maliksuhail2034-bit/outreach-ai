@@ -47,6 +47,16 @@ export async function getLeadById(supabase: Client, id: string) {
   return unwrap<Tables<"leads">>(result);
 }
 
+// Reply-tracking fallback-matching helper (see lib/email/reply-worker.ts) —
+// scoped to a specific user (the mailbox owner, passed explicitly since
+// this runs under the admin client with no session to derive it from),
+// never a cross-user lookup.
+export async function listLeadIdsByEmail(supabase: Client, userId: string, email: string) {
+  const { data, error } = await supabase.from("leads").select("id").eq("user_id", userId).eq("email", email);
+  if (error) throw error;
+  return (data ?? []).map((row) => row.id);
+}
+
 export async function createLead(supabase: Client, values: TablesInsert<"leads">) {
   const result = await supabase.from("leads").insert(values).select("*").single();
   return unwrap<Tables<"leads">>(result);

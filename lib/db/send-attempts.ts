@@ -60,6 +60,41 @@ export async function recordSendSuccess(
   if (error) throw error;
 }
 
+// Dashboard-facing reads, unlike the functions above — these use the
+// user-scoped server client (RLS via campaign_leads -> campaigns -> user_id,
+// same as getSendAttempt), not the admin client.
+
+export async function listSendAttempts(supabase: Client, limit = 10) {
+  const { data, error } = await supabase
+    .from("send_attempts")
+    .select("*")
+    .order("claimed_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+// status omitted counts all attempts regardless of outcome (e.g. "total
+// emails attempted" for analytics), rather than requiring a second function.
+export async function countSendAttemptsByStatus(supabase: Client, status?: string) {
+  let query = supabase.from("send_attempts").select("*", { count: "exact", head: true });
+  if (status) query = query.eq("status", status);
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// Analytics-only: per-campaign attempt/failure counts for the campaign
+// performance table. send_attempts has no campaign_id column directly (only
+// campaign_lead_id), so the caller resolves a campaign's lead ids first
+// (e.g. via listCampaignLeads) and passes them here.
+export async function listSendAttemptsForCampaignLeads(supabase: Client, campaignLeadIds: string[]) {
+  if (campaignLeadIds.length === 0) return [];
+  const { data, error } = await supabase.from("send_attempts").select("*").in("campaign_lead_id", campaignLeadIds);
+  if (error) throw error;
+  return data;
+}
+
 export async function recordSendFailure(
   supabase: Client,
   params: {

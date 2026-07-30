@@ -6,18 +6,23 @@ const DEFAULT_LIST_LIMIT = 200;
 
 // No userId parameter: ownership is derived from campaign_id via RLS.
 
+// campaignId omitted lists across all of the caller's campaigns (RLS-scoped)
+// — used by analytics, which aggregates across campaigns rather than
+// showing one campaign's history.
 export async function listEmailEvents(
   supabase: Client,
-  campaignId: string,
+  campaignId?: string,
   options?: { leadId?: string; eventType?: string; limit?: number },
 ) {
   let query = supabase
     .from("email_events")
     .select("*")
-    .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
     .limit(options?.limit ?? DEFAULT_LIST_LIMIT);
 
+  if (campaignId) {
+    query = query.eq("campaign_id", campaignId);
+  }
   if (options?.leadId) {
     query = query.eq("lead_id", options.leadId);
   }
@@ -28,6 +33,17 @@ export async function listEmailEvents(
   const { data, error } = await query;
   if (error) throw error;
   return data;
+}
+
+// Dashboard KPI helper — total count across all of the caller's campaigns
+// (RLS-scoped), not limited to one campaign like listEmailEvents above.
+export async function countEmailEventsByType(supabase: Client, eventType: string) {
+  const { count, error } = await supabase
+    .from("email_events")
+    .select("*", { count: "exact", head: true })
+    .eq("event_type", eventType);
+  if (error) throw error;
+  return count ?? 0;
 }
 
 // Typically called from the sending worker or a provider webhook handler

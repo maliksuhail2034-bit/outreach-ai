@@ -36,8 +36,8 @@ function statusLabel(status: string) {
 }
 
 type CampaignFormProps =
-  | { mode: "create"; campaign?: undefined; sendingWindow?: undefined; mailboxes: MailboxSafe[]; onSuccess?: () => void }
-  | { mode: "edit"; campaign: Tables<"campaigns">; sendingWindow: SendingWindow; mailboxes: MailboxSafe[]; onSuccess?: () => void };
+  | { mode: "create"; campaign?: undefined; sendingWindow?: undefined; mailboxes: MailboxSafe[]; onSuccess?: (id?: string) => void }
+  | { mode: "edit"; campaign: Tables<"campaigns">; sendingWindow: SendingWindow; mailboxes: MailboxSafe[]; onSuccess?: (id?: string) => void };
 
 export function CampaignForm({ mode, campaign, sendingWindow, mailboxes, onSuccess }: CampaignFormProps) {
   const [isPending, startTransition] = useTransition();
@@ -65,13 +65,14 @@ export function CampaignForm({ mode, campaign, sendingWindow, mailboxes, onSucce
     startTransition(async () => {
       try {
         if (mode === "create") {
-          await createCampaignAction(values);
+          const created = await createCampaignAction(values);
           toast.success("Campaign created.");
+          onSuccess?.(created.id);
         } else {
           await updateCampaignAction(campaign.id, values);
           toast.success("Campaign updated.");
+          onSuccess?.();
         }
-        onSuccess?.();
       } catch {
         toast.error(
           mode === "create" ? "Couldn't create the campaign. Try again." : "Couldn't update the campaign. Try again.",
@@ -163,13 +164,27 @@ export function CampaignForm({ mode, campaign, sendingWindow, mailboxes, onSucce
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {CAMPAIGN_STATUSES.map((status) => (
-                      <SelectItem key={status} value={status}>
-                        {statusLabel(status)}
-                      </SelectItem>
-                    ))}
+                    {/* draft -> active is meant to happen only through
+                        launchCampaignAction (the setup wizard's "Launch
+                        campaign" button), which validates the campaign is
+                        actually ready to send — this raw Select has no such
+                        validation. Filtering the option out here is a UI-level
+                        guard against picking it by mistake; it doesn't change
+                        what updateCampaignAction itself will accept. */}
+                    {CAMPAIGN_STATUSES.filter((status) => campaign.status !== "draft" || status !== "active").map(
+                      (status) => (
+                        <SelectItem key={status} value={status}>
+                          {statusLabel(status)}
+                        </SelectItem>
+                      ),
+                    )}
                   </SelectContent>
                 </Select>
+                {campaign.status === "draft" && (
+                  <p className="text-xs text-muted-foreground">
+                    Use the setup wizard&apos;s &ldquo;Launch campaign&rdquo; button to activate.
+                  </p>
+                )}
                 <FormMessage />
               </FormItem>
             )}

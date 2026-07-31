@@ -12,11 +12,14 @@ import {
   deleteSequenceStep,
   getCampaign,
   getOrCreateDefaultSequence,
+  listCampaignLeads,
   listLeads,
+  listMailboxes,
   listSequences,
   listSequenceSteps,
   removeCampaignLead,
   swapSequenceStepOrder,
+  updateCampaign,
   updateCampaignLead,
   updateSequenceStep,
 } from "@/lib/db";
@@ -66,6 +69,79 @@ async function loadSequenceSteps(supabase: Client, campaignId: string) {
   const sequences = await listSequences(supabase, campaignId);
   const sequence = sequences[0];
   return sequence ? listSequenceSteps(supabase, sequence.id) : Promise.resolve([]);
+}
+
+// Validated draft -> active transition. Unlike the raw status field on
+// CampaignForm/updateCampaignAction, this is the only path that (a) checks
+// the campaign is actually ready to send and (b) schedules every lead
+// enrolled while the campaign was still draft — scheduleOnEnrollment above
+// only ever acts on leads enrolled after the campaign is already active, so
+// without this, leads enrolled during setup would stay unscheduled forever.
+export async function launchCampaignAction(campaignId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const campaign = await getCampaign(supabase, user.id, campaignId);
+  if (campaign.status !== "draft") {
+    throw new Error("This campaign has already been launched.");
+  }
+
+  const steps = await loadSequenceSteps(supabase, campaignId);
+  if (steps.length === 0) {
+    throw new Error("Add at least one sequence step before launching.");
+  }
+
+  const leads = await listCampaignLeads(supabase, campaignId);
+  if (leads.length === 0) {
+    throw new Error("Enroll at least one lead before launching.");
+  }
+
+  const mailboxes = await listMailboxes(supabase, user.id);
+  const mailboxById = new Map(mailboxes.map((mailbox) => [mailbox.id, mailbox]));
+
+  const unresolvedCount = leads.filter((lead) => !(lead.mailbox_id ?? campaign.default_mailbox_id)).length;
+  if (unresolvedCount > 0) {
+    throw new Error(
+      `${unresolvedCount} lead${unresolvedCount === 1 ? "" : "s"} have no mailbox assigned. ` +
+        "Set a default mailbox or assign one per lead.",
+    );
+  }
+
+  const inactiveMailboxNames = new Set<string>();
+  for (const lead of leads) {
+    const effectiveMailboxId = lead.mailbox_id ?? campaign.default_mailbox_id;
+    const mailbox = effectiveMailboxId ? mailboxById.get(effectiveMailboxId) : undefined;
+    if (mailbox && mailbox.status !== "active") {
+      inactiveMailboxNames.add(mailbox.display_name || mailbox.email);
+    }
+  }
+  if (inactiveMailboxNames.size > 0) {
+    throw new Error(`These mailboxes aren't active: ${[...inactiveMailboxNames].join(", ")}.`);
+  }
+
+  const activatedCampaign = { ...campaign, status: "active" as const };
+  await updateCampaign(supabase, user.id, campaignId, { status: "active" });
+
+  for (const lead of leads) {
+    if (lead.status !== "pending") continue;
+
+    // Leads enrolled while the campaign was still draft (the wizard's Leads
+    // step runs before its Mailbox step) can have mailbox_id null even
+    // though campaign.default_mailbox_id now resolves them — enrollLeadAction/
+    // enrollLeadListAction only ever resolve the default at the moment of
+    // enrollment, they never retroactively backfill it. claim_due_sends()
+    // requires mailbox_id is not null, so without this a "resolvable" lead
+    // would silently never be picked up by the send worker.
+    let scheduledLead = lead;
+    if (!lead.mailbox_id) {
+      scheduledLead = await updateCampaignLead(supabase, lead.id, { mailbox_id: campaign.default_mailbox_id });
+    }
+
+    await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps);
+  }
+
+  revalidatePath("/campaigns");
+  revalidatePath(`/campaigns/${campaignId}`);
 }
 
 export async function enrollLeadAction(campaignId: string, leadId: string, mailboxId?: string) {

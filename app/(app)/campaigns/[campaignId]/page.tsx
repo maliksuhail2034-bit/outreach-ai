@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignForm } from "@/components/campaigns/campaign-form";
 import { CampaignLeadTable } from "@/components/campaigns/campaign-lead-table";
+import { CampaignSetupWizard } from "@/components/campaigns/campaign-setup-wizard";
 import { SequenceStepsPanel } from "@/components/sequences/sequence-steps-panel";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -63,6 +64,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   // one, created lazily on first step add. See getOrCreateDefaultSequence.
   const sequence = sequences?.[0] ?? null;
   const sequenceSteps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
+  const sendingWindow = resolveSendingWindow(campaign.sending_window);
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -73,45 +75,59 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
         </div>
       </FadeIn>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <FadeIn delay={0.05} className="lg:col-span-2">
-          <CampaignLeadTable
-            campaignId={campaignId}
+      {campaign.status === "draft" ? (
+        <FadeIn delay={0.05}>
+          <CampaignSetupWizard
+            campaign={campaign}
             campaignLeads={campaignLeads ?? []}
             leads={allLeads}
             availableLeads={availableLeads}
             leadLists={leadLists ?? []}
             mailboxes={mailboxes}
-            steps={sequenceSteps ?? []}
+            sequenceId={sequence?.id ?? null}
+            sequenceSteps={sequenceSteps ?? []}
+            templates={templates ?? []}
+            sendingWindow={sendingWindow}
           />
         </FadeIn>
-
-        <FadeIn delay={0.1} className="lg:col-span-1">
-          <Card>
-            <CardHeader>
-              <CardTitle>Settings</CardTitle>
-              <CardDescription>Name, status, and sending defaults.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <CampaignForm
-                mode="edit"
-                campaign={campaign}
-                sendingWindow={resolveSendingWindow(campaign.sending_window)}
+      ) : (
+        <>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <FadeIn delay={0.05} className="lg:col-span-2">
+              <CampaignLeadTable
+                campaignId={campaignId}
+                campaignLeads={campaignLeads ?? []}
+                leads={allLeads}
+                availableLeads={availableLeads}
+                leadLists={leadLists ?? []}
                 mailboxes={mailboxes}
+                steps={sequenceSteps ?? []}
               />
-            </CardContent>
-          </Card>
-        </FadeIn>
-      </div>
+            </FadeIn>
 
-      <FadeIn delay={0.15}>
-        <SequenceStepsPanel
-          campaignId={campaignId}
-          sequenceId={sequence?.id ?? null}
-          steps={sequenceSteps ?? []}
-          templates={templates ?? []}
-        />
-      </FadeIn>
+            <FadeIn delay={0.1} className="lg:col-span-1">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Settings</CardTitle>
+                  <CardDescription>Name, status, and sending defaults.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <CampaignForm mode="edit" campaign={campaign} sendingWindow={sendingWindow} mailboxes={mailboxes} />
+                </CardContent>
+              </Card>
+            </FadeIn>
+          </div>
+
+          <FadeIn delay={0.15}>
+            <SequenceStepsPanel
+              campaignId={campaignId}
+              sequenceId={sequence?.id ?? null}
+              steps={sequenceSteps ?? []}
+              templates={templates ?? []}
+            />
+          </FadeIn>
+        </>
+      )}
     </div>
   );
 }

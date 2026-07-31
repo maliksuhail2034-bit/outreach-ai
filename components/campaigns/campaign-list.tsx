@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { PlusIcon, Trash2Icon } from "lucide-react";
@@ -36,9 +37,18 @@ function statusLabel(status: string) {
 }
 
 export function CampaignList({ campaigns, mailboxes }: { campaigns: Campaign[]; mailboxes: MailboxSafe[] }) {
+  const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
   const [deleting, setDeleting] = useState<Campaign | null>(null);
   const [isDeleting, startDeleteTransition] = useTransition();
+
+  // New campaigns land straight in the setup wizard (app/(app)/campaigns/
+  // [campaignId]/page.tsx shows it automatically while status is 'draft')
+  // instead of just closing the dialog and leaving the user on the list.
+  function handleCreated(id?: string) {
+    setAddOpen(false);
+    if (id) router.push(`/campaigns/${id}`);
+  }
 
   const mailboxById = new Map(mailboxes.map((mailbox) => [mailbox.id, mailbox]));
 
@@ -75,7 +85,7 @@ export function CampaignList({ campaigns, mailboxes }: { campaigns: Campaign[]; 
               <DialogTitle>New campaign</DialogTitle>
               <DialogDescription>Name your campaign and set a default sending mailbox.</DialogDescription>
             </DialogHeader>
-            <CampaignForm mode="create" mailboxes={mailboxes} onSuccess={() => setAddOpen(false)} />
+            <CampaignForm mode="create" mailboxes={mailboxes} onSuccess={handleCreated} />
           </DialogContent>
         </Dialog>
       </CardHeader>

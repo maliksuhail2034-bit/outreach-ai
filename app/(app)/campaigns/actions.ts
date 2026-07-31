@@ -15,7 +15,7 @@ export async function createCampaignAction(input: CampaignInput) {
   const user = await requireUser();
   const supabase = await createClient();
 
-  await createCampaign(supabase, {
+  const campaign = await createCampaign(supabase, {
     user_id: user.id,
     name: parsed.name,
     daily_limit: parsed.dailyLimit,
@@ -25,6 +25,7 @@ export async function createCampaignAction(input: CampaignInput) {
   });
 
   revalidatePath("/campaigns");
+  return { id: campaign.id };
 }
 
 export async function updateCampaignAction(id: string, input: CampaignInput) {

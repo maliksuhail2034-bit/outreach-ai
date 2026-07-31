@@ -11,5 +11,25 @@ jobs:
     steps:
       - name: Trigger /api/cron/send-emails
         run: |
-          curl -f -sS -X POST "${{ secrets.APP_URL }}/api/cron/send-emails" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          response=$(curl -f -sS -X POST "${{ secrets.APP_URL }}/api/cron/send-emails" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "$response"
+
+          # The route already returns 200 for a run that completed but sent
+          # some leads to needs_review or failed most of its sends — curl -f
+          # alone only catches total outages (non-2xx), not this "degraded
+          # but technically successful" case. Parse the summary and fail the
+          # step visibly so it isn't a silent 200 nobody looks at.
+          claimed=$(echo "$response" | jq '.claimed // 0')
+          failed=$(echo "$response" | jq '.failed // 0')
+          needsReview=$(echo "$response" | jq '.needsReview // 0')
+
+          if [ "$needsReview" -gt 0 ]; then
+            echo "::error::$needsReview lead(s) need manual review this run"
+            exit 1
+          fi
+
+          if [ "$claimed" -gt 0 ] && [ "$((failed * 2))" -gt "$claimed" ]; then
+            echo "::error::High failure rate this run: $failed/$claimed sends failed"
+            exit 1
+          fi

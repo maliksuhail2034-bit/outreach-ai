@@ -27,19 +27,19 @@ async function handle(request: Request) {
 
   try {
     const summary = await runSendWorker();
+    // The only place a run's outcome is visible short of querying the DB
+    // directly — logged here (not just returned in the response) so it
+    // shows up in hosting/platform logs even if nothing reads the HTTP body.
+    console.log("[cron/send-emails]", JSON.stringify({ ...summary, executionTimeMs: Date.now() - startedAt }));
     return NextResponse.json({ ...summary, executionTimeMs: Date.now() - startedAt });
   } catch (error) {
     // Overlapping invocations are already safe — claim_due_sends() and
     // claim_send_attempt() do the actual locking (see lib/email/send-worker.ts).
     // This catch only turns an unexpected error into a structured response
     // instead of an unhandled 500, it adds no locking of its own.
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unknown error running the send worker.",
-        executionTimeMs: Date.now() - startedAt,
-      },
-      { status: 500 },
-    );
+    const errorMessage = error instanceof Error ? error.message : "Unknown error running the send worker.";
+    console.error("[cron/send-emails]", JSON.stringify({ error: errorMessage, executionTimeMs: Date.now() - startedAt }));
+    return NextResponse.json({ error: errorMessage, executionTimeMs: Date.now() - startedAt }, { status: 500 });
   }
 }
 

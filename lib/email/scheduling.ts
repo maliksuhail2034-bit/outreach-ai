@@ -121,3 +121,20 @@ export function computeNextSchedule(params: {
 
   return { nextStepId: nextStep.id, nextSendAt, completed: false };
 }
+
+// Fixed backoff ladder in minutes, indexed by the attempt that just failed
+// (send_attempts.attempt_count is 1-based) — attempt 1's failure waits 5
+// minutes before the next reclaim, attempt 2's waits 15, etc. Any attempt
+// beyond the ladder's length is capped at the last rung. A hardcoded
+// constant, same pattern as send-worker.ts's DEFAULT_CLAIM_LIMIT — no config
+// or schema needed for v1. Deliberately not snapped to the campaign's
+// sending window (unlike computeNextSchedule above): a retry is completing
+// an already-due send that failed for infrastructure reasons, not
+// scheduling a new one, so firing slightly outside business hours is an
+// acceptable v1 tradeoff for staying simple.
+const RETRY_BACKOFF_MINUTES = [5, 15, 60, 240, 1440] as const;
+
+export function computeRetryDelay(attemptCount: number): Date {
+  const index = Math.min(Math.max(attemptCount - 1, 0), RETRY_BACKOFF_MINUTES.length - 1);
+  return new Date(Date.now() + RETRY_BACKOFF_MINUTES[index] * 60_000);
+}

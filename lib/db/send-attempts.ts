@@ -95,6 +95,24 @@ export async function listSendAttemptsForCampaignLeads(supabase: Client, campaig
   return data;
 }
 
+// User-context manual crash recovery — the function
+// supabase/migrations/20260730100030_send_attempts.sql's RLS comment named
+// but never implemented ("Needed so resolveSendAttemptAction ... can
+// read/update a user's own rows"). Called with the user-scoped client (RLS
+// via send_attempts_update_own), not the admin client — this is the first
+// caller to actually use that policy. Always leaves the row 'failed' +
+// resolved_manually so claim_send_attempt()'s existing reclaim-on-'failed'
+// branch can pick it back up if the caller also reactivates the
+// campaign_lead (see resolveSendAttemptAction) — no new claiming logic
+// needed for the retry path.
+export async function resolveSendAttemptManually(supabase: Client, sendAttemptId: string, note: string) {
+  const { error } = await supabase
+    .from("send_attempts")
+    .update({ status: "failed", resolved_manually: true, last_error: note })
+    .eq("id", sendAttemptId);
+  if (error) throw error;
+}
+
 export async function recordSendFailure(
   supabase: Client,
   params: {

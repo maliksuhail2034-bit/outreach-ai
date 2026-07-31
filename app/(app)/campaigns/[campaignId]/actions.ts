@@ -11,13 +11,16 @@ import {
   createSequenceStep,
   deleteSequenceStep,
   getCampaign,
+  getCampaignLead,
   getOrCreateDefaultSequence,
+  getSendAttempt,
   listCampaignLeads,
   listLeads,
   listMailboxes,
   listSequences,
   listSequenceSteps,
   removeCampaignLead,
+  resolveSendAttemptManually,
   swapSequenceStepOrder,
   updateCampaign,
   updateCampaignLead,
@@ -285,6 +288,55 @@ export async function moveSequenceStepAction(
   if (targetIndex < 0 || targetIndex >= steps.length) return;
 
   await swapSequenceStepOrder(supabase, sequenceId, steps[index].id, steps[targetIndex].id);
+
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+// Manual crash recovery for a lead the send worker couldn't resolve on its
+// own (needs_review) or gave up on (failed) — the function
+// send_attempts.sql's RLS policy comment named but never implemented. Runs
+// on the user-scoped client throughout (RLS is the real ownership boundary
+// on both campaign_leads and send_attempts, same as every other action in
+// this file), never the admin client.
+export async function resolveSendAttemptAction(
+  campaignId: string,
+  campaignLeadId: string,
+  action: "retry" | "dismiss",
+) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await getCampaign(supabase, user.id, campaignId);
+
+  const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+  if (campaignLead.status !== "needs_review" && campaignLead.status !== "failed") {
+    throw new Error("This lead isn't awaiting review.");
+  }
+  if (!campaignLead.current_step_id) {
+    throw new Error("This lead has no send attempt to resolve.");
+  }
+
+  const sendAttempt = await getSendAttempt(supabase, campaignLeadId, campaignLead.current_step_id);
+  if (sendAttempt) {
+    await resolveSendAttemptManually(
+      supabase,
+      sendAttempt.id,
+      action === "retry" ? "Manually reset for retry." : "Manually dismissed.",
+    );
+  }
+
+  if (action === "retry") {
+    // Hand back to the existing pipeline rather than resending here directly
+    // — claim_due_sends() re-checks mailbox status and suppression at claim
+    // time, so this doesn't need to duplicate those checks.
+    await updateCampaignLead(supabase, campaignLeadId, {
+      status: "active",
+      next_send_at: new Date().toISOString(),
+      locked_until: null,
+    });
+  } else {
+    await updateCampaignLead(supabase, campaignLeadId, { status: "failed" });
+  }
 
   revalidatePath(`/campaigns/${campaignId}`);
 }

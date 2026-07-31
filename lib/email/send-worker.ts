@@ -17,9 +17,18 @@ import {
 import { getEmailProvider } from "./get-provider";
 import { EmailSendError } from "./provider";
 import { renderMergeTags, type MergeTagLead } from "./merge-tags";
-import { computeNextSchedule } from "./scheduling";
+import { computeNextSchedule, computeRetryDelay } from "./scheduling";
 
 const DEFAULT_CLAIM_LIMIT = 25;
+
+// Caps send_attempts.attempt_count — once a retryable failure's attempt
+// count reaches this, it's no longer reclaimed automatically; the next
+// failure is recorded as terminal ('failed') instead of 'retry'. No separate
+// enforcement mechanism is needed beyond that: record_send_failure's
+// 'failed' outcome sets campaign_leads.status = 'failed', and
+// claim_due_sends() only ever selects status = 'active', so a capped-out
+// lead simply stops being reclaimed.
+const MAX_SEND_ATTEMPTS = 5;
 
 export interface SendWorkerSummary {
   claimed: number;
@@ -57,9 +66,11 @@ async function processCampaignLead(
   // this just keeps the function total instead of throwing on a malformed
   // row.
   if (!campaignLead.current_step_id || !campaignLead.mailbox_id) {
+    const errorMessage = "Claimed with no current_step_id or mailbox_id.";
+    console.error("[send-worker] needs_review", { campaignLeadId: campaignLead.id, error: errorMessage });
     await updateCampaignLead(supabase, campaignLead.id, {
       status: "needs_review",
-      last_error: "Claimed with no current_step_id or mailbox_id.",
+      last_error: errorMessage,
       locked_until: null,
     });
     return "needsReview";
@@ -77,9 +88,11 @@ async function processCampaignLead(
   const targetStep = steps.find((step) => step.id === campaignLead.current_step_id);
 
   if (!targetStep) {
+    const errorMessage = "current_step_id does not match any step in this sequence.";
+    console.error("[send-worker] needs_review", { campaignLeadId: campaignLead.id, error: errorMessage });
     await updateCampaignLead(supabase, campaignLead.id, {
       status: "needs_review",
-      last_error: "current_step_id does not match any step in this sequence.",
+      last_error: errorMessage,
       locked_until: null,
     });
     return "needsReview";
@@ -120,6 +133,11 @@ async function processCampaignLead(
     // which shouldn't happen since claimSendAttempt just refused an
     // insert). Never resend automatically — this is the exact needs_review
     // gate the duplicate-send design depends on.
+    console.error("[send-worker] needs_review", {
+      campaignLeadId: campaignLead.id,
+      sequenceStepId: targetStep.id,
+      existingAttemptStatus: existing?.status ?? "missing",
+    });
     await updateCampaignLead(supabase, campaignLead.id, {
       status: "needs_review",
       locked_until: null,
@@ -178,10 +196,29 @@ async function processCampaignLead(
     return "sent";
   } catch (error) {
     const message = error instanceof EmailSendError ? error.message : "Unknown send error.";
+    // Non-EmailSendError throws (a bug, not a classified provider failure)
+    // default to "retry" rather than "failed" — a code defect shouldn't
+    // permanently fail a lead any more than a network blip should; the
+    // attempt cap below still bounds how many times that can happen.
+    const classifiedOutcome = error instanceof EmailSendError ? error.outcome : "retry";
 
-    // Gap B (approved): every provider failure collapses to a terminal
-    // 'failed' outcome this iteration — no retry/backoff, no bounce
-    // classification. Revisit alongside provider-specific enhancements.
+    // A "retry" classification only stays "retry" below the attempt cap —
+    // past it, record_send_failure gets "failed" instead so campaign_leads
+    // lands in a terminal state and claim_due_sends() (status = 'active'
+    // only) naturally stops reclaiming it. "bounced" and "failed" pass
+    // through unchanged; the cap doesn't apply to them.
+    const belowCap = claimedAttempt.attempt_count < MAX_SEND_ATTEMPTS;
+    const outcome: "retry" | "bounced" | "failed" =
+      classifiedOutcome === "retry" && !belowCap ? "failed" : classifiedOutcome;
+
+    console.error("[send-worker] send failed", {
+      campaignLeadId: campaignLead.id,
+      sequenceStepId: targetStep.id,
+      outcome,
+      attemptCount: claimedAttempt.attempt_count,
+      error: message,
+    });
+
     await recordSendFailure(supabase, {
       sendAttemptId: claimedAttempt.id,
       campaignLeadId: campaignLead.id,
@@ -189,9 +226,13 @@ async function processCampaignLead(
       leadId: campaignLead.lead_id,
       mailboxId: campaignLead.mailbox_id,
       errorMessage: message,
-      outcome: "failed",
+      outcome,
+      ...(outcome === "retry" ? { nextSendAt: computeRetryDelay(claimedAttempt.attempt_count).toISOString() } : {}),
     });
 
+    // The worker's own tally stays coarse-grained: every non-success outcome
+    // this iteration — including a "retry" that'll be reclaimed later —
+    // counts as "failed" for this run's summary.
     return "failed";
   }
 }

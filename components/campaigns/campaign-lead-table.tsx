@@ -7,7 +7,11 @@ import { Trash2Icon } from "lucide-react";
 import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { CAMPAIGN_LEAD_STATUSES } from "@/lib/validations/campaign-leads";
-import { removeCampaignLeadAction, updateCampaignLeadAction } from "@/app/(app)/campaigns/[campaignId]/actions";
+import {
+  removeCampaignLeadAction,
+  resolveSendAttemptAction,
+  updateCampaignLeadAction,
+} from "@/app/(app)/campaigns/[campaignId]/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -91,6 +95,8 @@ export function CampaignLeadTable({
   const [, startUpdateTransition] = useTransition();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [isResolving, startResolveTransition] = useTransition();
 
   const filteredLeads = campaignLeads.filter((row) => {
     if (statusFilter !== ALL_STATUSES && row.status !== statusFilter) return false;
@@ -141,6 +147,20 @@ export function CampaignLeadTable({
         });
       } catch {
         toast.error("Couldn't update the mailbox for this lead.");
+      }
+    });
+  }
+
+  function handleResolve(row: CampaignLead, action: "retry" | "dismiss") {
+    setResolvingId(row.id);
+    startResolveTransition(async () => {
+      try {
+        await resolveSendAttemptAction(campaignId, row.id, action);
+        toast.success(action === "retry" ? "Lead queued for retry." : "Marked as resolved.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Couldn't resolve this lead.");
+      } finally {
+        setResolvingId(null);
       }
     });
   }
@@ -322,7 +342,29 @@ export function CampaignLeadTable({
                           <td className="max-w-56 py-3 pr-4 align-top">
                             <div className="space-y-1">
                               {(row.status === "needs_review" || row.status === "failed") && (
-                                <Badge variant="destructive">{statusLabel(row.status)}</Badge>
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <Badge variant="destructive">{statusLabel(row.status)}</Badge>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    disabled={isResolving && resolvingId === row.id}
+                                    onClick={() => handleResolve(row, "retry")}
+                                  >
+                                    Retry
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    disabled={isResolving && resolvingId === row.id}
+                                    onClick={() => handleResolve(row, "dismiss")}
+                                  >
+                                    Dismiss
+                                  </Button>
+                                </div>
                               )}
                               {row.status === "replied" && <Badge variant="secondary">Replied</Badge>}
                               {row.current_step_id && stepPositionById.has(row.current_step_id) && (

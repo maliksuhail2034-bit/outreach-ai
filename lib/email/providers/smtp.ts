@@ -14,24 +14,44 @@ function formatAddress(address: { name?: string; email: string }): string {
   return address.name ? `"${address.name}" <${address.email}>` : address.email;
 }
 
-// Classifies a thrown nodemailer/SMTP error into retryable vs terminal.
-// Connection-level failures are transient; SMTP 5xx replies are permanent;
-// SMTP 4xx replies are temporary. An error shape we don't recognize is
-// treated as retryable rather than silently swallowed as terminal.
+// SMTP reply codes that unambiguously mean "this specific mailbox doesn't
+// exist" rather than some other permanent rejection (auth failure, policy
+// block, malformed message). 550/551/553/554 are the standard "no such
+// user"/"relaying denied"/"transaction failed" codes recipient servers use
+// for a bad address — see RFC 5321 §4.2.3. Deliberately narrow: an
+// unrecognized 5xx stays "failed", never "bounced", since a wrong bounce
+// classification permanently suppresses a possibly-good address (see the
+// Sending Engine plan's Risks section).
+const BOUNCE_RESPONSE_CODES = new Set([550, 551, 553, 554]);
+const BOUNCE_TEXT_PATTERN = /user unknown|mailbox (not found|unavailable)|no such user|recipient (rejected|not found)/i;
+
+// Classifies a thrown nodemailer/SMTP error into retry / bounced / failed —
+// see EmailSendError in ../provider.ts for what each means. Connection-level
+// failures and SMTP 4xx are transient ("retry"); SMTP 5xx splits into a
+// recipient-address rejection ("bounced") or any other permanent failure
+// ("failed"). An error shape we don't recognize defaults to "retry" rather
+// than silently treating it as terminal.
 function classifySmtpError(error: unknown): EmailSendError {
-  const err = error as { responseCode?: number; code?: string; message?: string };
+  const err = error as { responseCode?: number; code?: string; message?: string; response?: string };
   const message = err.message ?? "SMTP send failed.";
 
   const transientCodes = new Set(["ECONNECTION", "ETIMEDOUT", "ECONNREFUSED", "ESOCKET", "EDNS", "ETLS"]);
   if (err.code && transientCodes.has(err.code)) {
-    return new EmailSendError(message, true);
+    return new EmailSendError(message, "retry");
   }
 
   if (typeof err.responseCode === "number") {
-    return new EmailSendError(message, err.responseCode >= 400 && err.responseCode < 500);
+    if (err.responseCode >= 400 && err.responseCode < 500) {
+      return new EmailSendError(message, "retry");
+    }
+    if (err.responseCode >= 500) {
+      const responseText = `${err.response ?? ""} ${message}`;
+      const looksLikeBounce = BOUNCE_RESPONSE_CODES.has(err.responseCode) || BOUNCE_TEXT_PATTERN.test(responseText);
+      return new EmailSendError(message, looksLikeBounce ? "bounced" : "failed");
+    }
   }
 
-  return new EmailSendError(message, true);
+  return new EmailSendError(message, "retry");
 }
 
 // Sends exactly one email over SMTP using a single mailbox's credentials.

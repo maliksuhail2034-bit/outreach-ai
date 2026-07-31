@@ -324,6 +324,7 @@ export function CampaignLeadTable({
                               {(row.status === "needs_review" || row.status === "failed") && (
                                 <Badge variant="destructive">{statusLabel(row.status)}</Badge>
                               )}
+                              {row.status === "replied" && <Badge variant="secondary">Replied</Badge>}
                               {row.current_step_id && stepPositionById.has(row.current_step_id) && (
                                 <p className="text-xs text-muted-foreground">
                                   Step {stepPositionById.get(row.current_step_id)}

@@ -2,6 +2,7 @@ import {
   AlertTriangleIcon,
   MailCheckIcon,
   MailWarningIcon,
+  MessageCircleReplyIcon,
   SendIcon,
   TrendingDownIcon,
   TrendingUpIcon,
@@ -45,6 +46,7 @@ const EMAIL_EVENT_LABEL: Record<string, string> = {
 const EMAIL_EVENT_VARIANT: Record<string, TimelineEntry["variant"]> = {
   sent: "default",
   delivered: "default",
+  replied: "secondary",
   bounced: "destructive",
   failed: "destructive",
   unsubscribed: "secondary",
@@ -58,17 +60,27 @@ export default async function AnalyticsPage() {
 
   const supabase = await createClient();
 
-  const [campaigns, totalAttempts, sentCount, failedCount, bouncedCount, deliveredCount, sendAttempts, emailEvents] =
-    await Promise.all([
-      listCampaigns(supabase, user.id),
-      countSendAttemptsByStatus(supabase),
-      countSendAttemptsByStatus(supabase, "sent"),
-      countSendAttemptsByStatus(supabase, "failed"),
-      countEmailEventsByType(supabase, "bounced"),
-      countEmailEventsByType(supabase, "delivered"),
-      listSendAttempts(supabase, ANALYTICS_ROW_LIMIT),
-      listEmailEvents(supabase, undefined, { limit: ANALYTICS_ROW_LIMIT }),
-    ]);
+  const [
+    campaigns,
+    totalAttempts,
+    sentCount,
+    failedCount,
+    bouncedCount,
+    deliveredCount,
+    repliedCount,
+    sendAttempts,
+    emailEvents,
+  ] = await Promise.all([
+    listCampaigns(supabase, user.id),
+    countSendAttemptsByStatus(supabase),
+    countSendAttemptsByStatus(supabase, "sent"),
+    countSendAttemptsByStatus(supabase, "failed"),
+    countEmailEventsByType(supabase, "bounced"),
+    countEmailEventsByType(supabase, "delivered"),
+    countEmailEventsByType(supabase, "replied"),
+    listSendAttempts(supabase, ANALYTICS_ROW_LIMIT),
+    listEmailEvents(supabase, undefined, { limit: ANALYTICS_ROW_LIMIT }),
+  ]);
 
   const campaignList = campaigns ?? [];
   const attempts = sendAttempts ?? [];
@@ -187,6 +199,14 @@ export default async function AnalyticsPage() {
       description: "Hard bounces recorded",
       emptyHint: "No bounces recorded.",
       isEmpty: bouncedCount === 0,
+    },
+    {
+      title: "Replies",
+      value: repliedCount,
+      icon: <MessageCircleReplyIcon className="size-4" />,
+      description: "Replies detected across all campaigns",
+      emptyHint: "Will appear once a lead replies.",
+      isEmpty: repliedCount === 0,
     },
     {
       title: "Success rate",

@@ -1,14 +1,14 @@
 "use client";
 
 import { useTransition } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
 import { mailboxSchema, type MailboxInput } from "@/lib/validations/mailboxes";
-import { createMailboxAction, updateMailboxAction } from "@/app/(app)/mailboxes/actions";
+import { createMailboxAction, testImapConnectionAction, updateMailboxAction } from "@/app/(app)/mailboxes/actions";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -24,6 +24,7 @@ type MailboxFormProps =
 
 export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormProps) {
   const [isPending, startTransition] = useTransition();
+  const [isTesting, startTestTransition] = useTransition();
 
   const form = useForm<MailboxInput>({
     resolver: zodResolver(mailboxSchema),
@@ -40,6 +41,11 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             warmupEnabled: mailbox.warmup_enabled,
             domainId: mailbox.domain_id ?? "",
             status: mailbox.status as MailboxInput["status"],
+            imapEnabled: mailbox.imap_enabled,
+            imapHost: mailbox.imap_host ?? "",
+            imapPort: mailbox.imap_port,
+            imapUsername: mailbox.imap_username ?? "",
+            imapPassword: "",
           }
         : {
             email: "",
@@ -51,8 +57,33 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             dailyLimit: 50,
             warmupEnabled: false,
             domainId: "",
+            imapEnabled: false,
+            imapHost: "",
+            imapPort: 993,
+            imapUsername: "",
+            imapPassword: "",
           },
   });
+
+  const imapEnabled = useWatch({ control: form.control, name: "imapEnabled" });
+
+  function onTestConnection() {
+    const { imapHost, imapPort, imapUsername, imapPassword } = form.getValues();
+    startTestTransition(async () => {
+      const result = await testImapConnectionAction({
+        mailboxId: mode === "edit" ? mailbox.id : undefined,
+        imapHost: imapHost ?? "",
+        imapPort,
+        imapUsername: imapUsername ?? "",
+        imapPassword: imapPassword ?? "",
+      });
+      if (result.ok) {
+        toast.success("Connected — reply tracking can reach this inbox.");
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
 
   function onSubmit(values: MailboxInput) {
     startTransition(async () => {
@@ -262,6 +293,101 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             </FormItem>
           )}
         />
+
+        <div className="space-y-4 rounded-lg border border-border p-4">
+          <FormField
+            control={form.control}
+            name="imapEnabled"
+            render={({ field }) => (
+              <FormItem className="flex flex-row items-center justify-between">
+                <div>
+                  <FormLabel className="cursor-pointer">Enable reply tracking</FormLabel>
+                  <p className="text-sm text-muted-foreground">Poll this inbox over IMAP to detect replies.</p>
+                </div>
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+              </FormItem>
+            )}
+          />
+
+          {imapEnabled && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+                <FormField
+                  control={form.control}
+                  name="imapHost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>IMAP host</FormLabel>
+                      <FormControl>
+                        <Input placeholder="imap.yourdomain.com" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="imapPort"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Port</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          name={field.name}
+                          ref={field.ref}
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="imapUsername"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>IMAP username</FormLabel>
+                    <FormControl>
+                      <Input placeholder="jane@yourdomain.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="imapPassword"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      IMAP password
+                      {mode === "edit" && (
+                        <span className="font-normal text-muted-foreground"> (leave blank to keep current)</span>
+                      )}
+                    </FormLabel>
+                    <FormControl>
+                      <Input type="password" autoComplete="new-password" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <Button type="button" variant="outline" size="sm" disabled={isTesting} onClick={onTestConnection}>
+                {isTesting ? "Testing…" : "Test connection"}
+              </Button>
+            </>
+          )}
+        </div>
 
         <DialogFooter>
           <Button type="submit" disabled={isPending}>

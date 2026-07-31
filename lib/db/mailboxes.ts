@@ -74,6 +74,23 @@ export async function deleteMailbox(supabase: Client, userId: string, id: string
   if (error) throw error;
 }
 
+// User-scoped (RLS-respecting client + explicit user_id filter, same as
+// every other function in this file) read of the IMAP credential — lets a
+// user's own mailbox actions (update validation, test-connection) check for
+// or reuse a stored credential without going through the admin-context
+// getMailboxCredentials(), which has no ownership check and is reserved for
+// the trusted reply-sync worker.
+export async function getMailboxImapCredential(supabase: Client, userId: string, id: string) {
+  const { data, error } = await supabase
+    .from("mailboxes")
+    .select("encrypted_imap_password")
+    .eq("user_id", userId)
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 // Reply-tracking reads/writes, admin-context — same carve-out as
 // getMailboxCredentials: restricted to the trusted reply-sync worker
 // (lib/email/reply-worker.ts), never a code path reachable by a browser.

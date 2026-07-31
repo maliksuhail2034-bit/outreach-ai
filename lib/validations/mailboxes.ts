@@ -14,5 +14,15 @@ export const mailboxSchema = z.object({
   warmupEnabled: z.boolean(),
   domainId: z.string().trim().optional().or(z.literal("")),
   status: z.enum(["active", "paused", "error"]).optional(),
+  // Reply tracking (IMAP). Same optional/create-vs-edit shape as the SMTP
+  // fields above — cross-field requirements (host/username required when
+  // enabled, password required on create or when no credential is stored
+  // yet) are enforced in the Server Function, not here, for the same reason
+  // smtpPassword's rule is: zod has no notion of which action is calling it.
+  imapEnabled: z.boolean(),
+  imapHost: z.string().trim().max(255).optional().or(z.literal("")),
+  imapPort: z.number().int().min(1).max(65535),
+  imapUsername: z.string().trim().max(255).optional().or(z.literal("")),
+  imapPassword: z.string().max(500).optional().or(z.literal("")),
 });
 export type MailboxInput = z.infer<typeof mailboxSchema>;

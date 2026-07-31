@@ -89,6 +89,9 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                   <div className="flex items-center gap-2">
                     <p className="truncate font-medium">{mailbox.display_name || mailbox.email}</p>
                     <Badge variant={STATUS_VARIANT[mailbox.status] ?? "outline"}>{statusLabel(mailbox.status)}</Badge>
+                    <Badge variant={mailbox.imap_enabled ? "secondary" : "outline"}>
+                      {mailbox.imap_enabled ? "Reply tracking on" : "Reply tracking off"}
+                    </Badge>
                   </div>
                   <p className="truncate text-sm text-muted-foreground">
                     {mailbox.email} · {mailbox.smtp_host}:{mailbox.smtp_port} · {mailbox.daily_limit}/day

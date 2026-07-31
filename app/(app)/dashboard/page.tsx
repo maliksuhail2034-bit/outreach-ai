@@ -1,4 +1,12 @@
-import { AlertTriangleIcon, MailIcon, MegaphoneIcon, SendIcon, UsersIcon, ZapIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  MailIcon,
+  MegaphoneIcon,
+  MessageCircleReplyIcon,
+  SendIcon,
+  UsersIcon,
+  ZapIcon,
+} from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -34,17 +42,27 @@ export default async function DashboardPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const [profile, settings, leadCount, campaigns, mailboxCount, emailsSentCount, failedSendsCount, recentAttempts] =
-    await Promise.all([
-      getProfile(supabase, user.id),
-      getSettings(supabase, user.id),
-      countLeads(supabase, user.id),
-      listCampaigns(supabase, user.id),
-      countMailboxes(supabase, user.id),
-      countEmailEventsByType(supabase, "sent"),
-      countSendAttemptsByStatus(supabase, "failed"),
-      listSendAttempts(supabase, RECENT_ACTIVITY_LIMIT),
-    ]);
+  const [
+    profile,
+    settings,
+    leadCount,
+    campaigns,
+    mailboxCount,
+    emailsSentCount,
+    repliedCount,
+    failedSendsCount,
+    recentAttempts,
+  ] = await Promise.all([
+    getProfile(supabase, user.id),
+    getSettings(supabase, user.id),
+    countLeads(supabase, user.id),
+    listCampaigns(supabase, user.id),
+    countMailboxes(supabase, user.id),
+    countEmailEventsByType(supabase, "sent"),
+    countEmailEventsByType(supabase, "replied"),
+    countSendAttemptsByStatus(supabase, "failed"),
+    listSendAttempts(supabase, RECENT_ACTIVITY_LIMIT),
+  ]);
 
   const displayName = getDisplayName(user, profile);
   const greeting = getGreeting(profile?.timezone);
@@ -117,6 +135,14 @@ export default async function DashboardPage() {
       description: "Successful sends across all campaigns",
       emptyHint: "Will appear once a campaign starts sending.",
       isEmpty: emailsSentCount === 0,
+    },
+    {
+      title: "Replies",
+      value: repliedCount,
+      icon: <MessageCircleReplyIcon className="size-4" />,
+      description: "Replies detected across all campaigns",
+      emptyHint: "Will appear once a lead replies.",
+      isEmpty: repliedCount === 0,
     },
     {
       title: "Failed sends",

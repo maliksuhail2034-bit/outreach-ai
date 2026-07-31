@@ -9,6 +9,7 @@ import {
   listMailboxes,
   listSequences,
   listSequenceSteps,
+  listSuppressions,
   listTemplates,
 } from "@/lib/db";
 import { resolveSendingWindow } from "@/lib/email/scheduling";
@@ -47,13 +48,14 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     notFound();
   }
 
-  const [campaignLeads, leads, leadLists, mailboxes, sequences, templates] = await Promise.all([
+  const [campaignLeads, leads, leadLists, mailboxes, sequences, templates, suppressions] = await Promise.all([
     listCampaignLeads(supabase, campaignId),
     listLeads(supabase, user.id, { limit: 10000 }),
     listLeadLists(supabase, user.id),
     listMailboxes(supabase, user.id),
     listSequences(supabase, campaignId),
     listTemplates(supabase, user.id),
+    listSuppressions(supabase, user.id),
   ]);
 
   const allLeads = leads ?? [];
@@ -88,6 +90,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
             sequenceSteps={sequenceSteps ?? []}
             templates={templates ?? []}
             sendingWindow={sendingWindow}
+            suppressions={suppressions ?? []}
           />
         </FadeIn>
       ) : (
@@ -102,6 +105,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 leadLists={leadLists ?? []}
                 mailboxes={mailboxes}
                 steps={sequenceSteps ?? []}
+                suppressions={suppressions ?? []}
               />
             </FadeIn>
 

@@ -8,6 +8,8 @@ import {
   getLeadById,
   getMailboxCredentials,
   getSendAttempt,
+  getSettings,
+  getSuppression,
   listSequenceSteps,
   listSequences,
   recordSendFailure,
@@ -18,6 +20,9 @@ import { getEmailProvider } from "./get-provider";
 import { EmailSendError } from "./provider";
 import { renderMergeTags, type MergeTagLead } from "./merge-tags";
 import { computeNextSchedule, computeRetryDelay } from "./scheduling";
+import { buildUnsubscribeUrl } from "./unsubscribe-token";
+
+const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
 const DEFAULT_CLAIM_LIMIT = 25;
 
@@ -98,6 +103,25 @@ async function processCampaignLead(
     return "needsReview";
   }
 
+  // Defense in depth: claim_due_sends() already excludes suppressed
+  // addresses at claim time, but a suppression (e.g. a concurrent
+  // unsubscribe click — see lib/email/unsubscribe.ts) could land in the
+  // window between that claim and this point. Re-check immediately before
+  // any send_attempts row is created — the last moment to stop a send.
+  const suppression = await getSuppression(supabase, campaign.user_id, lead.email);
+  if (suppression) {
+    console.error("[send-worker] skipped, suppressed since claim", {
+      campaignLeadId: campaignLead.id,
+      reason: suppression.reason,
+    });
+    await updateCampaignLead(supabase, campaignLead.id, {
+      status: suppression.reason === "bounced" ? "bounced" : "unsubscribed",
+      next_send_at: null,
+      locked_until: null,
+    });
+    return "skipped";
+  }
+
   // Step-level idempotency claim — see lib/db/send-attempts.ts. Refusal
   // means either this step was already sent (self-heal below) or its
   // outcome is unknown (needs_review below); neither case calls the
@@ -146,6 +170,8 @@ async function processCampaignLead(
     return "needsReview";
   }
 
+  const unsubscribeUrl = buildUnsubscribeUrl(campaignLead.id);
+
   const mergeTagLead: MergeTagLead = {
     first_name: lead.first_name,
     last_name: lead.last_name,
@@ -153,10 +179,22 @@ async function processCampaignLead(
     company: lead.company,
     title: lead.title,
     custom_fields: lead.custom_fields as Record<string, unknown> | null,
+    unsubscribeUrl,
   };
 
   const subject = renderMergeTags(targetStep.subject ?? "", mergeTagLead).text;
-  const body = renderMergeTags(targetStep.body ?? "", mergeTagLead).text;
+  let body = renderMergeTags(targetStep.body ?? "", mergeTagLead).text;
+
+  // Every outgoing email needs a working unsubscribe mechanism (CAN-SPAM/
+  // GDPR) regardless of whether the sequence step's own template remembered
+  // to include {{unsubscribe_link}} — append a default footer whenever the
+  // rendered body doesn't already contain the link, so compliance never
+  // depends on the user remembering a merge tag.
+  if (!body.includes(unsubscribeUrl)) {
+    const settings = await getSettings(supabase, campaign.user_id);
+    const footerText = settings?.unsubscribe_text || DEFAULT_UNSUBSCRIBE_FOOTER_TEXT;
+    body += `<hr/><p style="font-size:12px;color:#666;">${footerText} <a href="${unsubscribeUrl}">Unsubscribe</a></p>`;
+  }
 
   const provider = getEmailProvider(mailbox);
 

@@ -9,11 +9,14 @@ import {
   addLeadsToCampaign,
   addLeadToCampaign,
   createSequenceStep,
+  deleteLead,
   deleteSequenceStep,
   getCampaign,
   getCampaignLead,
+  getLead,
   getOrCreateDefaultSequence,
   getSendAttempt,
+  getSuppressedEmails,
   listCampaignLeads,
   listLeads,
   listMailboxes,
@@ -147,11 +150,33 @@ export async function launchCampaignAction(campaignId: string) {
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
-export async function enrollLeadAction(campaignId: string, leadId: string, mailboxId?: string) {
+// Re-enrolling a suppressed (bounced/unsubscribed) address won't actually
+// send anything — claim_due_sends() and send-worker.ts's own suppression
+// re-check both already block it — but silently allowing the enrollment
+// anyway is confusing UX for something that looks like a deliberate
+// re-engagement attempt. Require an explicit confirmSuppressed=true from the
+// UI (see EnrollDialog's warning + checkbox) rather than gating only in the
+// client, since Server Functions must re-check independently of the caller.
+export async function enrollLeadAction(
+  campaignId: string,
+  leadId: string,
+  mailboxId?: string,
+  confirmSuppressed = false,
+) {
   const user = await requireUser();
   const supabase = await createClient();
 
   const campaign = await getCampaign(supabase, user.id, campaignId);
+
+  if (!confirmSuppressed) {
+    const lead = await getLead(supabase, user.id, leadId);
+    const suppressed = await getSuppressedEmails(supabase, user.id, [lead.email]);
+    const reason = suppressed.get(lead.email);
+    if (reason) {
+      throw new Error(`This lead is suppressed (${reason}). Confirm to enroll anyway.`);
+    }
+  }
+
   const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
 
   const campaignLead = await addLeadToCampaign(supabase, {
@@ -166,7 +191,12 @@ export async function enrollLeadAction(campaignId: string, leadId: string, mailb
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
-export async function enrollLeadListAction(campaignId: string, listId: string, mailboxId?: string) {
+export async function enrollLeadListAction(
+  campaignId: string,
+  listId: string,
+  mailboxId?: string,
+  confirmSuppressed = false,
+) {
   const user = await requireUser();
   const supabase = await createClient();
 
@@ -174,8 +204,23 @@ export async function enrollLeadListAction(campaignId: string, listId: string, m
   const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
 
   const leads = await listLeads(supabase, user.id, { listId, limit: 10000 });
-  const leadIds = (leads ?? []).map((lead) => lead.id);
+  const leadRows = leads ?? [];
 
+  if (!confirmSuppressed) {
+    const suppressed = await getSuppressedEmails(
+      supabase,
+      user.id,
+      leadRows.map((lead) => lead.email),
+    );
+    const suppressedCount = leadRows.filter((lead) => suppressed.has(lead.email)).length;
+    if (suppressedCount > 0) {
+      throw new Error(
+        `${suppressedCount} lead${suppressedCount === 1 ? "" : "s"} in this list ${suppressedCount === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). Confirm to enroll anyway.`,
+      );
+    }
+  }
+
+  const leadIds = leadRows.map((lead) => lead.id);
   const result = await addLeadsToCampaign(supabase, campaignId, leadIds, effectiveMailboxId);
 
   const steps = await loadSequenceSteps(supabase, campaignId);
@@ -215,6 +260,28 @@ export async function removeCampaignLeadAction(campaignId: string, campaignLeadI
   await removeCampaignLead(supabase, campaignLeadId);
 
   revalidatePath(`/campaigns/${campaignId}`);
+}
+
+// Permanently deletes the lead itself, not just this enrollment — every
+// campaign_leads/email_events/send_attempts row referencing it is removed
+// via "on delete cascade" (see the leads/campaign_leads/email_events/
+// send_attempts migrations), so this can't leave orphaned rows behind.
+// Deliberately global: a lead deleted from inside one campaign's view is
+// gone from every campaign, matching what "permanently delete" implies.
+// The lead's suppressions row (keyed by email, not lead_id) is untouched —
+// suppression must survive the lead record so the address stays blocked if
+// it's ever re-imported.
+export async function deleteLeadPermanentlyAction(campaignId: string, leadId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await getCampaign(supabase, user.id, campaignId);
+
+  await deleteLead(supabase, user.id, leadId);
+
+  revalidatePath(`/campaigns/${campaignId}`);
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
 }
 
 // Same ownership pattern as the campaign_leads actions above: sequence_steps

@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Trash2Icon } from "lucide-react";
+import { MoreVerticalIcon, Trash2Icon, UserMinusIcon } from "lucide-react";
 
 import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { CAMPAIGN_LEAD_STATUSES } from "@/lib/validations/campaign-leads";
 import {
+  deleteLeadPermanentlyAction,
   removeCampaignLeadAction,
   resolveSendAttemptAction,
   updateCampaignLeadAction,
@@ -23,9 +24,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EnrollDialog } from "./enroll-dialog";
+
+type Suppression = Tables<"suppressions">;
 
 type CampaignLead = Tables<"campaign_leads">;
 type Lead = Tables<"leads">;
@@ -71,6 +80,7 @@ export function CampaignLeadTable({
   leadLists,
   mailboxes,
   steps,
+  suppressions,
 }: {
   campaignId: string;
   campaignLeads: CampaignLead[];
@@ -79,6 +89,7 @@ export function CampaignLeadTable({
   leadLists: LeadList[];
   mailboxes: MailboxSafe[];
   steps: SequenceStep[];
+  suppressions: Suppression[];
 }) {
   const leadById = new Map(leads.map((lead) => [lead.id, lead]));
   // steps is already ordered by step_order (see listSequenceSteps), so
@@ -86,10 +97,18 @@ export function CampaignLeadTable({
   // (SequenceStepsPanel's "Step 1"/"Step 2" labels) — no re-sorting or new
   // query needed to resolve current_step_id to a human-readable position.
   const stepPositionById = new Map(steps.map((step, index) => [step.id, index + 1]));
+  // Keyed by email, not lead id: suppressions are campaign-independent and
+  // survive a lead's own record being deleted (see
+  // deleteLeadPermanentlyAction) — a campaign_lead can show "active" while
+  // its address is globally suppressed from a bounce/unsubscribe on a
+  // different campaign, which campaign_leads.status alone can't express.
+  const suppressionReasonByEmail = new Map(suppressions.map((s) => [s.email, s.reason]));
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState<CampaignLead | null>(null);
   const [isRemoving, startRemoveTransition] = useTransition();
+  const [deletingLead, setDeletingLead] = useState<CampaignLead | null>(null);
+  const [isDeletingLead, startDeleteLeadTransition] = useTransition();
   const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false);
   const [isBulkRemoving, startBulkRemoveTransition] = useTransition();
   const [, startUpdateTransition] = useTransition();
@@ -179,6 +198,20 @@ export function CampaignLeadTable({
     });
   }
 
+  function handleDeleteLead() {
+    if (!deletingLead) return;
+    const target = deletingLead;
+    startDeleteLeadTransition(async () => {
+      try {
+        await deleteLeadPermanentlyAction(campaignId, target.lead_id);
+        toast.success("Lead permanently deleted.");
+        setDeletingLead(null);
+      } catch {
+        toast.error("Couldn't delete this lead.");
+      }
+    });
+  }
+
   function handleBulkRemove() {
     const ids = selectedIds;
     if (ids.length === 0) return;
@@ -208,6 +241,7 @@ export function CampaignLeadTable({
           availableLeads={availableLeads}
           leadLists={leadLists}
           mailboxes={mailboxes}
+          suppressionReasonByEmail={suppressionReasonByEmail}
         />
       </CardHeader>
 
@@ -306,6 +340,11 @@ export function CampaignLeadTable({
                           <td className="max-w-48 truncate py-3 pr-4">
                             <p className="truncate font-medium">{leadDisplay(lead)}</p>
                             {lead && <p className="truncate text-xs text-muted-foreground">{lead.email}</p>}
+                            {lead && suppressionReasonByEmail.has(lead.email) && (
+                              <Badge variant="destructive" className="mt-1">
+                                Suppressed: {statusLabel(suppressionReasonByEmail.get(lead.email)!)}
+                              </Badge>
+                            )}
                           </td>
                           <td className="py-3 pr-4">
                             <Select
@@ -392,14 +431,23 @@ export function CampaignLeadTable({
                           </td>
                           <td className="py-3 pl-4">
                             <div className="flex items-center justify-end">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Remove ${leadDisplay(lead)} from campaign`}
-                                onClick={() => setRemoving(row)}
-                              >
-                                <Trash2Icon className="size-4" />
-                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" aria-label={`Actions for ${leadDisplay(lead)}`}>
+                                    <MoreVerticalIcon className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onSelect={() => setRemoving(row)}>
+                                    <UserMinusIcon />
+                                    Remove from campaign
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem variant="destructive" onSelect={() => setDeletingLead(row)}>
+                                    <Trash2Icon />
+                                    Delete lead permanently
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </td>
                         </tr>
@@ -428,6 +476,27 @@ export function CampaignLeadTable({
             </Button>
             <Button variant="destructive" onClick={handleRemove} disabled={isRemoving}>
               {isRemoving ? "Removing…" : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deletingLead !== null} onOpenChange={(open) => !open && setDeletingLead(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete this lead?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes{" "}
+              {leadDisplay(deletingLead ? leadById.get(deletingLead.lead_id) : undefined)} and removes them from
+              every campaign, not just this one. This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingLead(null)} disabled={isDeletingLead}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteLead} disabled={isDeletingLead}>
+              {isDeletingLead ? "Deleting…" : "Delete permanently"}
             </Button>
           </DialogFooter>
         </DialogContent>

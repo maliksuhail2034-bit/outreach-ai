@@ -50,6 +50,7 @@ export function CampaignSetupWizard({
   sequenceSteps,
   templates,
   sendingWindow,
+  suppressions,
 }: {
   campaign: Campaign;
   campaignLeads: CampaignLead[];
@@ -61,6 +62,7 @@ export function CampaignSetupWizard({
   sequenceSteps: SequenceStep[];
   templates: Tables<"templates">[];
   sendingWindow: SendingWindow;
+  suppressions: Tables<"suppressions">[];
 }) {
   const derivedStep = deriveStep(campaign, campaignLeads, sequenceSteps);
   const [selected, setSelected] = useState<WizardStepId>(derivedStep);
@@ -115,6 +117,7 @@ export function CampaignSetupWizard({
           leadLists={leadLists}
           mailboxes={mailboxes}
           steps={sequenceSteps}
+          suppressions={suppressions}
         />
       )}
 

@@ -61,9 +61,22 @@ describe("renderMergeTags", () => {
     expect(renderMergeTags("No tags here.", lead).text).toBe("No tags here.");
   });
 
+  it("resolves unsubscribe_link from the precomputed unsubscribeUrl field", () => {
+    const withUnsubscribe: MergeTagLead = { ...lead, unsubscribeUrl: "https://app.example.com/unsubscribe/abc" };
+    const result = renderMergeTags("Bye: {{unsubscribe_link}}", withUnsubscribe);
+    expect(result.text).toBe("Bye: https://app.example.com/unsubscribe/abc");
+    expect(result.missingTags).toEqual([]);
+  });
+
+  it("treats a missing unsubscribeUrl the same as any other missing tag", () => {
+    const result = renderMergeTags("{{unsubscribe_link}}", lead);
+    expect(result.text).toBe("");
+    expect(result.missingTags).toEqual(["unsubscribe_link"]);
+  });
+
   it("SUPPORTED_MERGE_TAGS lists exactly the built-in resolver keys", () => {
     expect(SUPPORTED_MERGE_TAGS).toEqual(
-      expect.arrayContaining(["first_name", "last_name", "full_name", "email", "company", "job_title"]),
+      expect.arrayContaining(["first_name", "last_name", "full_name", "email", "company", "job_title", "unsubscribe_link"]),
     );
   });
 });

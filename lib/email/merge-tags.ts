@@ -12,6 +12,10 @@ export interface MergeTagLead {
   company?: string | null;
   title?: string | null;
   custom_fields?: Record<string, unknown> | null;
+  // Precomputed by the caller (lib/email/send-worker.ts, via
+  // lib/email/unsubscribe-token.ts) — this module stays free of token
+  // signing/DB access, same reasoning as every other field here.
+  unsubscribeUrl?: string | null;
 }
 
 type MergeTagResolver = (lead: MergeTagLead) => string | null | undefined;
@@ -26,6 +30,7 @@ const MERGE_TAG_RESOLVERS: Record<string, MergeTagResolver> = {
   email: (lead) => lead.email,
   company: (lead) => lead.company,
   job_title: (lead) => lead.title,
+  unsubscribe_link: (lead) => lead.unsubscribeUrl,
 };
 
 export const SUPPORTED_MERGE_TAGS = Object.keys(MERGE_TAG_RESOLVERS);

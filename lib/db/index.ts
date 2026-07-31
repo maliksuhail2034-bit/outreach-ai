@@ -5,6 +5,7 @@ export * from "./domains";
 export * from "./mailboxes";
 export * from "./lead-lists";
 export * from "./leads";
+export * from "./organizations";
 export * from "./campaigns";
 export * from "./campaign-leads";
 export * from "./sequences";

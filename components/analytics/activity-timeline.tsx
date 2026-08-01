@@ -2,12 +2,18 @@ import { Badge } from "@/components/ui/badge";
 
 export interface TimelineEntry {
   id: string;
-  source: "email_event" | "send_attempt";
+  source: "email_event" | "send_attempt" | "warmup_event";
   label: string;
   variant: "default" | "destructive" | "secondary" | "outline";
   detail?: string | null;
   timestamp: string;
 }
+
+const SOURCE_LABEL: Record<TimelineEntry["source"], string> = {
+  email_event: "Event",
+  send_attempt: "Attempt",
+  warmup_event: "Warmup",
+};
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -20,16 +26,26 @@ function formatDate(value: string) {
   return dateFormatter.format(new Date(value));
 }
 
-export function ActivityTimeline({ entries }: { entries: TimelineEntry[] }) {
+export function ActivityTimeline({
+  entries,
+  title = "Activity timeline",
+  description = "Latest email events and send attempts, merged.",
+  emptyLabel = "Nothing recorded yet.",
+}: {
+  entries: TimelineEntry[];
+  title?: string;
+  description?: string;
+  emptyLabel?: string;
+}) {
   return (
     <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
       <div>
-        <h2 className="font-semibold tracking-tight">Activity timeline</h2>
-        <p className="text-sm text-muted-foreground">Latest email events and send attempts, merged.</p>
+        <h2 className="font-semibold tracking-tight">{title}</h2>
+        <p className="text-sm text-muted-foreground">{description}</p>
       </div>
 
       {entries.length === 0 ? (
-        <p className="mt-6 text-sm text-muted-foreground">Nothing recorded yet.</p>
+        <p className="mt-6 text-sm text-muted-foreground">{emptyLabel}</p>
       ) : (
         <ol className="relative mt-6 space-y-5">
           <span aria-hidden className="absolute inset-y-2 left-[3px] w-px bg-border" />
@@ -43,7 +59,7 @@ export function ActivityTimeline({ entries }: { entries: TimelineEntry[] }) {
                 <div className="flex items-center gap-2">
                   <Badge variant={entry.variant}>{entry.label}</Badge>
                   <span className="text-xs uppercase tracking-wide text-muted-foreground/60">
-                    {entry.source === "email_event" ? "Event" : "Attempt"}
+                    {SOURCE_LABEL[entry.source]}
                   </span>
                 </div>
                 {entry.detail && (

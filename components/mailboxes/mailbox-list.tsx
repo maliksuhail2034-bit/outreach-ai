@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
-import { MailPlusIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { BarChart3Icon, MailPlusIcon, PencilIcon, Trash2Icon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
@@ -101,6 +102,11 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <Button variant="ghost" size="icon" aria-label={`View analytics for ${mailbox.email}`} asChild>
+                    <Link href={`/mailboxes/${mailbox.id}/analytics`}>
+                      <BarChart3Icon className="size-4" />
+                    </Link>
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

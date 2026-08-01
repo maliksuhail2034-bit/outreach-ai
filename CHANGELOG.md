@@ -3,6 +3,38 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-01 — Phase 2C: Mailbox Analytics Platform
+
+- Added a per-mailbox analytics page (`/mailboxes/[mailboxId]/analytics`):
+  overview (sent/delivered/open/click/reply/bounce/spam-complaint rates,
+  current daily volume, warmup stage, health score, reputation score),
+  a Today/7d/30d/90d/custom timeline with daily charts, trend cards vs.
+  the prior period, a Warmup Analytics section (ramp progress, next
+  scheduled increase, historical volume, event history), and a
+  Deliverability Analytics section (SPF/DKIM/DMARC/MX/domain verification,
+  mailbox verification, mailbox health).
+- Added `lib/analytics/mailbox-metrics.ts` (`summarizeMailboxMetrics`,
+  `compareMailboxMetrics`), built on the existing Analytics Foundation
+  engine (`rate`, `compareMetrics`) — the same pattern as
+  `campaign-metrics.ts`.
+- Extended `lib/db/email-events.ts`'s `listEmailEvents` with an optional
+  `mailboxId` filter (additive; existing callers unaffected).
+- Widened `components/analytics/activity-timeline.tsx` to accept a
+  `warmup_event` source and a configurable title/description/empty label,
+  so the Mailbox Analytics page could reuse it for warmup event history
+  instead of building a second timeline component.
+- Added a reputation-provider seam (`lib/deliverability/reputation-provider.ts`
+  + `PlaceholderReputationProvider` + `get-reputation-provider.ts`), mirroring
+  the existing `DnsProvider`/`Forecaster` interface-placeholder-factory
+  pattern — architecture for inbox placement, blacklist monitoring, spam
+  testing, and reputation scoring. No external integration yet; every
+  signal returns `null` (never fabricated) until a real provider lands.
+- Added a "View analytics" link from `components/mailboxes/mailbox-list.tsx`
+  to each mailbox's new analytics page.
+- No database migrations — built entirely on existing tables
+  (`email_events`, `analytics_events`, `warmup_profiles`, `warmup_events`,
+  `warmup_stats`, `mailbox_health`, `domains`).
+
 ## 2026-08-01 — Campaign Analytics (`926b655`)
 
 - Added campaign-level analytics: overview metrics, timeline, trends, and a

@@ -1,0 +1,329 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import {
+  CalendarCheckIcon,
+  EyeIcon,
+  MailCheckIcon,
+  MailWarningIcon,
+  MessageCircleReplyIcon,
+  MousePointerClickIcon,
+  SendIcon,
+  ThumbsUpIcon,
+} from "lucide-react";
+
+import { getUser } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
+import {
+  getCampaign,
+  getOrCreateOrganizationForUser,
+  listAnalyticsEvents,
+  listCampaignLeads,
+  listEmailEvents,
+  listSendAttemptsForCampaignLeads,
+} from "@/lib/db";
+import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
+import { summarizeCampaignMetrics } from "@/lib/analytics/campaign-metrics";
+import { compareMetrics } from "@/lib/analytics/comparisons";
+import { groupCounts, total } from "@/lib/analytics/metrics";
+import type { DateRangePreset } from "@/lib/analytics/types";
+import { dateRangeQuerySchema } from "@/lib/validations/analytics";
+import { FadeIn } from "@/components/motion/fade-in";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { StatCard } from "@/components/dashboard/stat-card";
+import { TrendCard } from "@/components/dashboard/trend-card";
+import { PercentageCard } from "@/components/dashboard/percentage-card";
+import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card";
+import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
+
+// Single-campaign scope, so a generous limit (unlike the org-wide
+// /analytics page's 500) still comfortably covers a campaign's full
+// history without pagination.
+const EVENT_FETCH_LIMIT = 5000;
+
+const RANGE_OPTIONS: { preset: Exclude<DateRangePreset, "custom">; label: string }[] = [
+  { preset: "today", label: "Today" },
+  { preset: "7d", label: "7 Days" },
+  { preset: "30d", label: "30 Days" },
+  { preset: "90d", label: "90 Days" },
+];
+
+function attemptTimestamp(attempt: { resolved_at: string | null; claimed_at: string }) {
+  return attempt.resolved_at ?? attempt.claimed_at;
+}
+
+export default async function CampaignAnalyticsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ campaignId: string }>;
+  searchParams: Promise<{ range?: string; start?: string; end?: string }>;
+}) {
+  const { campaignId } = await params;
+  const user = await getUser();
+  // app/(app)/layout.tsx already redirects unauthenticated requests before
+  // this page renders; this narrows the type for what follows.
+  if (!user) return null;
+
+  const supabase = await createClient();
+
+  let campaign;
+  try {
+    campaign = await getCampaign(supabase, user.id, campaignId);
+  } catch {
+    notFound();
+  }
+
+  const namePrefix = user.email?.split("@")[0]?.trim();
+  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+
+  const query = await searchParams;
+  const parsedQuery = dateRangeQuerySchema.safeParse({ preset: query.range ?? "7d", start: query.start, end: query.end });
+  const preset: DateRangePreset = parsedQuery.success ? parsedQuery.data.preset : "7d";
+  const currentRange =
+    preset === "custom" && parsedQuery.success && parsedQuery.data.start && parsedQuery.data.end
+      ? resolveDateRange("custom", { start: parsedQuery.data.start, end: parsedQuery.data.end })
+      : resolveDateRange(preset === "custom" ? "7d" : preset);
+  const priorRange = previousDateRange(currentRange);
+
+  const [campaignLeads, emailEvents, analyticsEvents] = await Promise.all([
+    listCampaignLeads(supabase, campaignId),
+    listEmailEvents(supabase, campaignId, { limit: EVENT_FETCH_LIMIT }),
+    listAnalyticsEvents(supabase, organization.id, {
+      subjectType: "campaign",
+      subjectId: campaignId,
+      limit: EVENT_FETCH_LIMIT,
+    }),
+  ]);
+
+  const leadIds = (campaignLeads ?? []).map((row) => row.id);
+  const sendAttempts = (await listSendAttemptsForCampaignLeads(supabase, leadIds)) ?? [];
+  const events = emailEvents ?? [];
+  const sentAttempts = sendAttempts.filter((attempt) => attempt.status === "sent");
+
+  // --- Campaign Overview (all-time) — reuses lib/analytics/metrics.ts's
+  // groupCounts + lib/analytics/campaign-metrics.ts's summarizeCampaignMetrics
+  // rather than a bespoke calculation.
+  const eventCounts = groupCounts(events, (event) => event.event_type);
+  const analyticsCounts = groupCounts(analyticsEvents, (event) => event.event_type);
+
+  const overview = summarizeCampaignMetrics({
+    sentCount: sentAttempts.length,
+    deliveredCount: eventCounts.delivered ?? 0,
+    openedCount: eventCounts.opened ?? 0,
+    clickedCount: eventCounts.clicked ?? 0,
+    repliedCount: eventCounts.replied ?? 0,
+    bouncedCount: eventCounts.bounced ?? 0,
+    positiveReplyCount: analyticsCounts.positive_reply ?? 0,
+    meetingBookedCount: analyticsCounts.meeting_booked ?? 0,
+  });
+
+  // --- Campaign Timeline + Trends — reuses lib/analytics/aggregations.ts's
+  // bucketByDayInRange for both the daily chart data and (via total()) the
+  // period totals that feed the trend comparison, so there's only one pass
+  // over each timestamp list per metric.
+  const sentTimestamps = sentAttempts.map(attemptTimestamp);
+  const repliedTimestamps = events.filter((e) => e.event_type === "replied").map((e) => e.created_at);
+  const openedTimestamps = events.filter((e) => e.event_type === "opened").map((e) => e.created_at);
+  const clickedTimestamps = events.filter((e) => e.event_type === "clicked").map((e) => e.created_at);
+
+  const dailySends = bucketByDayInRange(sentTimestamps, currentRange);
+  const dailyReplies = bucketByDayInRange(repliedTimestamps, currentRange);
+  const dailyOpens = bucketByDayInRange(openedTimestamps, currentRange);
+  const dailyClicks = bucketByDayInRange(clickedTimestamps, currentRange);
+
+  const sendsTotal = total(dailySends.map((d) => d.value));
+  const repliesTotal = total(dailyReplies.map((d) => d.value));
+  const opensTotal = total(dailyOpens.map((d) => d.value));
+  const clicksTotal = total(dailyClicks.map((d) => d.value));
+
+  const priorSends = total(bucketByDayInRange(sentTimestamps, priorRange).map((d) => d.value));
+  const priorReplies = total(bucketByDayInRange(repliedTimestamps, priorRange).map((d) => d.value));
+  const priorOpens = total(bucketByDayInRange(openedTimestamps, priorRange).map((d) => d.value));
+  const priorClicks = total(bucketByDayInRange(clickedTimestamps, priorRange).map((d) => d.value));
+
+  // Trend calculations reuse the existing trend engine (compareMetrics ->
+  // calculateTrend) directly — see lib/analytics/trends.ts.
+  const trends = compareMetrics(
+    { sends: sendsTotal, replies: repliesTotal, opens: opensTotal, clicks: clicksTotal },
+    { sends: priorSends, replies: priorReplies, opens: priorOpens, clicks: priorClicks },
+  );
+
+  // --- Funnel (all-time) — "Won" is a placeholder: no deals/revenue table
+  // exists yet, so this is never queried, only shown as the seam a future
+  // Revenue Analytics feature fills in without restructuring the funnel.
+  const funnelStages: FunnelStage[] = [
+    { key: "sent", label: "Sent", value: overview.sentCount },
+    { key: "delivered", label: "Delivered", value: overview.deliveredCount },
+    { key: "opened", label: "Opened", value: overview.openedCount },
+    { key: "clicked", label: "Clicked", value: overview.clickedCount },
+    { key: "replied", label: "Replied", value: overview.repliedCount },
+    { key: "positive_reply", label: "Positive reply", value: overview.positiveReplyCount },
+    { key: "meeting_booked", label: "Meeting booked", value: overview.meetingBookedCount },
+    { key: "won", label: "Won", value: 0, placeholder: true },
+  ];
+
+  const activeRangeLabel = RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
+
+  return (
+    <div className="space-y-6 sm:space-y-8">
+      <FadeIn>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{campaign.name}</h1>
+            <p className="mt-1 text-sm text-muted-foreground sm:text-base">Campaign analytics and performance.</p>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/campaigns/${campaignId}`}>Back to campaign</Link>
+          </Button>
+        </div>
+      </FadeIn>
+
+      <FadeIn delay={0.05}>
+        <div>
+          <h2 className="font-semibold tracking-tight">Overview</h2>
+          <p className="text-sm text-muted-foreground">All-time totals for this campaign.</p>
+        </div>
+      </FadeIn>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
+          <FadeIn delay={0.1}>
+            <StatCard title="Emails sent" value={overview.sentCount} icon={<SendIcon className="size-4" />} isEmpty={overview.sentCount === 0} emptyHint="Will appear once this campaign starts sending." />
+          </FadeIn>
+          <FadeIn delay={0.12}>
+            <StatCard title="Delivered" value={overview.deliveredCount} icon={<MailCheckIcon className="size-4" />} isEmpty={overview.deliveredCount === 0} emptyHint="Delivery confirmations aren't tracked yet." />
+          </FadeIn>
+          <FadeIn delay={0.14}>
+            <StatCard title="Opened" value={overview.openedCount} icon={<EyeIcon className="size-4" />} isEmpty={overview.openedCount === 0} emptyHint="Will appear once a lead opens an email." />
+          </FadeIn>
+          <FadeIn delay={0.16}>
+            <StatCard title="Clicked" value={overview.clickedCount} icon={<MousePointerClickIcon className="size-4" />} isEmpty={overview.clickedCount === 0} emptyHint="Will appear once a lead clicks a link." />
+          </FadeIn>
+          <FadeIn delay={0.18}>
+            <StatCard title="Replies" value={overview.repliedCount} icon={<MessageCircleReplyIcon className="size-4" />} isEmpty={overview.repliedCount === 0} emptyHint="Will appear once a lead replies." />
+          </FadeIn>
+          <FadeIn delay={0.2}>
+            <StatCard
+              title="Positive replies"
+              value={overview.positiveReplyCount}
+              icon={<ThumbsUpIcon className="size-4" />}
+              isEmpty={overview.positiveReplyCount === 0}
+              emptyHint="Sourced from the analytics event model — populates once reply sentiment is recorded there."
+            />
+          </FadeIn>
+          <FadeIn delay={0.22}>
+            <StatCard
+              title="Meetings booked"
+              value={overview.meetingBookedCount}
+              icon={<CalendarCheckIcon className="size-4" />}
+              isEmpty={overview.meetingBookedCount === 0}
+              emptyHint="Sourced from the analytics event model — populates once meeting bookings are recorded there."
+            />
+          </FadeIn>
+          <FadeIn delay={0.24}>
+            <PercentageCard title="Delivery rate" value={overview.deliveryRate} icon={<MailCheckIcon className="size-4" />} description="Delivered ÷ sent" />
+          </FadeIn>
+          <FadeIn delay={0.26}>
+            <PercentageCard title="Open rate" value={overview.openRate} icon={<EyeIcon className="size-4" />} description="Opened ÷ delivered" />
+          </FadeIn>
+          <FadeIn delay={0.28}>
+            <PercentageCard title="Reply rate" value={overview.replyRate} icon={<MessageCircleReplyIcon className="size-4" />} description="Replied ÷ sent" />
+          </FadeIn>
+          <FadeIn delay={0.3}>
+            <PercentageCard title="Bounce rate" value={overview.bounceRate} icon={<MailWarningIcon className="size-4" />} description="Bounced ÷ sent" />
+          </FadeIn>
+        </div>
+      </div>
+
+      <FadeIn delay={0.35}>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6 sm:pt-8">
+          <div>
+            <h2 className="font-semibold tracking-tight">Trends</h2>
+            <p className="text-sm text-muted-foreground">
+              Daily activity and trend vs. the previous {activeRangeLabel.toLowerCase()}.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex gap-1.5">
+              {RANGE_OPTIONS.map((option) => (
+                <Link key={option.preset} href={`/campaigns/${campaignId}/analytics?range=${option.preset}`}>
+                  <Badge variant={preset === option.preset ? "default" : "outline"} className="cursor-pointer">
+                    {option.label}
+                  </Badge>
+                </Link>
+              ))}
+            </div>
+            <form className="flex items-end gap-2" action={`/campaigns/${campaignId}/analytics`} method="get">
+              <input type="hidden" name="range" value="custom" />
+              <div className="space-y-1">
+                <Label htmlFor="start" className="text-xs text-muted-foreground">
+                  From
+                </Label>
+                <Input id="start" name="start" type="date" defaultValue={preset === "custom" ? currentRange.start : undefined} className="h-8 w-36" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="end" className="text-xs text-muted-foreground">
+                  To
+                </Label>
+                <Input id="end" name="end" type="date" defaultValue={preset === "custom" ? currentRange.end : undefined} className="h-8 w-36" />
+              </div>
+              <Button type="submit" variant="outline" size="sm">
+                Apply
+              </Button>
+            </form>
+          </div>
+        </div>
+      </FadeIn>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-4">
+          <FadeIn delay={0.4}>
+            <TrendCard title="Sends" value={sendsTotal} trend={trends.sends} icon={<SendIcon className="size-4" />} />
+          </FadeIn>
+          <FadeIn delay={0.42}>
+            <TrendCard title="Replies" value={repliesTotal} trend={trends.replies} icon={<MessageCircleReplyIcon className="size-4" />} />
+          </FadeIn>
+          <FadeIn delay={0.44}>
+            <TrendCard title="Opens" value={opensTotal} trend={trends.opens} icon={<EyeIcon className="size-4" />} />
+          </FadeIn>
+          <FadeIn delay={0.46}>
+            <TrendCard title="Clicks" value={clicksTotal} trend={trends.clicks} icon={<MousePointerClickIcon className="size-4" />} />
+          </FadeIn>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <FadeIn delay={0.5}>
+          <DailyBarChart title="Daily sends" description={`Sends across the selected range.`} data={dailySends} />
+        </FadeIn>
+        <FadeIn delay={0.52}>
+          <DailyBarChart title="Daily replies" description={`Replies across the selected range.`} data={dailyReplies} barClassName="bg-secondary-foreground/70" />
+        </FadeIn>
+        <FadeIn delay={0.54}>
+          <DailyBarChart title="Daily opens" description={`Opens across the selected range.`} data={dailyOpens} barClassName="bg-secondary-foreground/70" />
+        </FadeIn>
+        <FadeIn delay={0.56}>
+          <DailyBarChart title="Daily clicks" description={`Clicks across the selected range.`} data={dailyClicks} barClassName="bg-secondary-foreground/70" />
+        </FadeIn>
+      </div>
+
+      <FadeIn delay={0.6}>
+        <div className="border-t border-border pt-6 sm:pt-8">
+          <h2 className="font-semibold tracking-tight">Funnel</h2>
+          <p className="text-sm text-muted-foreground">All-time conversion path for this campaign.</p>
+        </div>
+      </FadeIn>
+
+      <FadeIn delay={0.65}>
+        <FunnelCard
+          title="Campaign funnel"
+          description="Sent through to won — Won is a placeholder for a future Revenue Analytics integration."
+          stages={funnelStages}
+        />
+      </FadeIn>
+    </div>
+  );
+}

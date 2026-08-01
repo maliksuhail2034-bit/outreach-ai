@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BarChart3Icon } from "lucide-react";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -15,6 +17,7 @@ import {
 import { resolveSendingWindow } from "@/lib/email/scheduling";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignForm } from "@/components/campaigns/campaign-form";
 import { CampaignLeadTable } from "@/components/campaigns/campaign-lead-table";
@@ -71,9 +74,17 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   return (
     <div className="space-y-6 sm:space-y-8">
       <FadeIn>
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{campaign.name}</h1>
-          <Badge variant={STATUS_VARIANT[campaign.status] ?? "outline"}>{statusLabel(campaign.status)}</Badge>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{campaign.name}</h1>
+            <Badge variant={STATUS_VARIANT[campaign.status] ?? "outline"}>{statusLabel(campaign.status)}</Badge>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/campaigns/${campaignId}/analytics`}>
+              <BarChart3Icon />
+              View analytics
+            </Link>
+          </Button>
         </div>
       </FadeIn>
 

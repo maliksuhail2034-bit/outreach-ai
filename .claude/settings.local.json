@@ -7,7 +7,21 @@
       "Bash(npm install *)",
       "Bash(node -e \"const z = require\\('zod'\\); console.log\\(Object.keys\\(z\\).filter\\(k => k.toLowerCase\\(\\).includes\\('email'\\)\\)\\);\")",
       "Bash(node -e ' *)",
-      "Bash(xargs grep -l \"script\" -i)"
+      "Bash(xargs grep -l \"script\" -i)",
+      "Bash(\"/c/Users/pc world/scoop/shims/supabase.exe\" db push)",
+      "Bash(\"/c/Users/pc world/scoop/shims/supabase.exe\" migration list)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\);console.log\\(j.migrations.find\\(m=>m.local==='20260731110000'\\)\\);}\\)\")",
+      "Bash(node .org-verify-backfill.mjs)",
+      "Bash(node .org-verify-rls.mjs)",
+      "Bash(node .org-verify-helper-fn.mjs)",
+      "Bash(npx vitest *)",
+      "Bash(node .org-verify-cleanup.mjs)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(npm ls *)",
+      "Bash(npm audit *)",
+      "Bash(git status *)"
     ]
   }
 }

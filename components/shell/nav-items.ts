@@ -1,5 +1,6 @@
 import {
   BarChart3Icon,
+  CreditCardIcon,
   LayoutDashboardIcon,
   MailIcon,
   MegaphoneIcon,
@@ -23,5 +24,6 @@ export const navItems: NavItem[] = [
   { title: "Campaigns", href: "/campaigns", icon: MegaphoneIcon },
   { title: "Mailboxes", href: "/mailboxes", icon: MailIcon },
   { title: "Analytics", href: "/analytics", icon: BarChart3Icon },
+  { title: "Billing", href: "/billing", icon: CreditCardIcon },
   { title: "Settings", href: "/settings", icon: SettingsIcon },
 ];

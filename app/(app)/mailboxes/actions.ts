@@ -7,6 +7,7 @@ import { createMailbox, deleteMailbox, getMailboxImapCredential, updateMailbox }
 import { mailboxSchema, type MailboxInput } from "@/lib/validations/mailboxes";
 import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { ImapReplyChecker } from "@/lib/email/reply-providers/imap";
+import { assertWithinMailboxLimit } from "@/lib/billing/limits";
 import type { Tables } from "@/types/database.types";
 
 // Server Functions are reachable directly via POST regardless of which UI
@@ -24,6 +25,8 @@ export async function createMailboxAction(input: MailboxInput) {
 
   const user = await requireUser();
   const supabase = await createClient();
+
+  await assertWithinMailboxLimit(supabase, user.id, user.email);
 
   await createMailbox(supabase, {
     user_id: user.id,

@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createLead } from "@/lib/db";
 import { leadCsvRowSchema } from "@/lib/validations/leads";
+import { getRemainingLeadQuota } from "@/lib/billing/limits";
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -97,6 +98,7 @@ export async function importLeadsAction(
     .eq("user_id", user.id);
   if (existingError) throw existingError;
   const knownEmails = new Set(existingRows.map((row) => row.email.toLowerCase()));
+  let remainingQuota = await getRemainingLeadQuota(supabase, user.id, user.email);
 
   let imported = 0;
   let skippedDuplicates = 0;
@@ -121,6 +123,14 @@ export async function importLeadsAction(
       continue;
     }
 
+    if (remainingQuota <= 0) {
+      failed += 1;
+      if (failedRows.length < MAX_FAILED_ROWS_SHOWN) {
+        failedRows.push({ row: rowNumber, reason: "Plan lead limit reached. Upgrade to import more." });
+      }
+      continue;
+    }
+
     try {
       await createLead(supabase, {
         user_id: user.id,
@@ -133,6 +143,7 @@ export async function importLeadsAction(
       });
       knownEmails.add(email);
       imported += 1;
+      remainingQuota -= 1;
     } catch {
       failed += 1;
       if (failedRows.length < MAX_FAILED_ROWS_SHOWN) {

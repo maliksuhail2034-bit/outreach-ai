@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createCampaign, deleteCampaign, updateCampaign } from "@/lib/db";
 import { campaignSchema, type CampaignInput } from "@/lib/validations/campaigns";
+import { assertWithinCampaignLimit, assertWithinDailySendLimit } from "@/lib/billing/limits";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form (react-hook-
@@ -14,6 +15,9 @@ export async function createCampaignAction(input: CampaignInput) {
   const parsed = campaignSchema.parse(input);
   const user = await requireUser();
   const supabase = await createClient();
+
+  await assertWithinCampaignLimit(supabase, user.id, user.email);
+  await assertWithinDailySendLimit(supabase, user.id, user.email, parsed.dailyLimit);
 
   const campaign = await createCampaign(supabase, {
     user_id: user.id,
@@ -32,6 +36,8 @@ export async function updateCampaignAction(id: string, input: CampaignInput) {
   const parsed = campaignSchema.parse(input);
   const user = await requireUser();
   const supabase = await createClient();
+
+  await assertWithinDailySendLimit(supabase, user.id, user.email, parsed.dailyLimit, id);
 
   await updateCampaign(supabase, user.id, id, {
     name: parsed.name,

@@ -15,6 +15,7 @@ import {
 } from "@/lib/db";
 import { leadListSchema, type LeadListInput } from "@/lib/validations/lead-lists";
 import { leadSchema, type LeadInput } from "@/lib/validations/leads";
+import { assertWithinLeadLimit } from "@/lib/billing/limits";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form (react-hook-
@@ -60,6 +61,8 @@ export async function createLeadAction(input: LeadInput) {
   const parsed = leadSchema.parse(input);
   const user = await requireUser();
   const supabase = await createClient();
+
+  await assertWithinLeadLimit(supabase, user.id, user.email);
 
   await createLead(supabase, {
     user_id: user.id,

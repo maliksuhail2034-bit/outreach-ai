@@ -5,6 +5,7 @@ import { CheckIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
+import type { CampaignReadinessResult } from "@/lib/campaigns/readiness";
 import type { SendingWindow } from "@/lib/validations/sending-window";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,7 @@ export function CampaignSetupWizard({
   templates,
   sendingWindow,
   suppressions,
+  readiness,
 }: {
   campaign: Campaign;
   campaignLeads: CampaignLead[];
@@ -63,6 +65,7 @@ export function CampaignSetupWizard({
   templates: Tables<"templates">[];
   sendingWindow: SendingWindow;
   suppressions: Tables<"suppressions">[];
+  readiness: CampaignReadinessResult;
 }) {
   const derivedStep = deriveStep(campaign, campaignLeads, sequenceSteps);
   const [selected, setSelected] = useState<WizardStepId>(derivedStep);
@@ -103,8 +106,8 @@ export function CampaignSetupWizard({
             </Button>
           </div>
         ))}
-        <Badge variant="outline" className={cn("ml-auto")}>
-          Draft — not sending yet
+        <Badge variant={readiness.ready ? "default" : "outline"} className={cn("ml-auto")}>
+          {readiness.ready ? "Ready to launch" : "Draft — not sending yet"}
         </Badge>
       </div>
 
@@ -146,6 +149,7 @@ export function CampaignSetupWizard({
           mailboxes={mailboxes}
           sequenceSteps={sequenceSteps}
           sendingWindow={sendingWindow}
+          readiness={readiness}
         />
       )}
     </div>

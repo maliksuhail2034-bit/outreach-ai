@@ -3,9 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { toast } from "sonner";
+import { AlertTriangleIcon, InfoIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
+import type { CampaignReadinessResult } from "@/lib/campaigns/readiness";
 import type { SendingWindow } from "@/lib/validations/sending-window";
 import { launchCampaignAction } from "@/app/(app)/campaigns/[campaignId]/actions";
 import { Badge } from "@/components/ui/badge";
@@ -37,12 +39,14 @@ export function CampaignReviewStep({
   mailboxes,
   sequenceSteps,
   sendingWindow,
+  readiness,
 }: {
   campaign: Campaign;
   campaignLeads: CampaignLead[];
   mailboxes: MailboxSafe[];
   sequenceSteps: SequenceStep[];
   sendingWindow: SendingWindow;
+  readiness: CampaignReadinessResult;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -107,7 +111,28 @@ export function CampaignReviewStep({
           </ul>
         </div>
 
-        <Button onClick={handleLaunch} disabled={isPending}>
+        {readiness.errors.length > 0 && (
+          <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            {readiness.errors.map((error) => (
+              <p key={error} className="flex items-start gap-2">
+                <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+                {error}
+              </p>
+            ))}
+          </div>
+        )}
+        {readiness.warnings.length > 0 && (
+          <div className="space-y-1 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+            {readiness.warnings.map((warning) => (
+              <p key={warning} className="flex items-start gap-2">
+                <InfoIcon className="mt-0.5 size-4 shrink-0" />
+                {warning}
+              </p>
+            ))}
+          </div>
+        )}
+
+        <Button onClick={handleLaunch} disabled={isPending || !readiness.ready}>
           {isPending ? "Launching…" : "Launch campaign"}
         </Button>
       </CardContent>

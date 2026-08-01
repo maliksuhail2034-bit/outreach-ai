@@ -8,6 +8,7 @@ import type { Tables } from "@/types/database.types";
 import {
   addLeadsToCampaign,
   addLeadToCampaign,
+  cancelActiveCampaignLeads,
   createSequenceStep,
   deleteLead,
   deleteSequenceStep,
@@ -18,6 +19,7 @@ import {
   getSendAttempt,
   getSuppressedEmails,
   listCampaignLeads,
+  listDomains,
   listLeads,
   listMailboxes,
   listSequences,
@@ -30,6 +32,7 @@ import {
   updateSequenceStep,
 } from "@/lib/db";
 import { computeNextSchedule } from "@/lib/email/scheduling";
+import { checkCampaignReadiness, resolveLeadMailboxId } from "@/lib/campaigns/readiness";
 import { campaignLeadSchema, type CampaignLeadInput } from "@/lib/validations/campaign-leads";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
 
@@ -93,36 +96,25 @@ export async function launchCampaignAction(campaignId: string) {
   }
 
   const steps = await loadSequenceSteps(supabase, campaignId);
-  if (steps.length === 0) {
-    throw new Error("Add at least one sequence step before launching.");
-  }
-
   const leads = await listCampaignLeads(supabase, campaignId);
-  if (leads.length === 0) {
-    throw new Error("Enroll at least one lead before launching.");
-  }
-
   const mailboxes = await listMailboxes(supabase, user.id);
-  const mailboxById = new Map(mailboxes.map((mailbox) => [mailbox.id, mailbox]));
+  const domains = await listDomains(supabase, user.id);
 
-  const unresolvedCount = leads.filter((lead) => !(lead.mailbox_id ?? campaign.default_mailbox_id)).length;
-  if (unresolvedCount > 0) {
-    throw new Error(
-      `${unresolvedCount} lead${unresolvedCount === 1 ? "" : "s"} have no mailbox assigned. ` +
-        "Set a default mailbox or assign one per lead.",
-    );
-  }
-
-  const inactiveMailboxNames = new Set<string>();
-  for (const lead of leads) {
-    const effectiveMailboxId = lead.mailbox_id ?? campaign.default_mailbox_id;
-    const mailbox = effectiveMailboxId ? mailboxById.get(effectiveMailboxId) : undefined;
-    if (mailbox && mailbox.status !== "active") {
-      inactiveMailboxNames.add(mailbox.display_name || mailbox.email);
-    }
-  }
-  if (inactiveMailboxNames.size > 0) {
-    throw new Error(`These mailboxes aren't active: ${[...inactiveMailboxNames].join(", ")}.`);
+  // Same check the campaign detail/wizard UI runs to show readiness ahead
+  // of the click (see lib/campaigns/readiness.ts) — re-run here because
+  // Server Functions are reachable directly via POST regardless of what the
+  // UI already validated. Only `errors` block the launch; `warnings` (no
+  // sending domain, mailbox limits) are advisory and don't stop it — see
+  // that module for why.
+  const readiness = checkCampaignReadiness({
+    campaign,
+    campaignLeads: leads,
+    sequenceStepCount: steps.length,
+    mailboxes,
+    domainCount: (domains ?? []).length,
+  });
+  if (!readiness.ready) {
+    throw new Error(readiness.errors.join(" "));
   }
 
   const activatedCampaign = { ...campaign, status: "active" as const };
@@ -140,11 +132,74 @@ export async function launchCampaignAction(campaignId: string) {
     // would silently never be picked up by the send worker.
     let scheduledLead = lead;
     if (!lead.mailbox_id) {
-      scheduledLead = await updateCampaignLead(supabase, lead.id, { mailbox_id: campaign.default_mailbox_id });
+      scheduledLead = await updateCampaignLead(supabase, lead.id, {
+        mailbox_id: resolveLeadMailboxId(lead, campaign),
+      });
     }
 
     await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps);
   }
+
+  revalidatePath("/campaigns");
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+// --- Execution controls (Phase 2E) -----------------------------------------
+// Pause/resume/stop, alongside the launch action above. All three are thin:
+// claim_due_sends() already only ever selects campaigns.status = 'active'
+// (see 20260730100020_claim_due_sends.sql), so pausing/stopping needs no
+// change to campaign_leads to take effect immediately — new claims simply
+// stop. Resuming needs no change either: already-scheduled leads
+// (status = 'active', next_send_at set) start being claimed again as soon
+// as the campaign is active.
+
+export async function pauseCampaignAction(campaignId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const campaign = await getCampaign(supabase, user.id, campaignId);
+  if (campaign.status !== "active") {
+    throw new Error("Only a running campaign can be paused.");
+  }
+
+  await updateCampaign(supabase, user.id, campaignId, { status: "paused" });
+
+  revalidatePath("/campaigns");
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function resumeCampaignAction(campaignId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const campaign = await getCampaign(supabase, user.id, campaignId);
+  if (campaign.status !== "paused") {
+    throw new Error("Only a paused campaign can be resumed.");
+  }
+
+  await updateCampaign(supabase, user.id, campaignId, { status: "active" });
+
+  revalidatePath("/campaigns");
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+// Stopping is terminal (unlike pausing): every lead still waiting in the
+// pipeline is cancelled rather than left scheduled, so nothing resumes
+// sending if the campaign's status is ever changed back to 'active' through
+// the raw status editor on CampaignForm. Reuses the 'cancelled' status
+// added in Phase 2D specifically for "deliberately stopped, not completed
+// or failed" — see 20260804100000_sending_limits.sql.
+export async function stopCampaignAction(campaignId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const campaign = await getCampaign(supabase, user.id, campaignId);
+  if (campaign.status !== "active" && campaign.status !== "paused") {
+    throw new Error("Only a running or paused campaign can be stopped.");
+  }
+
+  await cancelActiveCampaignLeads(supabase, campaignId);
+  await updateCampaign(supabase, user.id, campaignId, { status: "completed" });
 
   revalidatePath("/campaigns");
   revalidatePath(`/campaigns/${campaignId}`);

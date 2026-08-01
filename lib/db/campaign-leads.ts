@@ -106,6 +106,22 @@ export async function listActiveCampaignLeadsForMailbox(supabase: Client, mailbo
   return data;
 }
 
+// Stopping a campaign (see stopCampaignAction) cancels every lead still
+// waiting in the pipeline in one statement, rather than looping
+// updateCampaignLead per row — atomic, and avoids N round-trips for a
+// campaign with many enrolled leads. 'cancelled' leaves the row queryable
+// (unlike a delete) while guaranteeing claim_due_sends() (status = 'active'
+// only) never picks it up again — see 20260804100000_sending_limits.sql for
+// why 'cancelled' exists.
+export async function cancelActiveCampaignLeads(supabase: Client, campaignId: string) {
+  const { error } = await supabase
+    .from("campaign_leads")
+    .update({ status: "cancelled", next_send_at: null, locked_until: null })
+    .eq("campaign_id", campaignId)
+    .in("status", ["pending", "active"]);
+  if (error) throw error;
+}
+
 // Wraps claim_due_sends() (supabase/migrations/20260730100020_claim_due_sends.sql).
 // Must be called with lib/supabase/admin.ts — same carve-out as
 // recordEmailEvent/getMailboxCredentials: privileged, no user in the loop.

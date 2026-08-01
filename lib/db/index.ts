@@ -3,6 +3,7 @@ export * from "./billing";
 export * from "./profiles";
 export * from "./settings";
 export * from "./domains";
+export * from "./deliverability";
 export * from "./mailboxes";
 export * from "./lead-lists";
 export * from "./leads";

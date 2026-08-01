@@ -1,7 +1,12 @@
+import Link from "next/link";
+import { ShieldCheckIcon } from "lucide-react";
+
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getProfile, getSettings } from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProfileForm } from "./profile-form";
 import { SettingsForm } from "./settings-form";
 
@@ -45,6 +50,25 @@ export default async function SettingsPage() {
             timezone: settings?.timezone ?? "UTC",
           }}
         />
+      </FadeIn>
+
+      <FadeIn delay={0.15}>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <ShieldCheckIcon className="size-4" />
+              </span>
+              <div>
+                <CardTitle>Deliverability</CardTitle>
+                <CardDescription>Domain and mailbox health, DNS verification, and health scores.</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/settings/deliverability">View</Link>
+            </Button>
+          </CardHeader>
+        </Card>
       </FadeIn>
     </div>
   );

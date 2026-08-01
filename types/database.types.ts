@@ -164,13 +164,57 @@ export type Database = {
           },
         ]
       }
+      domain_dns_checks: {
+        Row: {
+          checked_at: string
+          created_at: string
+          detail: string | null
+          domain_id: string
+          id: string
+          record_type: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          checked_at?: string
+          created_at?: string
+          detail?: string | null
+          domain_id: string
+          id?: string
+          record_type: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          checked_at?: string
+          created_at?: string
+          detail?: string | null
+          domain_id?: string
+          id?: string
+          record_type?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "domain_dns_checks_domain_id_fkey"
+            columns: ["domain_id"]
+            isOneToOne: false
+            referencedRelation: "domains"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       domains: {
         Row: {
           created_at: string
           dkim_verified: boolean
           dmarc_verified: boolean
           domain: string
+          health_score: number
           id: string
+          last_checked_at: string | null
+          mx_verified: boolean
           spf_verified: boolean
           status: string
           tracking_domain: string | null
@@ -182,7 +226,10 @@ export type Database = {
           dkim_verified?: boolean
           dmarc_verified?: boolean
           domain: string
+          health_score?: number
           id?: string
+          last_checked_at?: string | null
+          mx_verified?: boolean
           spf_verified?: boolean
           status?: string
           tracking_domain?: string | null
@@ -194,7 +241,10 @@ export type Database = {
           dkim_verified?: boolean
           dmarc_verified?: boolean
           domain?: string
+          health_score?: number
           id?: string
+          last_checked_at?: string | null
+          mx_verified?: boolean
           spf_verified?: boolean
           status?: string
           tracking_domain?: string | null
@@ -352,6 +402,56 @@ export type Database = {
             columns: ["list_id"]
             isOneToOne: false
             referencedRelation: "lead_lists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mailbox_health: {
+        Row: {
+          bounce_rate: number | null
+          created_at: string
+          health_score: number
+          id: string
+          last_calculated_at: string | null
+          mailbox_id: string
+          reply_rate: number | null
+          reputation_score: number | null
+          updated_at: string
+          user_id: string
+          warmup_status: string
+        }
+        Insert: {
+          bounce_rate?: number | null
+          created_at?: string
+          health_score?: number
+          id?: string
+          last_calculated_at?: string | null
+          mailbox_id: string
+          reply_rate?: number | null
+          reputation_score?: number | null
+          updated_at?: string
+          user_id: string
+          warmup_status?: string
+        }
+        Update: {
+          bounce_rate?: number | null
+          created_at?: string
+          health_score?: number
+          id?: string
+          last_calculated_at?: string | null
+          mailbox_id?: string
+          reply_rate?: number | null
+          reputation_score?: number | null
+          updated_at?: string
+          user_id?: string
+          warmup_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mailbox_health_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: true
+            referencedRelation: "mailboxes"
             referencedColumns: ["id"]
           },
         ]

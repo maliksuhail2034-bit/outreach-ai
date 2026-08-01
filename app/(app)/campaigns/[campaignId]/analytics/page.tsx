@@ -3,12 +3,15 @@ import { notFound } from "next/navigation";
 import {
   CalendarCheckIcon,
   EyeIcon,
+  ListTodoIcon,
   MailCheckIcon,
   MailWarningIcon,
   MessageCircleReplyIcon,
   MousePointerClickIcon,
   SendIcon,
   ThumbsUpIcon,
+  TrendingDownIcon,
+  UsersIcon,
 } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
@@ -24,6 +27,7 @@ import {
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { summarizeCampaignMetrics } from "@/lib/analytics/campaign-metrics";
 import { compareMetrics } from "@/lib/analytics/comparisons";
+import { calculateFunnelConversions, identifyBiggestDropOff } from "@/lib/analytics/funnel";
 import { groupCounts, total } from "@/lib/analytics/metrics";
 import type { DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
@@ -35,6 +39,8 @@ import { Label } from "@/components/ui/label";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { TrendCard } from "@/components/dashboard/trend-card";
 import { PercentageCard } from "@/components/dashboard/percentage-card";
+import { StatusCard } from "@/components/dashboard/status-card";
+import { EmptyState } from "@/components/dashboard/empty-state";
 import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 
@@ -151,10 +157,27 @@ export default async function CampaignAnalyticsPage({
     { sends: priorSends, replies: priorReplies, opens: priorOpens, clicks: priorClicks },
   );
 
-  // --- Funnel (all-time) — "Won" is a placeholder: no deals/revenue table
-  // exists yet, so this is never queried, only shown as the seam a future
-  // Revenue Analytics feature fills in without restructuring the funnel.
+  // --- Funnel (all-time) — "Leads"/"Queued" come from campaign_leads'
+  // current state (enrolled count, and how many are still pending/active in
+  // the sending queue — see claim_due_sends()); everything from "Sent"
+  // onward is the same email_events/analytics_events-derived overview
+  // above. "Won" is a placeholder: no deals/revenue table exists yet, so
+  // it's never queried, only shown as the seam a future Revenue Analytics
+  // feature fills in without restructuring the funnel.
+  //
+  // Note: "Queued" (a snapshot of leads currently pending/active) can be
+  // smaller than "Sent" (an all-time cumulative count) once a campaign has
+  // been running a while and most leads have already moved past active
+  // sending into a terminal state (completed/replied/etc.) — that's
+  // expected, not a data error, and calculateFunnelDropOffs (below) already
+  // clamps that case to a 0% drop-off rather than a fabricated negative one.
+  const allEnrolledLeads = campaignLeads ?? [];
+  const leadsCount = allEnrolledLeads.length;
+  const queuedCount = allEnrolledLeads.filter((lead) => lead.status === "pending" || lead.status === "active").length;
+
   const funnelStages: FunnelStage[] = [
+    { key: "leads", label: "Leads", value: leadsCount },
+    { key: "queued", label: "Queued", value: queuedCount },
     { key: "sent", label: "Sent", value: overview.sentCount },
     { key: "delivered", label: "Delivered", value: overview.deliveredCount },
     { key: "opened", label: "Opened", value: overview.openedCount },
@@ -164,6 +187,14 @@ export default async function CampaignAnalyticsPage({
     { key: "meeting_booked", label: "Meeting booked", value: overview.meetingBookedCount },
     { key: "won", label: "Won", value: 0, placeholder: true },
   ];
+
+  // --- Funnel intelligence (Phase 2F) — reuses lib/analytics/funnel.ts's
+  // pure conversion/drop-off math over the exact same funnelStages array
+  // FunnelCard renders, so there's one source of truth for "what the
+  // funnel looks like" instead of a second calculation.
+  const funnelConversions = calculateFunnelConversions(funnelStages);
+  const meetingConversion = funnelConversions.find((stage) => stage.key === "meeting_booked")?.conversionFromStart ?? null;
+  const biggestDropOff = identifyBiggestDropOff(funnelStages);
 
   const activeRangeLabel = RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
@@ -313,16 +344,58 @@ export default async function CampaignAnalyticsPage({
       <FadeIn delay={0.6}>
         <div className="border-t border-border pt-6 sm:pt-8">
           <h2 className="font-semibold tracking-tight">Funnel</h2>
-          <p className="text-sm text-muted-foreground">All-time conversion path for this campaign.</p>
+          <p className="text-sm text-muted-foreground">
+            All-time conversion path for this campaign, from every enrolled lead through to a booked meeting.
+          </p>
         </div>
       </FadeIn>
 
-      <FadeIn delay={0.65}>
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2">
+          <FadeIn delay={0.63}>
+            <StatCard
+              title="Leads in funnel"
+              value={leadsCount}
+              icon={<UsersIcon className="size-4" />}
+              isEmpty={leadsCount === 0}
+              emptyHint="No leads enrolled yet."
+            />
+          </FadeIn>
+          <FadeIn delay={0.65}>
+            <PercentageCard
+              title="Lead → meeting conversion"
+              value={meetingConversion}
+              icon={<CalendarCheckIcon className="size-4" />}
+              description="Meetings booked ÷ leads enrolled"
+            />
+          </FadeIn>
+        </div>
+      </div>
+
+      <FadeIn delay={0.67}>
         <FunnelCard
           title="Campaign funnel"
-          description="Sent through to won — Won is a placeholder for a future Revenue Analytics integration."
+          description="Leads through to won — Won is a placeholder for a future Revenue Analytics integration."
           stages={funnelStages}
         />
+      </FadeIn>
+
+      <FadeIn delay={0.7}>
+        {biggestDropOff ? (
+          <StatusCard
+            title="Biggest drop-off"
+            status={`${biggestDropOff.fromLabel} → ${biggestDropOff.toLabel}`}
+            tone="destructive"
+            icon={<TrendingDownIcon className="size-4" />}
+            description={`${biggestDropOff.dropOffPercent}% of leads didn't make it from ${biggestDropOff.fromLabel.toLowerCase()} to ${biggestDropOff.toLabel.toLowerCase()} (${biggestDropOff.droppedCount} of ${biggestDropOff.fromValue}).`}
+          />
+        ) : (
+          <EmptyState
+            icon={<ListTodoIcon className="size-5" />}
+            title="Not enough data yet to identify a drop-off"
+            description="This appears once the funnel has real activity to compare between two stages."
+          />
+        )}
       </FadeIn>
     </div>
   );

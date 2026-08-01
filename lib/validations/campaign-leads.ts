@@ -7,6 +7,7 @@ export const CAMPAIGN_LEAD_STATUSES = [
   "bounced",
   "unsubscribed",
   "completed",
+  "cancelled",
 ] as const;
 
 // Used when editing an existing enrollment — overriding its mailbox or

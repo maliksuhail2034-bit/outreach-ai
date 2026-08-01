@@ -38,6 +38,8 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             smtpUsername: mailbox.smtp_username,
             smtpPassword: "",
             dailyLimit: mailbox.daily_limit,
+            hourlyLimit: mailbox.hourly_limit,
+            cooldownMinutes: mailbox.cooldown_minutes,
             warmupEnabled: mailbox.warmup_enabled,
             domainId: mailbox.domain_id ?? "",
             status: mailbox.status as MailboxInput["status"],
@@ -55,6 +57,8 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             smtpUsername: "",
             smtpPassword: "",
             dailyLimit: 50,
+            hourlyLimit: 10,
+            cooldownMinutes: 0,
             warmupEnabled: false,
             domainId: "",
             imapEnabled: false,
@@ -250,6 +254,49 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
                     ))}
                   </SelectContent>
                 </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="hourlyLimit"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Hourly send limit</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    name={field.name}
+                    ref={field.ref}
+                    value={field.value}
+                    onBlur={field.onBlur}
+                    onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="cooldownMinutes"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Cooldown between sends (minutes)</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    name={field.name}
+                    ref={field.ref}
+                    value={field.value}
+                    onBlur={field.onBlur}
+                    onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                  />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}

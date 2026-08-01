@@ -11,6 +11,8 @@ export const mailboxSchema = z.object({
   // no notion of which action is calling it.
   smtpPassword: z.string().max(500).optional().or(z.literal("")),
   dailyLimit: z.number().int().min(1, { message: "Must be at least 1." }).max(10000),
+  hourlyLimit: z.number().int().min(1, { message: "Must be at least 1." }).max(10000),
+  cooldownMinutes: z.number().int().min(0, { message: "Can't be negative." }).max(1440),
   warmupEnabled: z.boolean(),
   domainId: z.string().trim().optional().or(z.literal("")),
   status: z.enum(["active", "paused", "error"]).optional(),

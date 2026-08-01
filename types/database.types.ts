@@ -622,6 +622,7 @@ export type Database = {
       }
       mailboxes: {
         Row: {
+          cooldown_minutes: number
           created_at: string
           daily_limit: number
           display_name: string | null
@@ -629,6 +630,7 @@ export type Database = {
           email: string
           encrypted_imap_password: string | null
           encrypted_smtp_password: string
+          hourly_limit: number
           id: string
           imap_enabled: boolean
           imap_host: string | null
@@ -646,6 +648,7 @@ export type Database = {
           warmup_enabled: boolean
         }
         Insert: {
+          cooldown_minutes?: number
           created_at?: string
           daily_limit?: number
           display_name?: string | null
@@ -653,6 +656,7 @@ export type Database = {
           email: string
           encrypted_imap_password?: string | null
           encrypted_smtp_password: string
+          hourly_limit?: number
           id?: string
           imap_enabled?: boolean
           imap_host?: string | null
@@ -670,6 +674,7 @@ export type Database = {
           warmup_enabled?: boolean
         }
         Update: {
+          cooldown_minutes?: number
           created_at?: string
           daily_limit?: number
           display_name?: string | null
@@ -677,6 +682,7 @@ export type Database = {
           email?: string
           encrypted_imap_password?: string | null
           encrypted_smtp_password?: string
+          hourly_limit?: number
           id?: string
           imap_enabled?: boolean
           imap_host?: string | null

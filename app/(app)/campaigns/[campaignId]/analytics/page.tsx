@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
+  AlertTriangleIcon,
   CalendarCheckIcon,
   EyeIcon,
+  ListOrderedIcon,
   ListTodoIcon,
   MailCheckIcon,
   MailWarningIcon,
@@ -11,6 +13,7 @@ import {
   SendIcon,
   ThumbsUpIcon,
   TrendingDownIcon,
+  TrophyIcon,
   UsersIcon,
 } from "lucide-react";
 
@@ -23,12 +26,21 @@ import {
   listCampaignLeads,
   listEmailEvents,
   listSendAttemptsForCampaignLeads,
+  listSequences,
+  listSequenceSteps,
 } from "@/lib/db";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { summarizeCampaignMetrics } from "@/lib/analytics/campaign-metrics";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { calculateFunnelConversions, identifyBiggestDropOff } from "@/lib/analytics/funnel";
 import { groupCounts, total } from "@/lib/analytics/metrics";
+import {
+  identifyBestStep,
+  identifyBiggestStepDropOff,
+  identifyWeakestStep,
+  summarizeSequenceSteps,
+  type SequenceStepMetricsInput,
+} from "@/lib/analytics/sequence-step-metrics";
 import type { DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -43,6 +55,7 @@ import { StatusCard } from "@/components/dashboard/status-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
+import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-step-performance-table";
 
 // Single-campaign scope, so a generous limit (unlike the org-wide
 // /analytics page's 500) still comfortably covers a campaign's full
@@ -105,9 +118,18 @@ export default async function CampaignAnalyticsPage({
   ]);
 
   const leadIds = (campaignLeads ?? []).map((row) => row.id);
-  const sendAttempts = (await listSendAttemptsForCampaignLeads(supabase, leadIds)) ?? [];
+  const [sendAttemptsResult, sequences] = await Promise.all([
+    listSendAttemptsForCampaignLeads(supabase, leadIds),
+    listSequences(supabase, campaignId),
+  ]);
+  const sendAttempts = sendAttemptsResult ?? [];
   const events = emailEvents ?? [];
   const sentAttempts = sendAttempts.filter((attempt) => attempt.status === "sent");
+
+  // Sequences aren't a user-facing concept yet — every campaign has at most
+  // one, created lazily on first step add (see getOrCreateDefaultSequence).
+  const sequence = sequences?.[0] ?? null;
+  const sequenceSteps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
 
   // --- Campaign Overview (all-time) — reuses lib/analytics/metrics.ts's
   // groupCounts + lib/analytics/campaign-metrics.ts's summarizeCampaignMetrics
@@ -195,6 +217,22 @@ export default async function CampaignAnalyticsPage({
   const funnelConversions = calculateFunnelConversions(funnelStages);
   const meetingConversion = funnelConversions.find((stage) => stage.key === "meeting_booked")?.conversionFromStart ?? null;
   const biggestDropOff = identifyBiggestDropOff(funnelStages);
+
+  // --- Sequence step analytics (Phase 2F commit 2) — sent counts come
+  // directly from send_attempts.sequence_step_id (no correlation needed);
+  // reply counts are attributed via the provider_message_id chain
+  // record_send_success/reply-worker.ts already establish — see
+  // lib/analytics/sequence-step-metrics.ts for exactly how. All-time, same
+  // scope as the funnel above, not the date-range-filtered Trends section.
+  const stepInputs: SequenceStepMetricsInput[] = (sequenceSteps ?? []).map((step, index) => ({
+    stepId: step.id,
+    order: index + 1,
+    label: step.subject || `Step ${index + 1}`,
+  }));
+  const stepSummaries = summarizeSequenceSteps(stepInputs, sendAttempts, events);
+  const bestStep = identifyBestStep(stepSummaries);
+  const weakestStep = identifyWeakestStep(stepSummaries);
+  const biggestStepDropOff = identifyBiggestStepDropOff(stepSummaries);
 
   const activeRangeLabel = RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
@@ -394,6 +432,72 @@ export default async function CampaignAnalyticsPage({
             icon={<ListTodoIcon className="size-5" />}
             title="Not enough data yet to identify a drop-off"
             description="This appears once the funnel has real activity to compare between two stages."
+          />
+        )}
+      </FadeIn>
+
+      <FadeIn delay={0.75}>
+        <div className="border-t border-border pt-6 sm:pt-8">
+          <h2 className="font-semibold tracking-tight">Sequence step analytics</h2>
+          <p className="text-sm text-muted-foreground">All-time performance per touch in this campaign&apos;s sequence.</p>
+        </div>
+      </FadeIn>
+
+      <FadeIn delay={0.77}>
+        <SequenceStepPerformanceTable steps={stepSummaries} />
+      </FadeIn>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <FadeIn delay={0.79}>
+          {bestStep ? (
+            <StatusCard
+              title="Best step"
+              status={bestStep.label}
+              tone="default"
+              icon={<TrophyIcon className="size-4" />}
+              description={`${bestStep.replyRate}% reply rate (${bestStep.repliedCount} of ${bestStep.sentCount} sent).`}
+            />
+          ) : (
+            <EmptyState
+              icon={<TrophyIcon className="size-5" />}
+              title="Not enough data yet"
+              description="A best-performing step is identified once at least one step has sends and a measurable reply rate."
+            />
+          )}
+        </FadeIn>
+        <FadeIn delay={0.81}>
+          {weakestStep ? (
+            <StatusCard
+              title="Weakest step"
+              status={weakestStep.label}
+              tone="secondary"
+              icon={<AlertTriangleIcon className="size-4" />}
+              description={`${weakestStep.replyRate}% reply rate (${weakestStep.repliedCount} of ${weakestStep.sentCount} sent).`}
+            />
+          ) : (
+            <EmptyState
+              icon={<AlertTriangleIcon className="size-5" />}
+              title="Not enough data yet"
+              description="A weakest-performing step is identified once at least one step has sends and a measurable reply rate."
+            />
+          )}
+        </FadeIn>
+      </div>
+
+      <FadeIn delay={0.83}>
+        {biggestStepDropOff ? (
+          <StatusCard
+            title="Biggest drop-off between steps"
+            status={`${biggestStepDropOff.fromLabel} → ${biggestStepDropOff.toLabel}`}
+            tone="destructive"
+            icon={<TrendingDownIcon className="size-4" />}
+            description={`${biggestStepDropOff.dropOffPercent}% fewer leads reached ${biggestStepDropOff.toLabel.toLowerCase()} than sent ${biggestStepDropOff.fromLabel.toLowerCase()} (${biggestStepDropOff.droppedCount} of ${biggestStepDropOff.fromValue}).`}
+          />
+        ) : (
+          <EmptyState
+            icon={<ListOrderedIcon className="size-5" />}
+            title="Not enough data yet to compare steps"
+            description="This appears once at least two sequence steps have real sends to compare."
           />
         )}
       </FadeIn>

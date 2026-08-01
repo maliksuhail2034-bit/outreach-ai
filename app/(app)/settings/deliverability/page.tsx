@@ -1,6 +1,13 @@
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { listDomainDnsChecks, listDomains, listMailboxHealth, listMailboxes } from "@/lib/db";
+import {
+  getOrCreateOrganizationForUser,
+  listDomainDnsChecks,
+  listDomains,
+  listMailboxHealth,
+  listMailboxes,
+  listWarmupProfiles,
+} from "@/lib/db";
 import { latestDnsChecksByType } from "@/lib/deliverability/latest-dns-checks";
 import type { DnsRecordType } from "@/lib/deliverability/types";
 import type { Tables } from "@/types/database.types";
@@ -15,11 +22,15 @@ export default async function DeliverabilityPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const [domains, dnsChecks, mailboxes, mailboxHealth] = await Promise.all([
+  const namePrefix = user.email?.split("@")[0]?.trim();
+  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+
+  const [domains, dnsChecks, mailboxes, mailboxHealth, warmupProfiles] = await Promise.all([
     listDomains(supabase, user.id),
     listDomainDnsChecks(supabase, user.id),
     listMailboxes(supabase, user.id),
     listMailboxHealth(supabase, user.id),
+    listWarmupProfiles(supabase, organization.id),
   ]);
 
   // Plain objects, not Maps — these cross the Server -> Client Component
@@ -34,6 +45,14 @@ export default async function DeliverabilityPage() {
   const healthByMailbox: Record<string, Tables<"mailbox_health">> = {};
   for (const row of mailboxHealth) {
     healthByMailbox[row.mailbox_id] = row;
+  }
+
+  // Read-only: Mailbox Health displays warmup stage/score without this
+  // page writing anything back into warmup_profiles — see Task 6's
+  // integration requirement.
+  const warmupProfileByMailbox: Record<string, Tables<"warmup_profiles">> = {};
+  for (const profile of warmupProfiles) {
+    warmupProfileByMailbox[profile.mailbox_id] = profile;
   }
 
   return (
@@ -52,7 +71,11 @@ export default async function DeliverabilityPage() {
       </FadeIn>
 
       <FadeIn delay={0.1}>
-        <MailboxHealthList mailboxes={mailboxes} healthByMailbox={healthByMailbox} />
+        <MailboxHealthList
+          mailboxes={mailboxes}
+          healthByMailbox={healthByMailbox}
+          warmupProfileByMailbox={warmupProfileByMailbox}
+        />
       </FadeIn>
     </div>
   );

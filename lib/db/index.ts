@@ -4,6 +4,7 @@ export * from "./profiles";
 export * from "./settings";
 export * from "./domains";
 export * from "./deliverability";
+export * from "./warmup";
 export * from "./mailboxes";
 export * from "./lead-lists";
 export * from "./leads";

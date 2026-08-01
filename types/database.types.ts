@@ -921,6 +921,174 @@ export type Database = {
         }
         Relationships: []
       }
+      warmup_events: {
+        Row: {
+          created_at: string
+          detail: string | null
+          event_type: string
+          id: string
+          organization_id: string
+          warmup_profile_id: string
+        }
+        Insert: {
+          created_at?: string
+          detail?: string | null
+          event_type: string
+          id?: string
+          organization_id: string
+          warmup_profile_id: string
+        }
+        Update: {
+          created_at?: string
+          detail?: string | null
+          event_type?: string
+          id?: string
+          organization_id?: string
+          warmup_profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_events_warmup_profile_id_fkey"
+            columns: ["warmup_profile_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_profiles: {
+        Row: {
+          created_at: string
+          current_daily_volume: number
+          health_score: number
+          id: string
+          last_activity_at: string | null
+          mailbox_id: string
+          organization_id: string
+          ramp_up_percent: number
+          stage: string
+          started_at: string | null
+          status: string
+          target_daily_volume: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_daily_volume?: number
+          health_score?: number
+          id?: string
+          last_activity_at?: string | null
+          mailbox_id: string
+          organization_id: string
+          ramp_up_percent?: number
+          stage?: string
+          started_at?: string | null
+          status?: string
+          target_daily_volume?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_daily_volume?: number
+          health_score?: number
+          id?: string
+          last_activity_at?: string | null
+          mailbox_id?: string
+          organization_id?: string
+          ramp_up_percent?: number
+          stage?: string
+          started_at?: string | null
+          status?: string
+          target_daily_volume?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_profiles_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: true
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_profiles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_stats: {
+        Row: {
+          bounce_rate: number | null
+          created_at: string
+          emails_received: number
+          emails_sent: number
+          id: string
+          organization_id: string
+          positive_interactions: number
+          reply_rate: number | null
+          spam_rate: number | null
+          stat_date: string
+          updated_at: string
+          warmup_profile_id: string
+          warmup_score: number | null
+        }
+        Insert: {
+          bounce_rate?: number | null
+          created_at?: string
+          emails_received?: number
+          emails_sent?: number
+          id?: string
+          organization_id: string
+          positive_interactions?: number
+          reply_rate?: number | null
+          spam_rate?: number | null
+          stat_date: string
+          updated_at?: string
+          warmup_profile_id: string
+          warmup_score?: number | null
+        }
+        Update: {
+          bounce_rate?: number | null
+          created_at?: string
+          emails_received?: number
+          emails_sent?: number
+          id?: string
+          organization_id?: string
+          positive_interactions?: number
+          reply_rate?: number | null
+          spam_rate?: number | null
+          stat_date?: string
+          updated_at?: string
+          warmup_profile_id?: string
+          warmup_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_stats_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_stats_warmup_profile_id_fkey"
+            columns: ["warmup_profile_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

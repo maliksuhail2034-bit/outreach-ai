@@ -9,6 +9,8 @@ import {
   getDomain,
   getMailbox,
   getMailboxHealth,
+  getOrCreateOrganizationForUser,
+  getWarmupProfileByMailbox,
   insertDomainDnsCheck,
   updateDomain,
   upsertMailboxHealth,
@@ -17,6 +19,20 @@ import { domainSchema, type DomainInput } from "@/lib/validations/deliverability
 import { getDnsProvider } from "@/lib/deliverability/get-dns-provider";
 import { calculateDomainHealthScore, calculateMailboxHealthScore } from "@/lib/deliverability/scoring";
 import type { DnsRecordType, WarmupStatus } from "@/lib/deliverability/types";
+import type { WarmupStage } from "@/lib/warmup/types";
+
+// Bridges lib/warmup's richer 6-stage state machine down to
+// lib/deliverability's simpler WarmupStatus, so Mailbox Health's scoring
+// (which predates warmup_profiles) understands warmup progress without
+// its own signature changing — see calculateMailboxHealthScore.
+const STAGE_TO_DELIVERABILITY_STATUS: Record<WarmupStage, WarmupStatus> = {
+  disabled: "not_started",
+  starting: "warming",
+  warming: "warming",
+  healthy: "warmed",
+  cooling: "warming",
+  paused: "paused",
+};
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form already did.
@@ -86,17 +102,26 @@ export async function runDomainDnsCheckAction(domainId: string) {
 }
 
 // Recalculates a mailbox's health score from whatever's currently stored.
-// Nothing populates real reputation/bounce/reply data yet (that's a future
-// warmup/reputation integration), but this exercises the same pipeline
-// those features will drive: they upsert mailbox_health, then this same
-// scorer runs — nothing here needs to change when they land.
+// Reputation/bounce/reply data still isn't populated by any pipeline (that
+// remains a future integration), but warmup status now comes from
+// warmup_profiles when a profile exists — see Task 6's "Mailbox Health
+// should now understand warmup status/score/stage" requirement — falling
+// back to mailbox_health.warmup_status exactly as before for a mailbox
+// that was never enrolled in warmup.
 export async function recalculateMailboxHealthAction(mailboxId: string) {
   const user = await requireUser();
   const supabase = await createClient();
 
   await getMailbox(supabase, user.id, mailboxId); // throws if not owned
   const existing = await getMailboxHealth(supabase, user.id, mailboxId);
-  const warmupStatus = (existing?.warmup_status ?? "not_started") as WarmupStatus;
+
+  const namePrefix = user.email?.split("@")[0]?.trim();
+  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const warmupProfile = await getWarmupProfileByMailbox(supabase, organization.id, mailboxId);
+
+  const warmupStatus = warmupProfile
+    ? STAGE_TO_DELIVERABILITY_STATUS[warmupProfile.stage as WarmupStage]
+    : ((existing?.warmup_status ?? "not_started") as WarmupStatus);
 
   const healthScore = calculateMailboxHealthScore({
     warmupStatus,

@@ -6,6 +6,7 @@ import { MailIcon, RefreshCwIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
+import type { WarmupStage } from "@/lib/warmup/types";
 import { recalculateMailboxHealthAction } from "@/app/(app)/settings/deliverability/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ScoreBadge } from "./score-badge";
 
 type MailboxHealth = Tables<"mailbox_health">;
+type WarmupProfile = Tables<"warmup_profiles">;
+
+const WARMUP_STAGE_LABEL: Record<WarmupStage, string> = {
+  disabled: "Disabled",
+  starting: "Starting",
+  warming: "Warming",
+  healthy: "Healthy",
+  cooling: "Cooling",
+  paused: "Paused",
+};
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   active: "default",
@@ -38,9 +49,11 @@ function percentLabel(value: number | null | undefined) {
 export function MailboxHealthList({
   mailboxes,
   healthByMailbox,
+  warmupProfileByMailbox,
 }: {
   mailboxes: MailboxSafe[];
   healthByMailbox: Record<string, MailboxHealth>;
+  warmupProfileByMailbox: Record<string, WarmupProfile>;
 }) {
   const [recalculatingId, setRecalculatingId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -80,6 +93,7 @@ export function MailboxHealthList({
           <ul className="divide-y divide-border">
             {mailboxes.map((mailbox) => {
               const health = healthByMailbox[mailbox.id];
+              const warmupProfile = warmupProfileByMailbox[mailbox.id];
               const warmupStatus = health?.warmup_status ?? "not_started";
               return (
                 <li key={mailbox.id} className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
@@ -89,7 +103,13 @@ export function MailboxHealthList({
                       <Badge variant={STATUS_VARIANT[mailbox.status] ?? "outline"}>
                         {statusLabel(mailbox.status)}
                       </Badge>
-                      <Badge variant="outline">{WARMUP_LABEL[warmupStatus] ?? warmupStatus}</Badge>
+                      {warmupProfile ? (
+                        <Badge variant="outline">
+                          Warmup: {WARMUP_STAGE_LABEL[warmupProfile.stage as WarmupStage] ?? warmupProfile.stage}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">{WARMUP_LABEL[warmupStatus] ?? warmupStatus}</Badge>
+                      )}
                       <ScoreBadge score={health?.health_score ?? 0} />
                     </div>
                     <p className="truncate text-sm text-muted-foreground">
@@ -99,6 +119,7 @@ export function MailboxHealthList({
                       {percentLabel(health?.bounce_rate)}
                       {" · Reply: "}
                       {percentLabel(health?.reply_rate)}
+                      {warmupProfile && ` · Warmup score: ${warmupProfile.health_score}/100`}
                     </p>
                   </div>
                   <Button

@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { GlobeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BarChart3Icon, GlobeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { DnsCheckStatus, DnsRecordType } from "@/lib/deliverability/types";
@@ -140,6 +141,11 @@ export function DomainHealthList({
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      <Button variant="ghost" size="icon" aria-label={`View analytics for ${domain.domain}`} asChild>
+                        <Link href={`/settings/deliverability/${domain.id}/analytics`}>
+                          <BarChart3Icon className="size-4" />
+                        </Link>
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

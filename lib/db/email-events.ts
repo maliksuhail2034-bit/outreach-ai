@@ -11,11 +11,13 @@ const DEFAULT_LIST_LIMIT = 200;
 // showing one campaign's history. mailboxId narrows further to one
 // mailbox's events (see lib/analytics/mailbox-metrics.ts) — every 'sent'
 // row already carries mailbox_id from record_send_success, so this needs
-// no join.
+// no join. mailboxIds narrows to a *set* of mailboxes in one query instead
+// of one call per mailbox — see lib/analytics/domain-metrics.ts, which
+// aggregates across every mailbox linked to a domain.
 export async function listEmailEvents(
   supabase: Client,
   campaignId?: string,
-  options?: { leadId?: string; eventType?: string; mailboxId?: string; limit?: number },
+  options?: { leadId?: string; eventType?: string; mailboxId?: string; mailboxIds?: string[]; limit?: number },
 ) {
   let query = supabase
     .from("email_events")
@@ -34,6 +36,9 @@ export async function listEmailEvents(
   }
   if (options?.mailboxId) {
     query = query.eq("mailbox_id", options.mailboxId);
+  }
+  if (options?.mailboxIds) {
+    query = query.in("mailbox_id", options.mailboxIds);
   }
 
   const { data, error } = await query;

@@ -42,15 +42,12 @@ import {
   summarizeSequenceSteps,
   type SequenceStepMetricsInput,
 } from "@/lib/analytics/sequence-step-metrics";
-import type { DateRangePreset } from "@/lib/analytics/types";
+import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { calculateCampaignHealthScore } from "@/lib/campaigns/health-score";
 import { buildCampaignMailboxInsights } from "@/lib/campaigns/mailbox-insights";
 import { FadeIn } from "@/components/motion/fade-in";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { TrendCard } from "@/components/dashboard/trend-card";
 import { PercentageCard } from "@/components/dashboard/percentage-card";
@@ -58,6 +55,7 @@ import { StatusCard } from "@/components/dashboard/status-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
+import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-step-performance-table";
 import { CampaignHealthCard } from "@/components/campaigns/campaign-health-card";
 import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mailbox-insights";
@@ -66,13 +64,6 @@ import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mai
 // /analytics page's 500) still comfortably covers a campaign's full
 // history without pagination.
 const EVENT_FETCH_LIMIT = 5000;
-
-const RANGE_OPTIONS: { preset: Exclude<DateRangePreset, "custom">; label: string }[] = [
-  { preset: "today", label: "Today" },
-  { preset: "7d", label: "7 Days" },
-  { preset: "30d", label: "30 Days" },
-  { preset: "90d", label: "90 Days" },
-];
 
 function attemptTimestamp(attempt: { resolved_at: string | null; claimed_at: string }) {
   return attempt.resolved_at ?? attempt.claimed_at;
@@ -280,7 +271,7 @@ export default async function CampaignAnalyticsPage({
     biggestStepDropOff,
   });
 
-  const activeRangeLabel = RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
+  const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -374,35 +365,12 @@ export default async function CampaignAnalyticsPage({
               Daily activity and trend vs. the previous {activeRangeLabel.toLowerCase()}.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex gap-1.5">
-              {RANGE_OPTIONS.map((option) => (
-                <Link key={option.preset} href={`/campaigns/${campaignId}/analytics?range=${option.preset}`}>
-                  <Badge variant={preset === option.preset ? "default" : "outline"} className="cursor-pointer">
-                    {option.label}
-                  </Badge>
-                </Link>
-              ))}
-            </div>
-            <form className="flex items-end gap-2" action={`/campaigns/${campaignId}/analytics`} method="get">
-              <input type="hidden" name="range" value="custom" />
-              <div className="space-y-1">
-                <Label htmlFor="start" className="text-xs text-muted-foreground">
-                  From
-                </Label>
-                <Input id="start" name="start" type="date" defaultValue={preset === "custom" ? currentRange.start : undefined} className="h-8 w-36" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="end" className="text-xs text-muted-foreground">
-                  To
-                </Label>
-                <Input id="end" name="end" type="date" defaultValue={preset === "custom" ? currentRange.end : undefined} className="h-8 w-36" />
-              </div>
-              <Button type="submit" variant="outline" size="sm">
-                Apply
-              </Button>
-            </form>
-          </div>
+          <DateRangePicker
+            basePath={`/campaigns/${campaignId}/analytics`}
+            preset={preset}
+            currentRange={currentRange}
+            options={ANALYTICS_RANGE_OPTIONS}
+          />
         </div>
       </FadeIn>
 

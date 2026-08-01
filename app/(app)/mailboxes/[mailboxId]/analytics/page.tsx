@@ -5,13 +5,11 @@ import {
   AlertTriangleIcon,
   BadgeCheckIcon,
   CalendarClockIcon,
-  EyeIcon,
   FlameIcon,
   GaugeIcon,
   MailCheckIcon,
   MailWarningIcon,
   MessageCircleReplyIcon,
-  MousePointerClickIcon,
   SendIcon,
   ShieldIcon,
 } from "lucide-react";
@@ -34,36 +32,29 @@ import { compareMetrics } from "@/lib/analytics/comparisons";
 import { summarizeMailboxMetrics } from "@/lib/analytics/mailbox-metrics";
 import { groupCounts, rate, total } from "@/lib/analytics/metrics";
 import type { DailyCount } from "@/lib/analytics/time-buckets";
-import type { DateRangePreset } from "@/lib/analytics/types";
+import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { getReputationProvider } from "@/lib/deliverability/get-reputation-provider";
 import { forecastNextRamp } from "@/lib/warmup/scheduler";
 import type { WarmupEventType, WarmupStage } from "@/lib/warmup/types";
 import type { Tables } from "@/types/database.types";
 import { FadeIn } from "@/components/motion/fade-in";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { TrendCard } from "@/components/dashboard/trend-card";
 import { PercentageCard } from "@/components/dashboard/percentage-card";
 import { StatusCard, type StatusTone } from "@/components/dashboard/status-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
+import { DateRangePicker } from "@/components/analytics/date-range-picker";
+import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
 import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/activity-timeline";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
+import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
 
 // Single-mailbox scope, so a generous limit (like the campaign analytics
 // page's) comfortably covers a mailbox's full history without pagination.
 const EVENT_FETCH_LIMIT = 5000;
-
-const RANGE_OPTIONS: { preset: Exclude<DateRangePreset, "custom">; label: string }[] = [
-  { preset: "today", label: "Today" },
-  { preset: "7d", label: "7 Days" },
-  { preset: "30d", label: "30 Days" },
-  { preset: "90d", label: "90 Days" },
-];
 
 const STAGE_LABEL: Record<WarmupStage, string> = {
   disabled: "Disabled",
@@ -78,12 +69,6 @@ const MAILBOX_STATUS_TONE: Record<string, StatusTone> = {
   active: "default",
   paused: "secondary",
   error: "destructive",
-};
-
-const DOMAIN_STATUS_TONE: Record<string, StatusTone> = {
-  verified: "default",
-  pending: "secondary",
-  failed: "destructive",
 };
 
 const WARMUP_EVENT_LABEL: Record<WarmupEventType, string> = {
@@ -102,10 +87,6 @@ const WARMUP_EVENT_VARIANT: Record<WarmupEventType, TimelineEntry["variant"]> = 
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function dnsTone(verified: boolean): StatusTone {
-  return verified ? "default" : "secondary";
 }
 
 function isWarmupEventType(value: string): value is WarmupEventType {
@@ -265,7 +246,7 @@ export default async function MailboxAnalyticsPage({
     timestamp: event.created_at,
   }));
 
-  const activeRangeLabel = RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
+  const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -292,24 +273,7 @@ export default async function MailboxAnalyticsPage({
 
       <div className="@container">
         <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
-          <FadeIn delay={0.08}>
-            <StatCard title="Emails sent" value={overview.sentCount} icon={<SendIcon className="size-4" />} isEmpty={overview.sentCount === 0} emptyHint="Will appear once this mailbox starts sending." />
-          </FadeIn>
-          <FadeIn delay={0.1}>
-            <StatCard title="Delivered" value={overview.deliveredCount} icon={<MailCheckIcon className="size-4" />} isEmpty={overview.deliveredCount === 0} emptyHint="Delivery confirmations aren't tracked yet." />
-          </FadeIn>
-          <FadeIn delay={0.12}>
-            <PercentageCard title="Open rate" value={overview.openRate} icon={<EyeIcon className="size-4" />} description="Opened ÷ delivered" />
-          </FadeIn>
-          <FadeIn delay={0.14}>
-            <PercentageCard title="Click rate" value={overview.clickRate} icon={<MousePointerClickIcon className="size-4" />} description="Clicked ÷ delivered" />
-          </FadeIn>
-          <FadeIn delay={0.16}>
-            <PercentageCard title="Reply rate" value={overview.replyRate} icon={<MessageCircleReplyIcon className="size-4" />} description="Replied ÷ sent" />
-          </FadeIn>
-          <FadeIn delay={0.18}>
-            <PercentageCard title="Bounce rate" value={overview.bounceRate} icon={<MailWarningIcon className="size-4" />} description="Bounced ÷ sent" />
-          </FadeIn>
+          <MailboxMetricsOverviewCards summary={overview} delayStart={0.08} />
           <FadeIn delay={0.2}>
             <PercentageCard
               title="Spam complaint rate"
@@ -364,35 +328,12 @@ export default async function MailboxAnalyticsPage({
               Daily activity and trend vs. the previous {activeRangeLabel.toLowerCase()}.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex gap-1.5">
-              {RANGE_OPTIONS.map((option) => (
-                <Link key={option.preset} href={`/mailboxes/${mailboxId}/analytics?range=${option.preset}`}>
-                  <Badge variant={preset === option.preset ? "default" : "outline"} className="cursor-pointer">
-                    {option.label}
-                  </Badge>
-                </Link>
-              ))}
-            </div>
-            <form className="flex items-end gap-2" action={`/mailboxes/${mailboxId}/analytics`} method="get">
-              <input type="hidden" name="range" value="custom" />
-              <div className="space-y-1">
-                <Label htmlFor="start" className="text-xs text-muted-foreground">
-                  From
-                </Label>
-                <Input id="start" name="start" type="date" defaultValue={preset === "custom" ? currentRange.start : undefined} className="h-8 w-36" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="end" className="text-xs text-muted-foreground">
-                  To
-                </Label>
-                <Input id="end" name="end" type="date" defaultValue={preset === "custom" ? currentRange.end : undefined} className="h-8 w-36" />
-              </div>
-              <Button type="submit" variant="outline" size="sm">
-                Apply
-              </Button>
-            </form>
-          </div>
+          <DateRangePicker
+            basePath={`/mailboxes/${mailboxId}/analytics`}
+            preset={preset}
+            currentRange={currentRange}
+            options={ANALYTICS_RANGE_OPTIONS}
+          />
         </div>
       </FadeIn>
 
@@ -535,25 +476,7 @@ export default async function MailboxAnalyticsPage({
           />
         </FadeIn>
       ) : (
-        <div className="@container">
-          <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-5">
-            <FadeIn delay={0.74}>
-              <StatusCard title="SPF" status={domain.spf_verified ? "Verified" : "Not verified"} tone={dnsTone(domain.spf_verified)} icon={<ShieldIcon className="size-4" />} />
-            </FadeIn>
-            <FadeIn delay={0.76}>
-              <StatusCard title="DKIM" status={domain.dkim_verified ? "Verified" : "Not verified"} tone={dnsTone(domain.dkim_verified)} icon={<ShieldIcon className="size-4" />} />
-            </FadeIn>
-            <FadeIn delay={0.78}>
-              <StatusCard title="DMARC" status={domain.dmarc_verified ? "Verified" : "Not verified"} tone={dnsTone(domain.dmarc_verified)} icon={<ShieldIcon className="size-4" />} />
-            </FadeIn>
-            <FadeIn delay={0.8}>
-              <StatusCard title="MX" status={domain.mx_verified ? "Verified" : "Not verified"} tone={dnsTone(domain.mx_verified)} icon={<ShieldIcon className="size-4" />} />
-            </FadeIn>
-            <FadeIn delay={0.82}>
-              <StatusCard title="Domain verification" status={statusLabel(domain.status)} tone={DOMAIN_STATUS_TONE[domain.status] ?? "outline"} icon={<BadgeCheckIcon className="size-4" />} />
-            </FadeIn>
-          </div>
-        </div>
+        <DomainDnsStatus domain={domain} delayStart={0.74} />
       )}
 
       <div className="@container">

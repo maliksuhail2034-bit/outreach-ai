@@ -1,5 +1,8 @@
+import Link from "next/link";
 import {
+  ActivityIcon,
   AlertTriangleIcon,
+  CalendarClockIcon,
   MailCheckIcon,
   MailWarningIcon,
   MessageCircleReplyIcon,
@@ -13,6 +16,8 @@ import { createClient } from "@/lib/supabase/server";
 import {
   countEmailEventsByType,
   countSendAttemptsByStatus,
+  getOrCreateOrganizationForUser,
+  listAnalyticsEvents,
   listCampaignLeads,
   listCampaigns,
   listEmailEvents,
@@ -21,8 +26,20 @@ import {
 } from "@/lib/db";
 import { bucketByDay } from "@/lib/analytics/time-buckets";
 import { classifyErrorCategory, type ErrorCategory } from "@/lib/analytics/error-category";
+import { previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
+import { compareMetrics } from "@/lib/analytics/comparisons";
+import { ANALYTICS_EVENT_LABELS } from "@/lib/analytics/events";
+import { groupCounts, rate } from "@/lib/analytics/metrics";
+import type { AnalyticsEventType } from "@/lib/analytics/types";
+import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { FadeIn } from "@/components/motion/fade-in";
+import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { TrendCard } from "@/components/dashboard/trend-card";
+import { PercentageCard } from "@/components/dashboard/percentage-card";
+import { ComparisonCard, type ComparisonRow } from "@/components/dashboard/comparison-card";
+import { StatusCard } from "@/components/dashboard/status-card";
+import { EmptyState } from "@/components/dashboard/empty-state";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { CampaignPerformanceTable, type CampaignPerformanceRow } from "@/components/analytics/campaign-performance-table";
 import { FailureAnalysis } from "@/components/analytics/failure-analysis";
@@ -31,6 +48,19 @@ import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/act
 const CHART_WINDOW_DAYS = 14;
 const ANALYTICS_ROW_LIMIT = 500;
 const TIMELINE_LIMIT = 20;
+
+const RANGE_OPTIONS: { preset: "today" | "7d" | "30d" | "90d"; label: string }[] = [
+  { preset: "today", label: "Today" },
+  { preset: "7d", label: "7 Days" },
+  { preset: "30d", label: "30 Days" },
+  { preset: "90d", label: "90 Days" },
+];
+
+// Foundation-section metrics — a small, deliberately narrow slice of the
+// full event catalog (see lib/analytics/events.ts) to keep this section
+// focused; the metrics engine underneath supports every event type without
+// changes once more of them are worth surfacing here.
+const FOUNDATION_METRIC_TYPES: AnalyticsEventType[] = ["email_sent", "replied", "positive_reply", "meeting_booked"];
 
 const EMAIL_EVENT_LABEL: Record<string, string> = {
   sent: "Sent",
@@ -52,7 +82,11 @@ const EMAIL_EVENT_VARIANT: Record<string, TimelineEntry["variant"]> = {
   unsubscribed: "secondary",
 };
 
-export default async function AnalyticsPage() {
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
   const user = await getUser();
   // app/(app)/layout.tsx already redirects unauthenticated requests before
   // this page renders; this narrows the type for what follows.
@@ -226,6 +260,61 @@ export default async function AnalyticsPage() {
     },
   ];
 
+  // --- Analytics Foundation section (below) -------------------------------
+  // Everything above this point is the existing send_attempts/email_events
+  // dashboard, untouched. This section is additive: it demonstrates the
+  // new organization-scoped event model (analytics_events) and the
+  // reusable metrics/trend/comparison engine (lib/analytics/) that future
+  // dashboards will build on — Campaign/Mailbox/Domain/Warmup/Revenue
+  // Analytics, AI Insights, etc. Nothing writes to analytics_events yet
+  // (see the migration), so this section renders an honest empty state
+  // until a producer (a future sending-worker/reply-worker/warmup
+  // integration) starts recording events — it never fabricates numbers to
+  // look populated.
+  const namePrefix = user.email?.split("@")[0]?.trim();
+  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+
+  const rangeParam = (await searchParams).range;
+  const parsedRange = dateRangeQuerySchema.safeParse({ preset: rangeParam });
+  const preset = parsedRange.success ? parsedRange.data.preset : "7d";
+  const currentRange = resolveDateRange(preset === "custom" ? "7d" : preset);
+  const priorRange = previousDateRange(currentRange);
+
+  const [currentEvents, priorEvents] = await Promise.all([
+    listAnalyticsEvents(supabase, organization.id, {
+      since: `${currentRange.start}T00:00:00.000Z`,
+      until: `${currentRange.end}T23:59:59.999Z`,
+    }),
+    listAnalyticsEvents(supabase, organization.id, {
+      since: `${priorRange.start}T00:00:00.000Z`,
+      until: `${priorRange.end}T23:59:59.999Z`,
+    }),
+  ]);
+
+  const currentCountsByType = groupCounts(currentEvents, (event) => event.event_type);
+  const priorCountsByType = groupCounts(priorEvents, (event) => event.event_type);
+
+  const currentMetrics: Record<string, number> = {};
+  const priorMetrics: Record<string, number> = {};
+  for (const type of FOUNDATION_METRIC_TYPES) {
+    currentMetrics[type] = currentCountsByType[type] ?? 0;
+    priorMetrics[type] = priorCountsByType[type] ?? 0;
+  }
+  const foundationTrends = compareMetrics(currentMetrics, priorMetrics);
+
+  const emailsSentInRange = currentCountsByType.email_sent ?? 0;
+  const repliesInRange = currentCountsByType.replied ?? 0;
+  const eventReplyRate = rate(repliesInRange, emailsSentInRange);
+
+  const comparisonRows: ComparisonRow[] = FOUNDATION_METRIC_TYPES.map((type) => ({
+    key: type,
+    label: ANALYTICS_EVENT_LABELS[type],
+    currentValue: currentMetrics[type],
+    trend: foundationTrends[type],
+  }));
+
+  const hasAnyFoundationEvents = currentEvents.length > 0 || priorEvents.length > 0;
+
   return (
     <div className="space-y-6 sm:space-y-8">
       <FadeIn>
@@ -285,6 +374,89 @@ export default async function AnalyticsPage() {
           <ActivityTimeline entries={timeline} />
         </FadeIn>
       </div>
+
+      <FadeIn delay={0.65}>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6 sm:pt-8">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">Event-based analytics</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Foundation for future campaign, mailbox, domain, and warmup analytics — built on a generic event
+              model rather than this page&apos;s existing send-attempt queries.
+            </p>
+          </div>
+          <div className="flex gap-1.5">
+            {RANGE_OPTIONS.map((option) => (
+              <Link key={option.preset} href={`/analytics?range=${option.preset}`}>
+                <Badge variant={preset === option.preset ? "default" : "outline"} className="cursor-pointer">
+                  {option.label}
+                </Badge>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </FadeIn>
+
+      {!hasAnyFoundationEvents ? (
+        <FadeIn delay={0.7}>
+          <EmptyState
+            icon={<ActivityIcon className="size-5" />}
+            title="No analytics events recorded yet"
+            description="This section reads from the new organization-scoped event model. It will populate once campaigns, warmup, and deliverability start recording events into it."
+          />
+        </FadeIn>
+      ) : (
+        <>
+          <div className="@container">
+            <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
+              <FadeIn delay={0.7}>
+                <TrendCard
+                  title={ANALYTICS_EVENT_LABELS.email_sent}
+                  value={currentMetrics.email_sent}
+                  trend={foundationTrends.email_sent}
+                  icon={<SendIcon className="size-4" />}
+                  description={`vs. the previous ${RANGE_OPTIONS.find((o) => o.preset === preset)?.label.toLowerCase()}`}
+                />
+              </FadeIn>
+              <FadeIn delay={0.75}>
+                <TrendCard
+                  title={ANALYTICS_EVENT_LABELS.meeting_booked}
+                  value={currentMetrics.meeting_booked}
+                  trend={foundationTrends.meeting_booked}
+                  icon={<TrendingUpIcon className="size-4" />}
+                  description="Positive outcomes recorded"
+                />
+              </FadeIn>
+              <FadeIn delay={0.8}>
+                <PercentageCard
+                  title="Reply rate"
+                  value={eventReplyRate}
+                  icon={<MessageCircleReplyIcon className="size-4" />}
+                  description="Replied ÷ emails sent, this range"
+                />
+              </FadeIn>
+            </div>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <FadeIn delay={0.85}>
+              <ComparisonCard
+                title="This period vs. last period"
+                description="Every foundation metric, compared to the equivalent range before it."
+                rows={comparisonRows}
+              />
+            </FadeIn>
+            <FadeIn delay={0.9}>
+              <StatusCard
+                title="Event collection"
+                status="Active"
+                tone="default"
+                icon={<CalendarClockIcon className="size-4" />}
+                description="Events are being recorded for this organization."
+              />
+            </FadeIn>
+          </div>
+        </>
+      )}
     </div>
   );
 }

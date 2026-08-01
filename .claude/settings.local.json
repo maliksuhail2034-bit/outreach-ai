@@ -22,7 +22,8 @@
       "Bash(npm ls *)",
       "Bash(npm audit *)",
       "Bash(git status *)",
-      "Bash(node -e \"const icons = require\\('lucide-react'\\); ['FlameIcon','PauseIcon','PlayIcon','PowerIcon','SettingsIcon','RefreshCwIcon','ShieldCheckIcon'].forEach\\(n => console.log\\(n, typeof icons[n]\\)\\)\")"
+      "Bash(node -e \"const icons = require\\('lucide-react'\\); ['FlameIcon','PauseIcon','PlayIcon','PowerIcon','SettingsIcon','RefreshCwIcon','ShieldCheckIcon'].forEach\\(n => console.log\\(n, typeof icons[n]\\)\\)\")",
+      "Bash(node *)"
     ]
   }
 }

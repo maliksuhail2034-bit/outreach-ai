@@ -14,6 +14,170 @@ export type Database = {
   }
   public: {
     Tables: {
+      analytics_daily_rollups: {
+        Row: {
+          created_at: string
+          event_count: number
+          event_type: string
+          id: string
+          organization_id: string
+          rollup_date: string
+          subject_id: string
+          subject_type: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          event_count?: number
+          event_type: string
+          id?: string
+          organization_id: string
+          rollup_date: string
+          subject_id: string
+          subject_type: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          event_count?: number
+          event_type?: string
+          id?: string
+          organization_id?: string
+          rollup_date?: string
+          subject_id?: string
+          subject_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analytics_daily_rollups_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      analytics_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json
+          occurred_at: string
+          organization_id: string
+          subject_id: string | null
+          subject_type: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          organization_id: string
+          subject_id?: string | null
+          subject_type?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          organization_id?: string
+          subject_id?: string | null
+          subject_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analytics_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      analytics_jobs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error: string | null
+          id: string
+          job_type: string
+          organization_id: string
+          started_at: string | null
+          status: string
+          target_date: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          job_type: string
+          organization_id: string
+          started_at?: string | null
+          status?: string
+          target_date: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          job_type?: string
+          organization_id?: string
+          started_at?: string | null
+          status?: string
+          target_date?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analytics_jobs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      analytics_snapshots: {
+        Row: {
+          created_at: string
+          id: string
+          metrics: Json
+          organization_id: string
+          snapshot_date: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          metrics?: Json
+          organization_id: string
+          snapshot_date: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          metrics?: Json
+          organization_id?: string
+          snapshot_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analytics_snapshots_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_customers: {
         Row: {
           created_at: string

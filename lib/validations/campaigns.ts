@@ -13,3 +13,14 @@ export const campaignSchema = z.object({
   sendingWindow: sendingWindowSchema,
 });
 export type CampaignInput = z.infer<typeof campaignSchema>;
+
+// Validates the ?a=&b= query string on /campaigns/compare. Both are
+// optional (an empty/partial query just shows the campaign picker instead
+// of a comparison — see the page component); getCampaign()'s existing
+// userId-scoped ownership check is what actually guards access to the two
+// ids once they're valid.
+export const campaignCompareQuerySchema = z.object({
+  a: z.string().uuid().optional(),
+  b: z.string().uuid().optional(),
+});
+export type CampaignCompareQuery = z.infer<typeof campaignCompareQuerySchema>;

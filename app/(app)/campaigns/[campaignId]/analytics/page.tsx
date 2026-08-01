@@ -25,6 +25,7 @@ import {
   listAnalyticsEvents,
   listCampaignLeads,
   listEmailEvents,
+  listMailboxes,
   listSendAttemptsForCampaignLeads,
   listSequences,
   listSequenceSteps,
@@ -44,6 +45,7 @@ import {
 import type { DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { calculateCampaignHealthScore } from "@/lib/campaigns/health-score";
+import { buildCampaignMailboxInsights } from "@/lib/campaigns/mailbox-insights";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +60,7 @@ import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-step-performance-table";
 import { CampaignHealthCard } from "@/components/campaigns/campaign-health-card";
+import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mailbox-insights";
 
 // Single-campaign scope, so a generous limit (unlike the org-wide
 // /analytics page's 500) still comfortably covers a campaign's full
@@ -109,7 +112,7 @@ export default async function CampaignAnalyticsPage({
       : resolveDateRange(preset === "custom" ? "7d" : preset);
   const priorRange = previousDateRange(currentRange);
 
-  const [campaignLeads, emailEvents, analyticsEvents] = await Promise.all([
+  const [campaignLeads, emailEvents, analyticsEvents, mailboxes] = await Promise.all([
     listCampaignLeads(supabase, campaignId),
     listEmailEvents(supabase, campaignId, { limit: EVENT_FETCH_LIMIT }),
     listAnalyticsEvents(supabase, organization.id, {
@@ -117,6 +120,7 @@ export default async function CampaignAnalyticsPage({
       subjectId: campaignId,
       limit: EVENT_FETCH_LIMIT,
     }),
+    listMailboxes(supabase, user.id),
   ]);
 
   const leadIds = (campaignLeads ?? []).map((row) => row.id);
@@ -132,6 +136,21 @@ export default async function CampaignAnalyticsPage({
   // one, created lazily on first step add (see getOrCreateDefaultSequence).
   const sequence = sequences?.[0] ?? null;
   const sequenceSteps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
+
+  // --- Mailbox intelligence (Phase 2F commit 5) — plain-language insights
+  // across the mailboxes this campaign actually sends from, built entirely
+  // on lib/campaigns/mailbox-insights.ts's buildCampaignMailboxInsights,
+  // which internally filters listMailboxes()'s full result down to only the
+  // mailboxes this campaign's leads resolve to (via the same
+  // resolveLeadMailboxId lib/campaigns/readiness.ts's launch-readiness
+  // check already uses) before generating anything.
+  const mailboxInsights = buildCampaignMailboxInsights({
+    campaign,
+    campaignLeads: campaignLeads ?? [],
+    sendAttempts,
+    emailEvents: events,
+    mailboxes: mailboxes ?? [],
+  });
 
   // --- Campaign Overview (all-time) — reuses lib/analytics/metrics.ts's
   // groupCounts + lib/analytics/campaign-metrics.ts's summarizeCampaignMetrics
@@ -540,6 +559,19 @@ export default async function CampaignAnalyticsPage({
             description="This appears once at least two sequence steps have real sends to compare."
           />
         )}
+      </FadeIn>
+
+      <FadeIn delay={0.85}>
+        <div className="border-t border-border pt-6 sm:pt-8">
+          <h2 className="font-semibold tracking-tight">Mailbox intelligence</h2>
+          <p className="text-sm text-muted-foreground">
+            Plain-language insights across this campaign&apos;s sending mailboxes.
+          </p>
+        </div>
+      </FadeIn>
+
+      <FadeIn delay={0.87}>
+        <CampaignMailboxInsightsCard mailboxes={mailboxInsights.mailboxes} insights={mailboxInsights.insights} />
       </FadeIn>
     </div>
   );

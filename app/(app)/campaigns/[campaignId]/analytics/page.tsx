@@ -43,6 +43,7 @@ import {
 } from "@/lib/analytics/sequence-step-metrics";
 import type { DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
+import { calculateCampaignHealthScore } from "@/lib/campaigns/health-score";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-step-performance-table";
+import { CampaignHealthCard } from "@/components/campaigns/campaign-health-card";
 
 // Single-campaign scope, so a generous limit (unlike the org-wide
 // /analytics page's 500) still comfortably covers a campaign's full
@@ -234,6 +236,31 @@ export default async function CampaignAnalyticsPage({
   const weakestStep = identifyWeakestStep(stepSummaries);
   const biggestStepDropOff = identifyBiggestStepDropOff(stepSummaries);
 
+  // --- Campaign health score (Phase 2F commit 3) — bounceRate/replyRate are
+  // real signals, reused straight from overview (summarizeCampaignMetrics).
+  // deliveryRate/positiveReplyRate/meetingRate are deliberately passed as
+  // null, NOT overview.deliveryRate / rate(overview.positiveReplyCount, ...)
+  // / rate(overview.meetingBookedCount, ...) — delivered/positive_reply/
+  // meeting_booked have zero producers anywhere in the codebase (see
+  // lib/analytics/funnel.ts's UNTRACKED_STAGE_KEYS and
+  // lib/db/analytics.ts's insertAnalyticsEvent, never called), so their
+  // counts are always exactly 0. rate(0, sentCount) returns a real 0, not
+  // null, whenever sentCount > 0 — feeding that through would silently
+  // score three phantom "0% signals" into every campaign's health score
+  // instead of excluding them, exactly the fabricated-metric trap
+  // lib/campaigns/health-score.ts's own field comments warn against. Update
+  // these three the moment a real producer exists — everything else here
+  // (engagementTrend, biggestStepDropOff) is already real.
+  const healthScore = calculateCampaignHealthScore({
+    bounceRate: overview.bounceRate,
+    replyRate: overview.replyRate,
+    deliveryRate: null,
+    positiveReplyRate: null,
+    meetingRate: null,
+    engagementTrend: trends.replies,
+    biggestStepDropOff,
+  });
+
   const activeRangeLabel = RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
   return (
@@ -306,6 +333,19 @@ export default async function CampaignAnalyticsPage({
           </FadeIn>
         </div>
       </div>
+
+      <FadeIn delay={0.32}>
+        <div className="border-t border-border pt-6 sm:pt-8">
+          <h2 className="font-semibold tracking-tight">Campaign health</h2>
+          <p className="text-sm text-muted-foreground">
+            A single explainable score, weighted from whichever signals below have real data today.
+          </p>
+        </div>
+      </FadeIn>
+
+      <FadeIn delay={0.33}>
+        <CampaignHealthCard score={healthScore.score} factors={healthScore.factors} />
+      </FadeIn>
 
       <FadeIn delay={0.35}>
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6 sm:pt-8">

@@ -3,6 +3,30 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-02 — Organization Analytics Rollup (`43c67e3`)
+
+- Added an organization-wide rollup section to `/analytics`: an all-time
+  sending overview across every mailbox, plus per-campaign, per-mailbox,
+  and per-domain tables (sent count, reply rate, bounce rate, health
+  score, linking out to that entity's own analytics page). Closes the
+  last item in ROADMAP.md's Analytics track ("org-level rollups across
+  all three... not yet built").
+- Extracted `loadCampaignSnapshot`/`loadMailboxSnapshot` (previously
+  private to their Compare pages) into `lib/campaigns/campaign-analytics.ts`
+  and `lib/mailboxes/mailbox-analytics.ts`, mirroring
+  `lib/deliverability/domain-analytics.ts`'s existing pattern, so the
+  rollup and both Compare pages share one loader per entity instead of a
+  second copy of the same fetch orchestration.
+- Added `lib/analytics/organization-rollup.ts`'s `loadOrganizationRollup`,
+  isolating the per-entity fan-out (one snapshot fetch per
+  campaign/mailbox/domain) behind a single function so a future
+  batched/bulk-query implementation — or a read from the still-unwritten
+  `analytics_daily_rollups` table — can replace its body without any UI
+  change.
+- Added `components/analytics/rollup-table.tsx`'s generic `RollupTable`,
+  used once each for campaigns, mailboxes, and domains instead of three
+  near-identical tables.
+
 ## 2026-08-02 — Domain Comparison (`e11a4fa`)
 
 - Added `/settings/deliverability/compare` to let a user pick two domains

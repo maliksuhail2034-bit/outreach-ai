@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `e11a4fa`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `43c67e3`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -30,7 +30,9 @@ as of commit `e11a4fa`. See `CHANGELOG.md` for the commit-by-commit history.
   domain-level analytics combining every mailbox linked to a domain, plus a
   domain health score weighing DNS verification alongside deliverability,
   bounce, and reply rate once a domain has real sending history, and domain
-  comparison.
+  comparison; an organization-wide rollup on `/analytics` (all-time overview
+  plus per-campaign/mailbox/domain tables) closing out the last open item in
+  this track.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.
@@ -46,11 +48,6 @@ as of commit `e11a4fa`. See `CHANGELOG.md` for the commit-by-commit history.
   analytics exist; scheduled warmup send automation and the stats
   -aggregation worker (`warmup_stats` has no writer yet) are not built, so
   historical warmup volume charts render an honest empty state today.
-- **Analytics** — campaign-level, mailbox-level, and domain-level analytics
-  shipped, along with campaign, mailbox, and domain comparison views (the
-  `compareCampaignMetrics`/`compareMailboxMetrics` seams all now have
-  callers, domain comparison reusing `compareMailboxMetrics` directly);
-  org-level rollups across all three are not yet built.
 
 ## Not started
 

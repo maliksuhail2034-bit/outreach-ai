@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-02 — Domain Comparison (`e11a4fa`)
+
+- Added `/settings/deliverability/compare` to let a user pick two domains
+  and see their overview metrics, per-metric trend (A vs. B), and health
+  scores side by side. Closes the last named gap in ROADMAP.md's Analytics
+  section, reusing `compareMailboxMetrics` directly per
+  `lib/analytics/domain-metrics.ts`'s own comment that a domain-specific
+  wrapper would just be a same-signature re-export.
+- Extracted the domain analytics page's fetch orchestration (domain lookup,
+  mailbox resolution, combined event fetch, overview summary, health score)
+  into `lib/deliverability/domain-analytics.ts`'s
+  `loadDomainAnalyticsSnapshot`, shared by both the single-domain page and
+  the new comparison page instead of duplicating it a second time.
+
 ## 2026-08-02 — Domain Health Score (`0c15ba2`)
 
 - Extended `calculateDomainHealthScore` (`lib/deliverability/scoring.ts`)

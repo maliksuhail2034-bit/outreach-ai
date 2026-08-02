@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `0c15ba2`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `e11a4fa`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -29,7 +29,8 @@ as of commit `0c15ba2`. See `CHANGELOG.md` for the commit-by-commit history.
   deliverability analytics, and mailbox comparison (Phase 2C and after);
   domain-level analytics combining every mailbox linked to a domain, plus a
   domain health score weighing DNS verification alongside deliverability,
-  bounce, and reply rate once a domain has real sending history.
+  bounce, and reply rate once a domain has real sending history, and domain
+  comparison.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.
@@ -46,10 +47,10 @@ as of commit `0c15ba2`. See `CHANGELOG.md` for the commit-by-commit history.
   -aggregation worker (`warmup_stats` has no writer yet) are not built, so
   historical warmup volume charts render an honest empty state today.
 - **Analytics** — campaign-level, mailbox-level, and domain-level analytics
-  shipped, along with campaign comparison and mailbox comparison views (the
-  `compareCampaignMetrics`/`compareMailboxMetrics` seams both now have
-  callers); org-level rollups across all three, and a domain comparison
-  view, are not yet built.
+  shipped, along with campaign, mailbox, and domain comparison views (the
+  `compareCampaignMetrics`/`compareMailboxMetrics` seams all now have
+  callers, domain comparison reusing `compareMailboxMetrics` directly);
+  org-level rollups across all three are not yet built.
 
 ## Not started
 

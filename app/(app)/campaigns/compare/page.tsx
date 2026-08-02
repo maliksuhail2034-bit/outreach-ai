@@ -5,30 +5,9 @@ import { ArrowLeftRightIcon, EyeIcon, MailCheckIcon, MailWarningIcon, MessageCir
 import type { Tables } from "@/types/database.types";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Client } from "@/lib/db";
-import {
-  getCampaign,
-  getOrCreateOrganizationForUser,
-  listAnalyticsEvents,
-  listCampaignLeads,
-  listCampaigns,
-  listEmailEvents,
-  listSendAttemptsForCampaignLeads,
-  listSequences,
-  listSequenceSteps,
-} from "@/lib/db";
-import {
-  compareCampaignMetrics,
-  summarizeCampaignMetrics,
-  type CampaignMetricsSummary,
-} from "@/lib/analytics/campaign-metrics";
-import { groupCounts } from "@/lib/analytics/metrics";
-import {
-  identifyBiggestStepDropOff,
-  summarizeSequenceSteps,
-  type SequenceStepMetricsInput,
-} from "@/lib/analytics/sequence-step-metrics";
-import { calculateCampaignHealthScore, type CampaignHealthScoreResult } from "@/lib/campaigns/health-score";
+import { getCampaign, getOrCreateOrganizationForUser, listCampaigns } from "@/lib/db";
+import { compareCampaignMetrics } from "@/lib/analytics/campaign-metrics";
+import { loadCampaignAnalyticsSnapshot } from "@/lib/campaigns/campaign-analytics";
 import { campaignCompareQuerySchema } from "@/lib/validations/campaigns";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
@@ -38,90 +17,8 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { ComparisonTable, type ComparisonMetricRow } from "@/components/analytics/comparison-table";
 
-// Single-campaign scope per side, so this matches the campaign analytics
-// page's own limit — a comparison is two of those overviews side by side.
-const EVENT_FETCH_LIMIT = 5000;
-
 const SELECT_CLASSNAME =
   "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-
-interface CampaignSnapshot {
-  campaign: Tables<"campaigns">;
-  overview: CampaignMetricsSummary;
-  healthScore: CampaignHealthScoreResult;
-}
-
-// Fetches and summarizes one campaign's all-time data — the same
-// Overview/Health-score computation the campaign analytics page does
-// (lib/analytics/campaign-metrics.ts's summarizeCampaignMetrics,
-// lib/campaigns/health-score.ts's calculateCampaignHealthScore), just
-// without the date-ranged Trends section this page doesn't need. Calls
-// calculateCampaignHealthScore directly — no wrapper around its scoring
-// logic. engagementTrend is passed null here (not computed) because a
-// comparison is a snapshot across two campaigns, not a period-over-period
-// view of one; deliveryRate/positiveReplyRate/meetingRate are null for the
-// same "no real producer yet" reason the campaign analytics page documents.
-async function loadCampaignSnapshot(
-  supabase: Client,
-  organizationId: string,
-  campaign: Tables<"campaigns">,
-): Promise<CampaignSnapshot> {
-  const [campaignLeads, emailEvents, analyticsEvents] = await Promise.all([
-    listCampaignLeads(supabase, campaign.id),
-    listEmailEvents(supabase, campaign.id, { limit: EVENT_FETCH_LIMIT }),
-    listAnalyticsEvents(supabase, organizationId, {
-      subjectType: "campaign",
-      subjectId: campaign.id,
-      limit: EVENT_FETCH_LIMIT,
-    }),
-  ]);
-
-  const leadIds = (campaignLeads ?? []).map((row) => row.id);
-  const [sendAttemptsResult, sequences] = await Promise.all([
-    listSendAttemptsForCampaignLeads(supabase, leadIds),
-    listSequences(supabase, campaign.id),
-  ]);
-  const sendAttempts = sendAttemptsResult ?? [];
-  const events = emailEvents ?? [];
-  const sentAttempts = sendAttempts.filter((attempt) => attempt.status === "sent");
-
-  const sequence = sequences?.[0] ?? null;
-  const sequenceSteps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
-
-  const eventCounts = groupCounts(events, (event) => event.event_type);
-  const analyticsCounts = groupCounts(analyticsEvents, (event) => event.event_type);
-
-  const overview = summarizeCampaignMetrics({
-    sentCount: sentAttempts.length,
-    deliveredCount: eventCounts.delivered ?? 0,
-    openedCount: eventCounts.opened ?? 0,
-    clickedCount: eventCounts.clicked ?? 0,
-    repliedCount: eventCounts.replied ?? 0,
-    bouncedCount: eventCounts.bounced ?? 0,
-    positiveReplyCount: analyticsCounts.positive_reply ?? 0,
-    meetingBookedCount: analyticsCounts.meeting_booked ?? 0,
-  });
-
-  const stepInputs: SequenceStepMetricsInput[] = (sequenceSteps ?? []).map((step, index) => ({
-    stepId: step.id,
-    order: index + 1,
-    label: step.subject || `Step ${index + 1}`,
-  }));
-  const stepSummaries = summarizeSequenceSteps(stepInputs, sendAttempts, events);
-  const biggestStepDropOff = identifyBiggestStepDropOff(stepSummaries);
-
-  const healthScore = calculateCampaignHealthScore({
-    bounceRate: overview.bounceRate,
-    replyRate: overview.replyRate,
-    deliveryRate: null,
-    positiveReplyRate: null,
-    meetingRate: null,
-    engagementTrend: null,
-    biggestStepDropOff,
-  });
-
-  return { campaign, overview, healthScore };
-}
 
 function CampaignPicker({
   campaigns,
@@ -230,8 +127,8 @@ export default async function CampaignComparePage({
   }
 
   const [snapshotA, snapshotB] = await Promise.all([
-    loadCampaignSnapshot(supabase, organization.id, campaignA),
-    loadCampaignSnapshot(supabase, organization.id, campaignB),
+    loadCampaignAnalyticsSnapshot(supabase, organization.id, campaignA),
+    loadCampaignAnalyticsSnapshot(supabase, organization.id, campaignB),
   ]);
 
   // The one call this whole page exists to finally make — see

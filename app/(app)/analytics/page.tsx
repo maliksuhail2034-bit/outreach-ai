@@ -30,6 +30,7 @@ import { previousDateRange, resolveDateRange } from "@/lib/analytics/aggregation
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { ANALYTICS_EVENT_LABELS } from "@/lib/analytics/events";
 import { groupCounts, rate } from "@/lib/analytics/metrics";
+import { loadOrganizationRollup } from "@/lib/analytics/organization-rollup";
 import type { AnalyticsEventType } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -44,6 +45,8 @@ import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { CampaignPerformanceTable, type CampaignPerformanceRow } from "@/components/analytics/campaign-performance-table";
 import { FailureAnalysis } from "@/components/analytics/failure-analysis";
 import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/activity-timeline";
+import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
+import { RollupTable, type RollupRow } from "@/components/analytics/rollup-table";
 
 const CHART_WINDOW_DAYS = 14;
 const ANALYTICS_ROW_LIMIT = 500;
@@ -274,6 +277,44 @@ export default async function AnalyticsPage({
   const namePrefix = user.email?.split("@")[0]?.trim();
   const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
 
+  // --- Organization rollup (below) -----------------------------------------
+  // All-time totals across every campaign, mailbox, and domain — the last
+  // gap ROADMAP.md's Analytics section flagged as not yet built. Fetch
+  // orchestration is isolated behind loadOrganizationRollup() rather than
+  // looped here, so a future batched implementation only touches that one
+  // function; this page just maps its snapshots into RollupTable rows.
+  const rollup = await loadOrganizationRollup(supabase, user.id, organization.id);
+
+  const campaignRollupRows: RollupRow[] = rollup.campaignSnapshots.map((snapshot) => ({
+    key: snapshot.campaign.id,
+    label: snapshot.campaign.name,
+    href: `/campaigns/${snapshot.campaign.id}/analytics`,
+    sentCount: snapshot.overview.sentCount,
+    replyRate: snapshot.overview.replyRate,
+    bounceRate: snapshot.overview.bounceRate,
+    healthScore: snapshot.healthScore.score,
+  }));
+
+  const mailboxRollupRows: RollupRow[] = rollup.mailboxSnapshots.map((snapshot) => ({
+    key: snapshot.mailbox.id,
+    label: snapshot.mailbox.display_name || snapshot.mailbox.email,
+    href: `/mailboxes/${snapshot.mailbox.id}/analytics`,
+    sentCount: snapshot.overview.sentCount,
+    replyRate: snapshot.overview.replyRate,
+    bounceRate: snapshot.overview.bounceRate,
+    healthScore: snapshot.health?.health_score ?? null,
+  }));
+
+  const domainRollupRows: RollupRow[] = rollup.domainSnapshots.map((snapshot) => ({
+    key: snapshot.domain.id,
+    label: snapshot.domain.domain,
+    href: `/settings/deliverability/${snapshot.domain.id}/analytics`,
+    sentCount: snapshot.overview.sentCount,
+    replyRate: snapshot.overview.replyRate,
+    bounceRate: snapshot.overview.bounceRate,
+    healthScore: snapshot.healthScore.score,
+  }));
+
   const rangeParam = (await searchParams).range;
   const parsedRange = dateRangeQuerySchema.safeParse({ preset: rangeParam });
   const preset = parsedRange.success ? parsedRange.data.preset : "7d";
@@ -457,6 +498,48 @@ export default async function AnalyticsPage({
           </div>
         </>
       )}
+
+      <FadeIn delay={0.95}>
+        <div className="border-t border-border pt-6 sm:pt-8">
+          <h2 className="text-xl font-semibold tracking-tight">Organization rollup</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            All-time totals across every campaign, mailbox, and domain in this organization.
+          </p>
+        </div>
+      </FadeIn>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
+          <MailboxMetricsOverviewCards summary={rollup.overview} delayStart={1} />
+        </div>
+      </div>
+
+      <FadeIn delay={1.1}>
+        <RollupTable
+          title="Campaigns"
+          description="Every campaign's all-time sent volume, reply rate, bounce rate, and health score."
+          emptyLabel="No campaigns yet."
+          rows={campaignRollupRows}
+        />
+      </FadeIn>
+
+      <FadeIn delay={1.15}>
+        <RollupTable
+          title="Mailboxes"
+          description="Every mailbox's all-time sent volume, reply rate, bounce rate, and health score."
+          emptyLabel="No mailboxes yet."
+          rows={mailboxRollupRows}
+        />
+      </FadeIn>
+
+      <FadeIn delay={1.2}>
+        <RollupTable
+          title="Domains"
+          description="Every domain's all-time sent volume, reply rate, bounce rate, and health score."
+          emptyLabel="No domains yet."
+          rows={domainRollupRows}
+        />
+      </FadeIn>
     </div>
   );
 }

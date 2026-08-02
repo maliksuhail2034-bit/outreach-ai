@@ -4,19 +4,11 @@ import { ArrowLeftRightIcon } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Client, MailboxSafe } from "@/lib/db";
-import {
-  getMailbox,
-  getMailboxHealth,
-  getOrCreateOrganizationForUser,
-  listAnalyticsEvents,
-  listEmailEvents,
-  listMailboxes,
-} from "@/lib/db";
-import { compareMailboxMetrics, summarizeMailboxMetrics, type MailboxMetricsSummary } from "@/lib/analytics/mailbox-metrics";
-import { groupCounts } from "@/lib/analytics/metrics";
+import type { MailboxSafe } from "@/lib/db";
+import { getMailbox, getOrCreateOrganizationForUser, listMailboxes } from "@/lib/db";
+import { compareMailboxMetrics } from "@/lib/analytics/mailbox-metrics";
+import { loadMailboxAnalyticsSnapshot } from "@/lib/mailboxes/mailbox-analytics";
 import { mailboxCompareQuerySchema } from "@/lib/validations/mailboxes";
-import type { Tables } from "@/types/database.types";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -25,55 +17,8 @@ import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metr
 import { ComparisonTable, type ComparisonMetricRow } from "@/components/analytics/comparison-table";
 import { MailboxHealthSummary } from "@/components/mailboxes/mailbox-health-summary";
 
-// Single-mailbox scope per side, so this matches the mailbox analytics
-// page's own limit — a comparison is two of those overviews side by side.
-const EVENT_FETCH_LIMIT = 5000;
-
 const SELECT_CLASSNAME =
   "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-
-interface MailboxSnapshot {
-  mailbox: MailboxSafe;
-  overview: MailboxMetricsSummary;
-  health: Tables<"mailbox_health"> | null;
-}
-
-// Fetches and summarizes one mailbox's all-time data — the same
-// Overview computation the mailbox analytics page does
-// (lib/analytics/mailbox-metrics.ts's summarizeMailboxMetrics), plus its
-// stored health row (mailbox_health, written by calculateMailboxHealthScore
-// in settings/deliverability/actions.ts — not recomputed here).
-async function loadMailboxSnapshot(
-  supabase: Client,
-  organizationId: string,
-  mailbox: MailboxSafe,
-): Promise<MailboxSnapshot> {
-  const [emailEvents, analyticsEvents, health] = await Promise.all([
-    listEmailEvents(supabase, undefined, { mailboxId: mailbox.id, limit: EVENT_FETCH_LIMIT }),
-    listAnalyticsEvents(supabase, organizationId, {
-      subjectType: "mailbox",
-      subjectId: mailbox.id,
-      limit: EVENT_FETCH_LIMIT,
-    }),
-    getMailboxHealth(supabase, mailbox.user_id, mailbox.id),
-  ]);
-
-  const events = emailEvents ?? [];
-  const eventCounts = groupCounts(events, (event) => event.event_type);
-  const analyticsCounts = groupCounts(analyticsEvents, (event) => event.event_type);
-
-  const overview = summarizeMailboxMetrics({
-    sentCount: eventCounts.sent ?? 0,
-    deliveredCount: eventCounts.delivered ?? 0,
-    openedCount: eventCounts.opened ?? 0,
-    clickedCount: eventCounts.clicked ?? 0,
-    repliedCount: eventCounts.replied ?? 0,
-    bouncedCount: eventCounts.bounced ?? 0,
-    spamComplaintCount: analyticsCounts.spam_report ?? 0,
-  });
-
-  return { mailbox, overview, health };
-}
 
 function MailboxPicker({
   mailboxes,
@@ -182,8 +127,8 @@ export default async function MailboxComparePage({
   }
 
   const [snapshotA, snapshotB] = await Promise.all([
-    loadMailboxSnapshot(supabase, organization.id, mailboxA),
-    loadMailboxSnapshot(supabase, organization.id, mailboxB),
+    loadMailboxAnalyticsSnapshot(supabase, organization.id, mailboxA),
+    loadMailboxAnalyticsSnapshot(supabase, organization.id, mailboxB),
   ]);
 
   // The one call this whole page exists to finally make — compareMailboxMetrics

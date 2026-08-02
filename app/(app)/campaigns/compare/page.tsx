@@ -36,7 +36,7 @@ import { Label } from "@/components/ui/label";
 import { PercentageCard } from "@/components/dashboard/percentage-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { CampaignHealthCard } from "@/components/campaigns/campaign-health-card";
-import { CampaignComparisonTable, type ComparisonMetricRow } from "@/components/campaigns/campaign-comparison-table";
+import { ComparisonTable, type ComparisonMetricRow } from "@/components/analytics/comparison-table";
 
 // Single-campaign scope per side, so this matches the campaign analytics
 // page's own limit — a comparison is two of those overviews side by side.
@@ -294,7 +294,7 @@ export default async function CampaignComparePage({
       </FadeIn>
 
       <FadeIn delay={0.25}>
-        <CampaignComparisonTable campaignAName={campaignA.name} campaignBName={campaignB.name} rows={comparisonRows} />
+        <ComparisonTable aLabel={campaignA.name} bLabel={campaignB.name} rows={comparisonRows} />
       </FadeIn>
 
       <FadeIn delay={0.3}>

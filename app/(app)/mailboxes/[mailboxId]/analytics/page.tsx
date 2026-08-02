@@ -49,8 +49,8 @@ import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
 import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/activity-timeline";
-import { ScoreBadge } from "@/components/deliverability/score-badge";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
+import { MailboxHealthSummary } from "@/components/mailboxes/mailbox-health-summary";
 
 // Single-mailbox scope, so a generous limit (like the campaign analytics
 // page's) comfortably covers a mailbox's full history without pagination.
@@ -485,19 +485,7 @@ export default async function MailboxAnalyticsPage({
             <StatusCard title="Mailbox verification" status={statusLabel(mailbox.status)} tone={MAILBOX_STATUS_TONE[mailbox.status] ?? "outline"} icon={<MailCheckIcon className="size-4" />} />
           </FadeIn>
           <FadeIn delay={0.86}>
-            <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground">Mailbox health</span>
-                <ScoreBadge score={mailboxHealth?.health_score ?? 0} />
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Reputation: {mailboxHealth?.reputation_score ?? "Not measured"}
-                {" · Bounce: "}
-                {mailboxHealth?.bounce_rate == null ? "Not measured" : `${mailboxHealth.bounce_rate}%`}
-                {" · Reply: "}
-                {mailboxHealth?.reply_rate == null ? "Not measured" : `${mailboxHealth.reply_rate}%`}
-              </p>
-            </div>
+            <MailboxHealthSummary mailboxHealth={mailboxHealth} />
           </FadeIn>
         </div>
       </div>

@@ -28,3 +28,14 @@ export const mailboxSchema = z.object({
   imapPassword: z.string().max(500).optional().or(z.literal("")),
 });
 export type MailboxInput = z.infer<typeof mailboxSchema>;
+
+// Validates the ?a=&b= query string on /mailboxes/compare. Both are
+// optional (an empty/partial query just shows the mailbox picker instead
+// of a comparison — see the page component); getMailbox()'s existing
+// userId-scoped ownership check is what actually guards access to the two
+// ids once they're valid. Same shape as campaignCompareQuerySchema.
+export const mailboxCompareQuerySchema = z.object({
+  a: z.string().uuid().optional(),
+  b: z.string().uuid().optional(),
+});
+export type MailboxCompareQuery = z.infer<typeof mailboxCompareQuerySchema>;

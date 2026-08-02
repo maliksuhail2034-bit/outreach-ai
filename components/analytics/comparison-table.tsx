@@ -26,22 +26,27 @@ export interface ComparisonMetricRow {
   format: "count" | "percent";
   aValue: number | null;
   bValue: number | null;
-  // Direction/magnitude of A relative to B — feed
-  // lib/analytics/campaign-metrics.ts's compareCampaignMetrics() output
-  // directly, keyed the same as this row.
+  // Direction/magnitude of A relative to B — feed a compare*Metrics()
+  // TrendResult directly (lib/analytics/campaign-metrics.ts's
+  // compareCampaignMetrics, lib/analytics/mailbox-metrics.ts's
+  // compareMailboxMetrics, or a future compareDomainMetrics), keyed the
+  // same as this row.
   trend: TrendResult;
 }
 
-// Metric-by-metric matrix for two campaigns, built entirely on
-// compareCampaignMetrics()'s existing TrendResult output — this component
-// only lays it out, it doesn't compute anything.
-export function CampaignComparisonTable({
-  campaignAName,
-  campaignBName,
+// Entity-agnostic metric-by-metric matrix for any "A vs. B" comparison view
+// — Campaign Comparison, Mailbox Comparison, and (once built) Domain
+// Comparison all render the same shape, so this only lays rows out; it
+// never computes anything itself. aLabel/bLabel are just display names
+// (a campaign name, a mailbox email, a domain) — nothing here assumes
+// which entity type produced the rows.
+export function ComparisonTable({
+  aLabel,
+  bLabel,
   rows,
 }: {
-  campaignAName: string;
-  campaignBName: string;
+  aLabel: string;
+  bLabel: string;
   rows: ComparisonMetricRow[];
 }) {
   return (
@@ -51,8 +56,8 @@ export function CampaignComparisonTable({
           <thead>
             <tr className="border-b border-border text-xs text-muted-foreground">
               <th className="py-3 pl-5 pr-4 font-medium">Metric</th>
-              <th className="max-w-40 truncate py-3 pr-4 font-medium">{campaignAName}</th>
-              <th className="max-w-40 truncate py-3 pr-4 font-medium">{campaignBName}</th>
+              <th className="max-w-40 truncate py-3 pr-4 font-medium">{aLabel}</th>
+              <th className="max-w-40 truncate py-3 pr-4 font-medium">{bLabel}</th>
               <th className="py-3 pr-5 font-medium">A vs. B</th>
             </tr>
           </thead>

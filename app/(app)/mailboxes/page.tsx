@@ -1,7 +1,10 @@
+import Link from "next/link";
+
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { listDomains, listMailboxes } from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
+import { Button } from "@/components/ui/button";
 import { MailboxList } from "@/components/mailboxes/mailbox-list";
 
 export default async function MailboxesPage() {
@@ -19,11 +22,16 @@ export default async function MailboxesPage() {
   return (
     <div className="max-w-4xl space-y-8">
       <FadeIn>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Mailboxes</h1>
-          <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-            Connect the sending accounts you&apos;ll launch campaigns from.
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Mailboxes</h1>
+            <p className="mt-1 text-sm text-muted-foreground sm:text-base">
+              Connect the sending accounts you&apos;ll launch campaigns from.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/mailboxes/compare">Compare mailboxes</Link>
+          </Button>
         </div>
       </FadeIn>
 

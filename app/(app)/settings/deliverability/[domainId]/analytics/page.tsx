@@ -4,14 +4,12 @@ import { InboxIcon, MessageCircleReplyIcon, SendIcon, MailCheckIcon, MailWarning
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getDomain, listEmailEvents, listMailboxes } from "@/lib/db";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
-import { summarizeDomainMetrics } from "@/lib/analytics/domain-metrics";
 import { total } from "@/lib/analytics/metrics";
 import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
-import { calculateDomainHealthScore } from "@/lib/deliverability/scoring";
+import { loadDomainAnalyticsSnapshot, type DomainAnalyticsSnapshot } from "@/lib/deliverability/domain-analytics";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -23,11 +21,6 @@ import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metr
 import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
-
-// Single-domain scope, so a generous limit (like the campaign/mailbox
-// analytics pages') comfortably covers a domain's full combined history
-// without pagination.
-const EVENT_FETCH_LIMIT = 5000;
 
 export default async function DomainAnalyticsPage({
   params,
@@ -44,12 +37,17 @@ export default async function DomainAnalyticsPage({
 
   const supabase = await createClient();
 
-  let domain;
+  // Fetch orchestration (domain lookup, mailbox resolution, combined event
+  // fetch, overview summary, health score) is shared with Domain Comparison
+  // via lib/deliverability/domain-analytics.ts — this page only adds the
+  // date-ranged trend bucketing below, which Domain Comparison doesn't need.
+  let snapshot: DomainAnalyticsSnapshot;
   try {
-    domain = await getDomain(supabase, user.id, domainId);
+    snapshot = await loadDomainAnalyticsSnapshot(supabase, user.id, domainId);
   } catch {
     notFound();
   }
+  const { domain, domainMailboxes, events, overview, healthScore } = snapshot;
 
   const query = await searchParams;
   const parsedQuery = dateRangeQuerySchema.safeParse({ preset: query.range ?? "7d", start: query.start, end: query.end });
@@ -59,41 +57,6 @@ export default async function DomainAnalyticsPage({
       ? resolveDateRange("custom", { start: parsedQuery.data.start, end: parsedQuery.data.end })
       : resolveDateRange(preset === "custom" ? "7d" : preset);
   const priorRange = previousDateRange(currentRange);
-
-  // A domain has no direct link to email_events — only mailboxes.domain_id
-  // does — so this filters the user's full mailbox list down to the ones
-  // linked to this domain, then fetches their combined events in one query
-  // (listEmailEvents's mailboxIds filter) instead of one call per mailbox.
-  const allMailboxes = await listMailboxes(supabase, user.id);
-  const domainMailboxes = allMailboxes.filter((mailbox) => mailbox.domain_id === domainId);
-  const mailboxIds = domainMailboxes.map((mailbox) => mailbox.id);
-
-  const events =
-    mailboxIds.length > 0 ? ((await listEmailEvents(supabase, undefined, { mailboxIds, limit: EVENT_FETCH_LIMIT })) ?? []) : [];
-
-  // --- Overview (all-time) — reuses lib/analytics/domain-metrics.ts's
-  // summarizeDomainMetrics, which itself calls
-  // lib/analytics/mailbox-metrics.ts's summarizeMailboxMetrics directly —
-  // the same rate-calculation engine Mailbox Analytics uses, just fed this
-  // domain's combined mailbox event counts instead of one mailbox's.
-  const overview = summarizeDomainMetrics(events);
-
-  // Domain health — the same weighted-signal engine the settings page's
-  // "Check now" action uses (lib/deliverability/scoring.ts's
-  // calculateDomainHealthScore), just fed this domain's real deliverability
-  // rate/bounce rate/reply rate (already computed above) alongside its DNS
-  // verification. The persisted domains.health_score shown in the header
-  // badge stays DNS-only — that action has no email-event data to pass in —
-  // this card is the richer, live-computed version.
-  const healthScore = calculateDomainHealthScore({
-    spfVerified: domain.spf_verified,
-    dkimVerified: domain.dkim_verified,
-    dmarcVerified: domain.dmarc_verified,
-    mxVerified: domain.mx_verified,
-    deliveryRate: overview.deliveryRate,
-    bounceRate: overview.bounceRate,
-    replyRate: overview.replyRate,
-  });
 
   const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 

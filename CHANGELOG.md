@@ -3,6 +3,83 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-02 — Mailbox Comparison (`0852ddf`)
+
+- Added `/mailboxes/compare` to let a user pick two mailboxes and see their
+  overview metrics, per-metric trend (A vs. B), and stored health scores
+  side by side. Fills the `compareMailboxMetrics` seam that shipped in
+  Phase 2C with no caller.
+- Generalized the campaign-only comparison table into
+  `components/analytics/comparison-table.tsx` (entity-agnostic
+  `aLabel`/`bLabel` props), now shared by Campaign Comparison and Mailbox
+  Comparison instead of each having its own copy.
+- Extracted `components/mailboxes/mailbox-health-summary.tsx` from the
+  mailbox analytics page so the health-score block isn't duplicated a
+  second time.
+
+## 2026-08-01 — Domain Analytics Foundation (`867f92c`)
+
+- Added `/settings/deliverability/[domainId]/analytics`: combined
+  sent/delivered/open/click/reply/bounce metrics and trends across every
+  mailbox linked to a domain, reusing `summarizeMailboxMetrics` directly
+  instead of a domain-specific rate calculation.
+- Added `lib/analytics/domain-metrics.ts` (`summarizeDomainMetrics`).
+- Extracted the range-picker, overview-card, and DNS-status blocks shared
+  with Campaign/Mailbox Analytics into `components/analytics/date-range-picker.tsx`,
+  `components/analytics/mailbox-metrics-overview.tsx`, and
+  `components/deliverability/domain-dns-status.tsx`.
+
+## 2026-08-01 — Campaign Mailbox Intelligence (`35f7d0e`)
+
+- Added plain-language mailbox insights (best/weakest mailbox, elevated
+  bounce rate, redistribute-volume suggestion, all-healthy-consistent) to
+  the campaign analytics page, covering the mailboxes a campaign actually
+  sends from.
+- Added `lib/campaigns/mailbox-insights.ts`, reusing `summarizeMailboxMetrics`
+  and `resolveLeadMailboxId` rather than a new scoring engine.
+
+## 2026-08-01 — Campaign Comparison (`7b8272f`)
+
+- Added `/campaigns/compare` to let a user pick two campaigns and see their
+  metrics, per-metric trend (A vs. B), and health scores side by side.
+  Filled the `compareCampaignMetrics`/`calculateCampaignHealthScore` seams
+  that had no caller.
+- Added `lib/validations/campaigns.ts`'s `campaignCompareQuerySchema`.
+
+## 2026-08-01 — Campaign Health Score (`0280748`)
+
+- Added a weighted 0-100 campaign health score over whichever signals have
+  real data today — bounce rate, reply rate, engagement trend, and biggest
+  sequence-step drop-off — reusing the existing funnel/trends/sequence-step
+  engines. Returns `null` (not a false 0) when no signal has data yet.
+- Added `lib/campaigns/health-score.ts` and
+  `components/campaigns/campaign-health-card.tsx`.
+
+## 2026-08-01 — Sequence Step Analytics (`4f3a6a7`)
+
+- Added a per-step performance breakdown (sent/opened/replied/drop-off per
+  sequence step) to the campaign analytics page.
+- Added `lib/analytics/sequence-step-metrics.ts` and
+  `components/analytics/sequence-step-performance-table.tsx`.
+
+## 2026-08-01 — Campaign Funnel Intelligence (`2fc1a71`)
+
+- Added a conversion funnel breakdown to the campaign analytics page.
+- Added `lib/analytics/funnel.ts` with unit tests.
+
+## 2026-08-01 — Campaign Execution Experience (`91ff44f`)
+
+- Added campaign launch readiness checks (`lib/campaigns/readiness.ts`) and
+  a send queue view (`lib/campaigns/queue.ts`,
+  `components/campaigns/campaign-queue-view.tsx`).
+- Added `components/campaigns/campaign-execution-controls.tsx`
+  (start/pause/resume) to the campaign detail page.
+
+## 2026-08-01 — Campaign Sending Engine Foundation (`10638d1`)
+
+- Added the `sending_limits` migration and daily/hourly sending-limit
+  fields to the mailbox form and campaign detail page.
+
 ## 2026-08-01 — Phase 2C: Mailbox Analytics Platform
 
 - Added a per-mailbox analytics page (`/mailboxes/[mailboxId]/analytics`):

@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `926b655`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `0852ddf`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -11,8 +11,10 @@ as of commit `926b655`. See `CHANGELOG.md` for the commit-by-commit history.
   (`organizations` migration).
 - **Leads management** — CSV import, bulk selection/deletion, lead lifecycle
   and unsubscribe/suppression compliance.
-- **Campaign builder** — campaign foundation, setup wizard, mailbox
-  assignment step, review step, campaign lead search/filtering.
+- **Campaign builder & execution** — campaign foundation, setup wizard,
+  mailbox assignment step, review step, campaign lead search/filtering,
+  launch readiness checks, a send queue view, start/pause/resume execution
+  controls, and per-mailbox/campaign sending limits.
 - **Sequences** — sequence steps panel and data access.
 - **Sending engine** — claim-due-sends pipeline, send attempts tracking,
   retry/failure hardening, SMTP provider.
@@ -20,10 +22,12 @@ as of commit `926b655`. See `CHANGELOG.md` for the commit-by-commit history.
   and warmup state machine.
 - **Reply tracking** — inbound reply sync (`app/api/cron/sync-replies`).
 - **Deliverability** — domain/mailbox health data model and settings route.
-- **Analytics** — event model, metrics engine, campaign-level overview,
-  timeline, trends, and conversion funnel (Phase 2B); mailbox-level
-  overview, timeline, trends, warmup analytics, and deliverability
-  analytics (Phase 2C).
+- **Analytics** — event model, metrics engine; campaign-level overview,
+  timeline, trends, conversion funnel, sequence-step performance, mailbox
+  intelligence insights, health score, and campaign comparison (Phase 2B
+  and after); mailbox-level overview, timeline, trends, warmup analytics,
+  deliverability analytics, and mailbox comparison (Phase 2C and after);
+  domain-level analytics combining every mailbox linked to a domain.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.
@@ -39,10 +43,11 @@ as of commit `926b655`. See `CHANGELOG.md` for the commit-by-commit history.
   analytics exist; scheduled warmup send automation and the stats
   -aggregation worker (`warmup_stats` has no writer yet) are not built, so
   historical warmup volume charts render an honest empty state today.
-- **Analytics** — campaign-level and mailbox-level analytics shipped;
-  org-level rollups across both, and cross-entity comparison views (the
-  `compareCampaignMetrics`/`compareMailboxMetrics` seams exist but have no
-  caller yet), are not yet built.
+- **Analytics** — campaign-level, mailbox-level, and domain-level analytics
+  shipped, along with campaign comparison and mailbox comparison views (the
+  `compareCampaignMetrics`/`compareMailboxMetrics` seams both now have
+  callers); org-level rollups across all three, and a domain comparison
+  view, are not yet built.
 
 ## Not started
 
@@ -56,7 +61,9 @@ as of commit `926b655`. See `CHANGELOG.md` for the commit-by-commit history.
   `CLAUDE.md` §1.
 - **Documentation** — this `ROADMAP.md` and `CHANGELOG.md` were backfilled
   from git history on 2026-08-01 after an earlier session was interrupted
-  before either file was written to disk.
+  before either file was written to disk, then backfilled again on
+  2026-08-02 to cover nine commits (`10638d1`–`0852ddf`) that had landed
+  without a doc update.
 
 ## Notes
 

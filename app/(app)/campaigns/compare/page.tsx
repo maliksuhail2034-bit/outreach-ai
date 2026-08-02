@@ -35,7 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { PercentageCard } from "@/components/dashboard/percentage-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
-import { CampaignHealthCard } from "@/components/campaigns/campaign-health-card";
+import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { ComparisonTable, type ComparisonMetricRow } from "@/components/analytics/comparison-table";
 
 // Single-campaign scope per side, so this matches the campaign analytics
@@ -306,10 +306,24 @@ export default async function CampaignComparePage({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <FadeIn delay={0.35}>
-          <CampaignHealthCard score={snapshotA.healthScore.score} factors={snapshotA.healthScore.factors} />
+          <HealthScoreCard
+            title="Campaign health"
+            description="Weighted from every signal with real data today."
+            emptyTitle="Not enough data yet"
+            emptyDescription="A health score appears once this campaign has real bounce/reply data, an engagement trend, or step performance to measure."
+            score={snapshotA.healthScore.score}
+            factors={snapshotA.healthScore.factors}
+          />
         </FadeIn>
         <FadeIn delay={0.4}>
-          <CampaignHealthCard score={snapshotB.healthScore.score} factors={snapshotB.healthScore.factors} />
+          <HealthScoreCard
+            title="Campaign health"
+            description="Weighted from every signal with real data today."
+            emptyTitle="Not enough data yet"
+            emptyDescription="A health score appears once this campaign has real bounce/reply data, an engagement trend, or step performance to measure."
+            score={snapshotB.healthScore.score}
+            factors={snapshotB.healthScore.factors}
+          />
         </FadeIn>
       </div>
     </div>

@@ -11,6 +11,7 @@ import { summarizeDomainMetrics } from "@/lib/analytics/domain-metrics";
 import { total } from "@/lib/analytics/metrics";
 import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
+import { calculateDomainHealthScore } from "@/lib/deliverability/scoring";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -19,6 +20,7 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
+import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
 
@@ -76,6 +78,23 @@ export default async function DomainAnalyticsPage({
   // domain's combined mailbox event counts instead of one mailbox's.
   const overview = summarizeDomainMetrics(events);
 
+  // Domain health — the same weighted-signal engine the settings page's
+  // "Check now" action uses (lib/deliverability/scoring.ts's
+  // calculateDomainHealthScore), just fed this domain's real deliverability
+  // rate/bounce rate/reply rate (already computed above) alongside its DNS
+  // verification. The persisted domains.health_score shown in the header
+  // badge stays DNS-only — that action has no email-event data to pass in —
+  // this card is the richer, live-computed version.
+  const healthScore = calculateDomainHealthScore({
+    spfVerified: domain.spf_verified,
+    dkimVerified: domain.dkim_verified,
+    dmarcVerified: domain.dmarc_verified,
+    mxVerified: domain.mx_verified,
+    deliveryRate: overview.deliveryRate,
+    bounceRate: overview.bounceRate,
+    replyRate: overview.replyRate,
+  });
+
   const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
   return (
@@ -98,11 +117,25 @@ export default async function DomainAnalyticsPage({
       <FadeIn delay={0.05}>
         <div>
           <h2 className="font-semibold tracking-tight">Domain health</h2>
-          <p className="text-sm text-muted-foreground">DNS verification status for this domain.</p>
+          <p className="text-sm text-muted-foreground">
+            DNS verification, plus deliverability, bounce rate, and reply rate where this domain has real sending
+            history.
+          </p>
         </div>
       </FadeIn>
 
       <DomainDnsStatus domain={domain} delayStart={0.08} />
+
+      <FadeIn delay={0.18}>
+        <HealthScoreCard
+          title="Domain health score"
+          description="Weighted from DNS verification and, once available, this domain's real deliverability signals."
+          emptyTitle="Not enough data yet"
+          emptyDescription="A health score appears once this domain has DNS verification results."
+          score={healthScore.score}
+          factors={healthScore.factors}
+        />
+      </FadeIn>
 
       {domainMailboxes.length === 0 ? (
         <FadeIn delay={0.2}>

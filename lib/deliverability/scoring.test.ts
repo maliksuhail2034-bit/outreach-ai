@@ -2,33 +2,78 @@ import { describe, expect, it } from "vitest";
 import { calculateDomainHealthScore, calculateMailboxHealthScore } from "./scoring";
 
 describe("calculateDomainHealthScore", () => {
+  const allDnsPassing = { spfVerified: true, dkimVerified: true, dmarcVerified: true, mxVerified: true };
+  const noDnsPassing = { spfVerified: false, dkimVerified: false, dmarcVerified: false, mxVerified: false };
+
   it("scores 100 when every DNS check passes and no reputation is known", () => {
-    expect(
-      calculateDomainHealthScore({ spfVerified: true, dkimVerified: true, dmarcVerified: true, mxVerified: true }),
-    ).toBe(100);
+    expect(calculateDomainHealthScore(allDnsPassing).score).toBe(100);
   });
 
   it("scores 0 when nothing is verified", () => {
-    expect(
-      calculateDomainHealthScore({ spfVerified: false, dkimVerified: false, dmarcVerified: false, mxVerified: false }),
-    ).toBe(0);
+    expect(calculateDomainHealthScore(noDnsPassing).score).toBe(0);
   });
 
   it("scores 50 when exactly half the DNS checks pass", () => {
     expect(
-      calculateDomainHealthScore({ spfVerified: true, dkimVerified: true, dmarcVerified: false, mxVerified: false }),
+      calculateDomainHealthScore({ spfVerified: true, dkimVerified: true, dmarcVerified: false, mxVerified: false })
+        .score,
     ).toBe(50);
   });
 
   it("folds in a reputation score as a fifth equally-weighted signal once available", () => {
-    const allDnsPassing = { spfVerified: true, dkimVerified: true, dmarcVerified: true, mxVerified: true };
     // 4 signals at 100 + 1 signal at 0 = average 80.
-    expect(calculateDomainHealthScore({ ...allDnsPassing, reputationScore: 0 })).toBe(80);
+    expect(calculateDomainHealthScore({ ...allDnsPassing, reputationScore: 0 }).score).toBe(80);
   });
 
   it("ignores a null reputation score the same as a missing one", () => {
-    const allDnsPassing = { spfVerified: true, dkimVerified: true, dmarcVerified: true, mxVerified: true };
-    expect(calculateDomainHealthScore({ ...allDnsPassing, reputationScore: null })).toBe(100);
+    expect(calculateDomainHealthScore({ ...allDnsPassing, reputationScore: null }).score).toBe(100);
+  });
+
+  it("folds in delivery, bounce, and reply rate once a domain has real sending history", () => {
+    // DNS 4x100 + delivery 98(98) + bounce 1%(80) + reply 8%(80) = 658 / 7 = 94.
+    expect(
+      calculateDomainHealthScore({ ...allDnsPassing, deliveryRate: 98, bounceRate: 1, replyRate: 8 }).score,
+    ).toBe(94);
+  });
+
+  it("reports a good DNS health factor when every record is verified", () => {
+    const { factors } = calculateDomainHealthScore(allDnsPassing);
+    expect(factors).toContainEqual(
+      expect.objectContaining({ key: "dns_health", tone: "good" }),
+    );
+  });
+
+  it("reports a warning DNS health factor when a record is missing", () => {
+    const { factors } = calculateDomainHealthScore({ ...allDnsPassing, spfVerified: false });
+    expect(factors).toContainEqual(
+      expect.objectContaining({ key: "dns_health", tone: "warning" }),
+    );
+  });
+
+  it("reports good/warning deliverability, bounce, and reply factors only once real data exists", () => {
+    expect(calculateDomainHealthScore(allDnsPassing).factors.map((f) => f.key)).toEqual(["dns_health"]);
+
+    const { factors } = calculateDomainHealthScore({
+      ...allDnsPassing,
+      deliveryRate: 99,
+      bounceRate: 1,
+      replyRate: 8,
+    });
+    expect(factors).toContainEqual(expect.objectContaining({ key: "deliverability", tone: "good" }));
+    expect(factors).toContainEqual(expect.objectContaining({ key: "bounce_rate", tone: "good" }));
+    expect(factors).toContainEqual(expect.objectContaining({ key: "reply_rate", tone: "good" }));
+  });
+
+  it("reports warning bounce/reply/deliverability factors when signals are unhealthy", () => {
+    const { factors } = calculateDomainHealthScore({
+      ...allDnsPassing,
+      deliveryRate: 80,
+      bounceRate: 6,
+      replyRate: 0.5,
+    });
+    expect(factors).toContainEqual(expect.objectContaining({ key: "deliverability", tone: "warning" }));
+    expect(factors).toContainEqual(expect.objectContaining({ key: "bounce_rate", tone: "warning" }));
+    expect(factors).toContainEqual(expect.objectContaining({ key: "reply_rate", tone: "warning" }));
   });
 });
 

@@ -1,29 +1,33 @@
 import { AlertTriangleIcon, CheckCircle2Icon, HeartPulseIcon } from "lucide-react";
 
-import type { CampaignHealthFactor } from "@/lib/campaigns/health-score";
+import type { HealthScoreFactor } from "@/lib/analytics/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
 
-// Presentational only — score/factors are entirely computed by
-// lib/campaigns/health-score.ts's calculateCampaignHealthScore(); this
-// component just renders that result. Reuses ScoreBadge exactly as the
-// Deliverability pages already do.
-export function CampaignHealthCard({
+// Presentational only — the score/factors are entirely computed by an
+// entity-specific engine (lib/campaigns/health-score.ts's
+// calculateCampaignHealthScore, lib/deliverability/scoring.ts's
+// calculateDomainHealthScore); this component just renders whichever
+// result it's given, so Campaign and Domain health share one card instead
+// of each having its own near-identical copy.
+export function HealthScoreCard({
+  title,
+  description,
+  emptyTitle,
+  emptyDescription,
   score,
   factors,
 }: {
+  title: string;
+  description: string;
+  emptyTitle: string;
+  emptyDescription: string;
   score: number | null;
-  factors: CampaignHealthFactor[];
+  factors: HealthScoreFactor[];
 }) {
   if (score === null) {
-    return (
-      <EmptyState
-        icon={<HeartPulseIcon className="size-5" />}
-        title="Not enough data yet"
-        description="A health score appears once this campaign has real bounce/reply data, an engagement trend, or step performance to measure."
-      />
-    );
+    return <EmptyState icon={<HeartPulseIcon className="size-5" />} title={emptyTitle} description={emptyDescription} />;
   }
 
   const goodFactors = factors.filter((factor) => factor.tone === "good");
@@ -33,8 +37,8 @@ export function CampaignHealthCard({
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-4">
         <div>
-          <CardTitle>Campaign health</CardTitle>
-          <CardDescription>Weighted from every signal with real data today.</CardDescription>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
         </div>
         <ScoreBadge score={score} />
       </CardHeader>

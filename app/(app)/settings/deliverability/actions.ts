@@ -86,7 +86,7 @@ export async function runDomainDnsCheckAction(domainId: string) {
   const dkimVerified = passed("dkim");
   const dmarcVerified = passed("dmarc");
   const mxVerified = passed("mx");
-  const healthScore = calculateDomainHealthScore({ spfVerified, dkimVerified, dmarcVerified, mxVerified });
+  const { score: healthScore } = calculateDomainHealthScore({ spfVerified, dkimVerified, dmarcVerified, mxVerified });
 
   await updateDomain(supabase, user.id, domain.id, {
     spf_verified: spfVerified,

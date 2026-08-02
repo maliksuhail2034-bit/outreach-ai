@@ -1,5 +1,6 @@
 import type { FunnelDropOff } from "@/lib/analytics/funnel";
 import type { TrendResult } from "@/lib/analytics/trends";
+import type { HealthScoreFactor } from "@/lib/analytics/types";
 
 // Campaign health scoring — mirrors lib/deliverability/scoring.ts's shape
 // exactly: combine whatever signals are actually available into a 0-100
@@ -45,7 +46,7 @@ const MEETING_RATE_FULL_POINT = 2; // meetings are rarer than replies; 2%+ score
 
 // "Good"/"warning" callouts use their own, coarser cutoffs than the score
 // curve above — two bands, not a sliding scale, so the explanation stays
-// legible (see CampaignHealthFactor). A value between these bands is real
+// legible (see HealthScoreFactor). A value between these bands is real
 // but unremarkable and gets no callout, same as PercentageCard showing a
 // plain number instead of manufacturing commentary for a middling rate.
 const BOUNCE_RATE_GOOD_MAX = 2;
@@ -83,23 +84,16 @@ export interface CampaignHealthScoreInputs {
   biggestStepDropOff?: FunnelDropOff | null;
 }
 
-export interface CampaignHealthFactor {
-  key: string;
-  label: string;
-  tone: "good" | "warning";
-  detail: string;
-}
-
 export interface CampaignHealthScoreResult {
   // Null when there isn't a single usable signal yet — see the module
   // comment above for why this differs from scoring.ts's plain number.
   score: number | null;
-  factors: CampaignHealthFactor[];
+  factors: HealthScoreFactor[];
 }
 
 export function calculateCampaignHealthScore(inputs: CampaignHealthScoreInputs): CampaignHealthScoreResult {
   const signals: WeightedSignal[] = [];
-  const factors: CampaignHealthFactor[] = [];
+  const factors: HealthScoreFactor[] = [];
 
   if (inputs.bounceRate != null) {
     signals.push({ value: clamp(100 - (inputs.bounceRate / BOUNCE_RATE_ZERO_POINT) * 100, 0, 100), weight: 1 });

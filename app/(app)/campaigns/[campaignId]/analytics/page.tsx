@@ -57,7 +57,7 @@ import { FunnelCard, type FunnelStage } from "@/components/dashboard/funnel-card
 import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-step-performance-table";
-import { CampaignHealthCard } from "@/components/campaigns/campaign-health-card";
+import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mailbox-insights";
 
 // Single-campaign scope, so a generous limit (unlike the org-wide
@@ -354,7 +354,14 @@ export default async function CampaignAnalyticsPage({
       </FadeIn>
 
       <FadeIn delay={0.33}>
-        <CampaignHealthCard score={healthScore.score} factors={healthScore.factors} />
+        <HealthScoreCard
+          title="Campaign health"
+          description="Weighted from every signal with real data today."
+          emptyTitle="Not enough data yet"
+          emptyDescription="A health score appears once this campaign has real bounce/reply data, an engagement trend, or step performance to measure."
+          score={healthScore.score}
+          factors={healthScore.factors}
+        />
       </FadeIn>
 
       <FadeIn delay={0.35}>

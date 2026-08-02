@@ -45,3 +45,15 @@ export interface DateRange {
 }
 
 export type TrendDirection = "up" | "down" | "stable";
+
+// A single explainable input behind a 0-100 health score — shared by every
+// entity's scoring module (lib/campaigns/health-score.ts,
+// lib/deliverability/scoring.ts) so components/analytics/health-score-card.tsx
+// can render any of them without a per-entity variant. Each module still
+// owns its own weighting/cutoffs; only this display shape is shared.
+export interface HealthScoreFactor {
+  key: string;
+  label: string;
+  tone: "good" | "warning";
+  detail: string;
+}

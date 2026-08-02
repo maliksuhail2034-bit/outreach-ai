@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `0852ddf`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `0c15ba2`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -27,7 +27,9 @@ as of commit `0852ddf`. See `CHANGELOG.md` for the commit-by-commit history.
   intelligence insights, health score, and campaign comparison (Phase 2B
   and after); mailbox-level overview, timeline, trends, warmup analytics,
   deliverability analytics, and mailbox comparison (Phase 2C and after);
-  domain-level analytics combining every mailbox linked to a domain.
+  domain-level analytics combining every mailbox linked to a domain, plus a
+  domain health score weighing DNS verification alongside deliverability,
+  bounce, and reply rate once a domain has real sending history.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.

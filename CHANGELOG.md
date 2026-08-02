@@ -3,6 +3,23 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-02 — Domain Health Score (`0c15ba2`)
+
+- Extended `calculateDomainHealthScore` (`lib/deliverability/scoring.ts`)
+  beyond DNS-only: now also weighs a domain's real deliverability, bounce,
+  and reply rate (already computed on the domain analytics page via
+  `summarizeDomainMetrics`) and returns a good/warning factor breakdown
+  alongside the score, instead of a bare number. The persisted
+  `domains.health_score` (DNS-only, set by the settings page's "Check now"
+  action) is unchanged; the analytics page's new Domain Health Score card
+  is the richer, live-computed version.
+- Generalized `CampaignHealthCard` into
+  `components/analytics/health-score-card.tsx` (entity-agnostic
+  title/description/empty-state props), now shared by Campaign Health and
+  Domain Health instead of a second near-identical card.
+- Added a shared `HealthScoreFactor` type to `lib/analytics/types.ts`,
+  replacing the campaign-only `CampaignHealthFactor`.
+
 ## 2026-08-02 — Mailbox Comparison (`0852ddf`)
 
 - Added `/mailboxes/compare` to let a user pick two mailboxes and see their

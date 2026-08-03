@@ -31,6 +31,7 @@ import {
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
+import { collectInsights, forecastToInsight, trendToInsight } from "@/lib/analytics/insights";
 import { summarizeMailboxMetrics } from "@/lib/analytics/mailbox-metrics";
 import { groupCounts, rate, total } from "@/lib/analytics/metrics";
 import type { DailyCount } from "@/lib/analytics/time-buckets";
@@ -51,6 +52,7 @@ import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
 import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/activity-timeline";
+import { InsightsCard } from "@/components/analytics/insights-card";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
 import { MailboxHealthSummary } from "@/components/mailboxes/mailbox-health-summary";
 
@@ -256,6 +258,21 @@ export default async function MailboxAnalyticsPage({
     timestamp: event.created_at,
   }));
 
+  // --- AI Insights — deterministic, rule-based (no LLM): reuses the
+  // already-computed trends and send forecast. No health-factor insight
+  // here — calculateMailboxHealthScore (lib/deliverability/scoring.ts)
+  // returns a bare number, not a factor breakdown like the campaign/domain
+  // health-score engines, so there's nothing real to adapt yet.
+  const aiInsights = collectInsights(
+    [
+      trendToInsight("sends", "Sending volume", trends.sends),
+      trendToInsight("replies", "Replies", trends.replies),
+      trendToInsight("bounces", "Bounces", trends.bounces, false),
+      forecastToInsight("Sends", sendForecast),
+    ],
+    "No notable changes for this mailbox right now — everything is steady.",
+  );
+
   const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
   return (
@@ -413,6 +430,14 @@ export default async function MailboxAnalyticsPage({
           </FadeIn>
         </div>
       </div>
+
+      <FadeIn delay={0.55}>
+        <InsightsCard
+          title="AI Insights"
+          description="Deterministic, rule-based callouts from this mailbox's trends and send forecast."
+          insights={aiInsights}
+        />
+      </FadeIn>
 
       <FadeIn delay={0.56}>
         <div className="border-t border-border pt-6 sm:pt-8">

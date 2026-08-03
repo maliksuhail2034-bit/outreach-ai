@@ -31,6 +31,7 @@ import { calculatePeerAverage, compareToBenchmark } from "@/lib/analytics/benchm
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { ANALYTICS_EVENT_LABELS } from "@/lib/analytics/events";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
+import { benchmarkToInsight, collectInsights, forecastToInsight, type Insight } from "@/lib/analytics/insights";
 import { groupCounts, rate } from "@/lib/analytics/metrics";
 import { loadOrganizationRollup } from "@/lib/analytics/organization-rollup";
 import type { AnalyticsEventType } from "@/lib/analytics/types";
@@ -47,6 +48,7 @@ import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { CampaignPerformanceTable, type CampaignPerformanceRow } from "@/components/analytics/campaign-performance-table";
 import { FailureAnalysis } from "@/components/analytics/failure-analysis";
 import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/activity-timeline";
+import { InsightsCard } from "@/components/analytics/insights-card";
 import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
 import { RollupTable, type RollupRow } from "@/components/analytics/rollup-table";
 
@@ -346,6 +348,21 @@ export default async function AnalyticsPage({
       compareToBenchmark({ replyRate: snapshot.overview.replyRate }, domainReplyRatePeerAverage).replyRate ?? null,
   }));
 
+  // --- AI Insights — deterministic, rule-based (no LLM): one benchmark
+  // callout per campaign/mailbox/domain that's significantly off its own
+  // peer-group average (reusing the replyRateBenchmark already computed
+  // for each rollup row above), plus the org-wide send forecast computed
+  // earlier on this page.
+  const rollupBenchmarkInsights: (Insight | null)[] = [
+    ...campaignRollupRows.map((row) => (row.replyRateBenchmark ? benchmarkToInsight(row.label, "reply rate", row.replyRateBenchmark) : null)),
+    ...mailboxRollupRows.map((row) => (row.replyRateBenchmark ? benchmarkToInsight(row.label, "reply rate", row.replyRateBenchmark) : null)),
+    ...domainRollupRows.map((row) => (row.replyRateBenchmark ? benchmarkToInsight(row.label, "reply rate", row.replyRateBenchmark) : null)),
+  ];
+  const aiInsights = collectInsights(
+    [...rollupBenchmarkInsights, forecastToInsight("Sending volume", sendForecast)],
+    "No notable changes across your organization right now — everything is steady.",
+  );
+
   const rangeParam = (await searchParams).range;
   const parsedRange = dateRangeQuerySchema.safeParse({ preset: rangeParam });
   const preset = parsedRange.success ? parsedRange.data.preset : "7d";
@@ -589,6 +606,14 @@ export default async function AnalyticsPage({
           description="Every domain's all-time sent volume, reply rate, bounce rate, and health score."
           emptyLabel="No domains yet."
           rows={domainRollupRows}
+        />
+      </FadeIn>
+
+      <FadeIn delay={1.25}>
+        <InsightsCard
+          title="AI Insights"
+          description="Deterministic, rule-based callouts from the reply-rate benchmarks above and the organization's send forecast."
+          insights={aiInsights}
         />
       </FadeIn>
     </div>

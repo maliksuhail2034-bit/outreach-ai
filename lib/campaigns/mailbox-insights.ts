@@ -1,4 +1,5 @@
 import { resolveLeadMailboxId } from "./readiness";
+import type { Insight, InsightTone } from "@/lib/analytics/insights";
 import { summarizeMailboxMetrics } from "@/lib/analytics/mailbox-metrics";
 import { groupCounts } from "@/lib/analytics/metrics";
 import type { Tables } from "@/types/database.types";
@@ -50,13 +51,12 @@ export interface CampaignMailboxSummary {
   bounceRate: number | null;
 }
 
-export type MailboxInsightTone = "good" | "warning" | "info";
-
-export interface MailboxInsight {
-  key: string;
-  tone: MailboxInsightTone;
-  message: string;
-}
+// Same shape lib/analytics/insights.ts's shared Insight/InsightTone use —
+// aliased (not redeclared) so this module's insights and the AI Insights
+// engine's insights are interchangeable wherever both are rendered (see
+// components/analytics/insights-card.tsx's InsightList).
+export type MailboxInsightTone = InsightTone;
+export type MailboxInsight = Insight;
 
 export interface CampaignMailboxInsightsResult {
   mailboxes: CampaignMailboxSummary[];

@@ -7,8 +7,10 @@ import { createClient } from "@/lib/supabase/server";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
+import { collectInsights, forecastToInsight, healthFactorsToInsights, trendToInsight } from "@/lib/analytics/insights";
 import { total } from "@/lib/analytics/metrics";
 import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
+import type { HealthScoreFactor } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { loadDomainAnalyticsSnapshot, type DomainAnalyticsSnapshot } from "@/lib/deliverability/domain-analytics";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -20,6 +22,7 @@ import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
 import { HealthScoreCard } from "@/components/analytics/health-score-card";
+import { InsightsCard } from "@/components/analytics/insights-card";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
 
@@ -153,7 +156,12 @@ export default async function DomainAnalyticsPage({
             </div>
           </FadeIn>
 
-          <TrendsSection events={events} currentRange={currentRange} priorRange={priorRange} />
+          <TrendsSection
+            events={events}
+            currentRange={currentRange}
+            priorRange={priorRange}
+            healthScoreFactors={healthScore.factors}
+          />
         </>
       )}
     </div>
@@ -164,10 +172,12 @@ async function TrendsSection({
   events,
   currentRange,
   priorRange,
+  healthScoreFactors,
 }: {
   events: { event_type: string; created_at: string }[];
   currentRange: { start: string; end: string };
   priorRange: { start: string; end: string };
+  healthScoreFactors: HealthScoreFactor[];
 }) {
   const sentTimestamps = events.filter((e) => e.event_type === "sent").map((e) => e.created_at);
   const deliveredTimestamps = events.filter((e) => e.event_type === "delivered").map((e) => e.created_at);
@@ -199,6 +209,19 @@ async function TrendsSection({
   const trends = compareMetrics(
     { sends: sendsTotal, delivered: deliveredTotal, replies: repliesTotal, bounces: bouncesTotal },
     { sends: priorSends, delivered: priorDelivered, replies: priorReplies, bounces: priorBounces },
+  );
+
+  // --- AI Insights — deterministic, rule-based (no LLM): reuses this
+  // domain's health-score factors plus the trends/forecast computed above.
+  const aiInsights = collectInsights(
+    [
+      ...healthFactorsToInsights(healthScoreFactors),
+      trendToInsight("replies", "Replies", trends.replies),
+      trendToInsight("sends", "Sending volume", trends.sends),
+      trendToInsight("bounces", "Bounces", trends.bounces, false),
+      forecastToInsight("Sends", sendForecast),
+    ],
+    "No notable changes for this domain right now — everything is steady.",
   );
 
   return (
@@ -253,6 +276,14 @@ async function TrendsSection({
           </FadeIn>
         </div>
       </div>
+
+      <FadeIn delay={0.6}>
+        <InsightsCard
+          title="AI Insights"
+          description="Deterministic, rule-based callouts from this domain's health score, trends, and forecast."
+          insights={aiInsights}
+        />
+      </FadeIn>
     </>
   );
 }

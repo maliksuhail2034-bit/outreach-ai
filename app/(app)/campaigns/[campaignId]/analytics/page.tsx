@@ -36,6 +36,7 @@ import { summarizeCampaignMetrics } from "@/lib/analytics/campaign-metrics";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { calculateFunnelConversions, identifyBiggestDropOff } from "@/lib/analytics/funnel";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
+import { collectInsights, forecastToInsight, healthFactorsToInsights, trendToInsight } from "@/lib/analytics/insights";
 import { groupCounts, total } from "@/lib/analytics/metrics";
 import {
   identifyBestStep,
@@ -60,6 +61,7 @@ import { DailyBarChart } from "@/components/analytics/daily-bar-chart";
 import { DateRangePicker } from "@/components/analytics/date-range-picker";
 import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-step-performance-table";
 import { HealthScoreCard } from "@/components/analytics/health-score-card";
+import { InsightsCard } from "@/components/analytics/insights-card";
 import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mailbox-insights";
 
 // Single-campaign scope, so a generous limit (unlike the org-wide
@@ -281,6 +283,20 @@ export default async function CampaignAnalyticsPage({
     biggestStepDropOff,
   });
 
+  // --- AI Insights — deterministic, rule-based (no LLM): every candidate
+  // below adapts an output already computed above (health-score factors,
+  // the reply/send trend, the send forecast's own trajectory) rather than
+  // recomputing anything. See lib/analytics/insights.ts.
+  const aiInsights = collectInsights(
+    [
+      ...healthFactorsToInsights(healthScore.factors),
+      trendToInsight("replies", "Reply volume", trends.replies),
+      trendToInsight("sends", "Send volume", trends.sends),
+      forecastToInsight("Sends", sendForecast),
+    ],
+    "No notable changes for this campaign right now — everything is steady.",
+  );
+
   const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
   return (
@@ -371,6 +387,14 @@ export default async function CampaignAnalyticsPage({
           emptyDescription="A health score appears once this campaign has real bounce/reply data, an engagement trend, or step performance to measure."
           score={healthScore.score}
           factors={healthScore.factors}
+        />
+      </FadeIn>
+
+      <FadeIn delay={0.34}>
+        <InsightsCard
+          title="AI Insights"
+          description="Deterministic, rule-based callouts from this campaign's health score, trends, and forecast."
+          insights={aiInsights}
         />
       </FadeIn>
 

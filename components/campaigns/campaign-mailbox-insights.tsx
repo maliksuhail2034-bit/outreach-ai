@@ -1,21 +1,9 @@
-import { AlertTriangleIcon, CheckCircle2Icon, InboxIcon, InfoIcon } from "lucide-react";
+import { InboxIcon } from "lucide-react";
 
 import type { CampaignMailboxSummary, MailboxInsight } from "@/lib/campaigns/mailbox-insights";
-import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/dashboard/empty-state";
-
-const TONE_ICON: Record<MailboxInsight["tone"], typeof CheckCircle2Icon> = {
-  good: CheckCircle2Icon,
-  warning: AlertTriangleIcon,
-  info: InfoIcon,
-};
-
-const TONE_CLASS: Record<MailboxInsight["tone"], string> = {
-  good: "text-primary",
-  warning: "text-destructive",
-  info: "text-muted-foreground",
-};
+import { InsightList } from "@/components/analytics/insights-card";
 
 // Presentational only — every insight/summary is computed entirely by
 // lib/campaigns/mailbox-insights.ts's buildCampaignMailboxInsights(); this
@@ -45,17 +33,7 @@ export function CampaignMailboxInsightsCard({
         <CardDescription>Plain-language insights across this campaign&apos;s sending mailboxes.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <ul className="space-y-1.5">
-          {insights.map((insight) => {
-            const Icon = TONE_ICON[insight.tone];
-            return (
-              <li key={insight.key} className="flex items-start gap-2 text-sm">
-                <Icon className={cn("mt-0.5 size-4 shrink-0", TONE_CLASS[insight.tone])} />
-                <span>{insight.message}</span>
-              </li>
-            );
-          })}
-        </ul>
+        <InsightList insights={insights} />
 
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-left text-sm">

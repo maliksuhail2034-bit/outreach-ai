@@ -19,15 +19,18 @@ import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   getDomain,
+  getLatestRecommendation,
   getMailbox,
   getMailboxHealth,
   getOrCreateOrganizationForUser,
   getWarmupProfileByMailbox,
+  listAiProviderKeys,
   listAnalyticsEvents,
   listEmailEvents,
   listWarmupEvents,
   listWarmupStats,
 } from "@/lib/db";
+import type { AiProviderName } from "@/lib/ai/get-provider";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
@@ -55,6 +58,8 @@ import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/act
 import { InsightsCard } from "@/components/analytics/insights-card";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
 import { MailboxHealthSummary } from "@/components/mailboxes/mailbox-health-summary";
+import { RecommendationCard } from "@/components/ai/recommendation-card";
+import { generateMailboxRecommendationAction } from "./actions";
 
 // Single-mailbox scope, so a generous limit (like the campaign analytics
 // page's) comfortably covers a mailbox's full history without pagination.
@@ -132,17 +137,21 @@ export default async function MailboxAnalyticsPage({
       : resolveDateRange(preset === "custom" ? "7d" : preset);
   const priorRange = previousDateRange(currentRange);
 
-  const [emailEvents, analyticsEvents, warmupProfile, mailboxHealth, reputationSignals] = await Promise.all([
-    listEmailEvents(supabase, undefined, { mailboxId, limit: EVENT_FETCH_LIMIT }),
-    listAnalyticsEvents(supabase, organization.id, {
-      subjectType: "mailbox",
-      subjectId: mailboxId,
-      limit: EVENT_FETCH_LIMIT,
-    }),
-    getWarmupProfileByMailbox(supabase, organization.id, mailboxId),
-    getMailboxHealth(supabase, user.id, mailboxId),
-    getReputationProvider().checkMailbox(mailbox.email),
-  ]);
+  const [emailEvents, analyticsEvents, warmupProfile, mailboxHealth, reputationSignals, aiProviderKeys, latestRecommendation] =
+    await Promise.all([
+      listEmailEvents(supabase, undefined, { mailboxId, limit: EVENT_FETCH_LIMIT }),
+      listAnalyticsEvents(supabase, organization.id, {
+        subjectType: "mailbox",
+        subjectId: mailboxId,
+        limit: EVENT_FETCH_LIMIT,
+      }),
+      getWarmupProfileByMailbox(supabase, organization.id, mailboxId),
+      getMailboxHealth(supabase, user.id, mailboxId),
+      getReputationProvider().checkMailbox(mailbox.email),
+      listAiProviderKeys(supabase, organization.id),
+      getLatestRecommendation(supabase, organization.id, "mailbox", mailboxId),
+    ]);
+  const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
 
   const events = emailEvents ?? [];
 
@@ -555,7 +564,7 @@ export default async function MailboxAnalyticsPage({
       </FadeIn>
 
       <div className="@container">
-        <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-4">
+        <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
           <FadeIn delay={0.9}>
             <StatusCard title="Inbox placement" status={reputationSignals.inboxPlacementRate == null ? "Not available" : `${reputationSignals.inboxPlacementRate}%`} tone="outline" icon={<MailCheckIcon className="size-4" />} />
           </FadeIn>
@@ -565,11 +574,16 @@ export default async function MailboxAnalyticsPage({
           <FadeIn delay={0.94}>
             <StatusCard title="Spam test score" status={reputationSignals.spamTestScore == null ? "Not available" : `${reputationSignals.spamTestScore}/100`} tone="outline" icon={<MailWarningIcon className="size-4" />} />
           </FadeIn>
-          <FadeIn delay={0.96}>
-            <StatusCard title="AI recommendations" status="Not available" tone="outline" icon={<ActivityIcon className="size-4" />} description="Future integration — no recommendation engine exists yet." />
-          </FadeIn>
         </div>
       </div>
+
+      <FadeIn delay={0.96}>
+        <RecommendationCard
+          connectedProviders={connectedAiProviders}
+          initialRecommendation={latestRecommendation}
+          generateAction={generateMailboxRecommendationAction.bind(null, mailboxId)}
+        />
+      </FadeIn>
     </div>
   );
 }

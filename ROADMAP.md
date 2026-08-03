@@ -49,6 +49,21 @@ as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
   domain, and organization analytics, surfacing plain-language callouts by
   reusing each entity's already-computed health scores, trends, forecasts,
   and benchmarks rather than a second calculation. No LLM integration yet.
+- **AI Recommendations** — v1, Bring Your Own Key (BYOK) only: an
+  organization connects its own Claude/OpenAI/Gemini API key
+  (`/settings/ai`, `ai_provider_keys`); outreach-ai never provides a managed
+  key. A shared, provider-agnostic `lib/ai/` abstraction
+  (`lib/ai/provider.ts`, mirroring `EmailProvider`/`IntegrationProvider`)
+  wraps plain `fetch` calls to each provider's REST API — no vendor SDKs.
+  Generation is manual-only: a "Generate Recommendation" button on the
+  campaign, mailbox, domain, and organization analytics pages calls a Server
+  Function that assembles a fixed, deterministic snapshot from each entity's
+  already-computed health score/insights (reusing the existing
+  analytics/forecasting/benchmarks/AI Insights engines — no new
+  calculation), sends it to the connected provider, and stores the result in
+  `ai_recommendations` for audit. No scheduled worker and no cron route
+  exist for this feature, unlike every other automated milestone in this
+  list — see Notes.
 - **Integrations** — Integrations Foundation: a shared, provider-agnostic
   integration abstraction (`lib/integrations/provider.ts`, mirroring the
   existing `EmailProvider`/`ReputationProvider` pattern) with a real
@@ -79,12 +94,14 @@ as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
 ## Not started
 
 - **AI qualification / scoring** — no lead scoring or AI-driven
-  qualification logic yet (`lib/ai/` does not exist).
+  qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
+  Done) but is scoped to turning already-computed metrics into
+  recommendation text, not scoring/qualifying leads.
 - **AI-personalized outreach** — no AI-generated message content in the
   sending pipeline yet.
-- **AI recommendations** — the Mailbox Analytics UI's former placeholder is
-  now backed by deterministic rule-based AI Insights (see Done); an
-  LLM-driven recommendation engine is still not started.
+- **Managed AI** — AI Recommendations v1 is BYOK-only (see Done); a
+  managed/app-provided key option is a deliberately deferred future
+  extension of the same `lib/ai/get-provider.ts` seam, not started.
 - **Additional channels** (e.g. LinkedIn) — email-only today, per
   `CLAUDE.md` §1.
 - **Documentation** — this `ROADMAP.md` and `CHANGELOG.md` were backfilled

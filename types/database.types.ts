@@ -14,6 +14,100 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_provider_keys: {
+        Row: {
+          created_at: string
+          encrypted_api_key: string
+          id: string
+          key_preview: string
+          model: string | null
+          organization_id: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_api_key: string
+          id?: string
+          key_preview: string
+          model?: string | null
+          organization_id: string
+          provider: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_api_key?: string
+          id?: string
+          key_preview?: string
+          model?: string | null
+          organization_id?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_provider_keys_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_recommendations: {
+        Row: {
+          created_at: string
+          entity_id: string | null
+          entity_type: string
+          error_message: string | null
+          generated_by: string | null
+          id: string
+          input_snapshot: Json
+          model: string
+          organization_id: string
+          provider: string
+          recommendation_text: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type: string
+          error_message?: string | null
+          generated_by?: string | null
+          id?: string
+          input_snapshot: Json
+          model: string
+          organization_id: string
+          provider: string
+          recommendation_text?: string | null
+          status: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string
+          error_message?: string | null
+          generated_by?: string | null
+          id?: string
+          input_snapshot?: Json
+          model?: string
+          organization_id?: string
+          provider?: string
+          recommendation_text?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_recommendations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       analytics_daily_rollups: {
         Row: {
           created_at: string

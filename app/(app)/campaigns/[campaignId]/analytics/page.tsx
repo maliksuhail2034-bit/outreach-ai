@@ -22,7 +22,9 @@ import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCampaign,
+  getLatestRecommendation,
   getOrCreateOrganizationForUser,
+  listAiProviderKeys,
   listAnalyticsEvents,
   listCampaignLeads,
   listEmailEvents,
@@ -31,6 +33,7 @@ import {
   listSequences,
   listSequenceSteps,
 } from "@/lib/db";
+import type { AiProviderName } from "@/lib/ai/get-provider";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { summarizeCampaignMetrics } from "@/lib/analytics/campaign-metrics";
 import { compareMetrics } from "@/lib/analytics/comparisons";
@@ -63,6 +66,8 @@ import { SequenceStepPerformanceTable } from "@/components/analytics/sequence-st
 import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { InsightsCard } from "@/components/analytics/insights-card";
 import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mailbox-insights";
+import { RecommendationCard } from "@/components/ai/recommendation-card";
+import { generateCampaignRecommendationAction } from "./actions";
 
 // Single-campaign scope, so a generous limit (unlike the org-wide
 // /analytics page's 500) still comfortably covers a campaign's full
@@ -108,7 +113,7 @@ export default async function CampaignAnalyticsPage({
       : resolveDateRange(preset === "custom" ? "7d" : preset);
   const priorRange = previousDateRange(currentRange);
 
-  const [campaignLeads, emailEvents, analyticsEvents, mailboxes] = await Promise.all([
+  const [campaignLeads, emailEvents, analyticsEvents, mailboxes, aiProviderKeys, latestRecommendation] = await Promise.all([
     listCampaignLeads(supabase, campaignId),
     listEmailEvents(supabase, campaignId, { limit: EVENT_FETCH_LIMIT }),
     listAnalyticsEvents(supabase, organization.id, {
@@ -117,7 +122,10 @@ export default async function CampaignAnalyticsPage({
       limit: EVENT_FETCH_LIMIT,
     }),
     listMailboxes(supabase, user.id),
+    listAiProviderKeys(supabase, organization.id),
+    getLatestRecommendation(supabase, organization.id, "campaign", campaignId),
   ]);
+  const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
 
   const leadIds = (campaignLeads ?? []).map((row) => row.id);
   const [sendAttemptsResult, sequences] = await Promise.all([
@@ -600,6 +608,14 @@ export default async function CampaignAnalyticsPage({
 
       <FadeIn delay={0.87}>
         <CampaignMailboxInsightsCard mailboxes={mailboxInsights.mailboxes} insights={mailboxInsights.insights} />
+      </FadeIn>
+
+      <FadeIn delay={0.9}>
+        <RecommendationCard
+          connectedProviders={connectedAiProviders}
+          initialRecommendation={latestRecommendation}
+          generateAction={generateCampaignRecommendationAction.bind(null, campaignId)}
+        />
       </FadeIn>
     </div>
   );

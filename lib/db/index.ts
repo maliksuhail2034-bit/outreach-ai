@@ -19,3 +19,5 @@ export * from "./templates";
 export * from "./email-events";
 export * from "./suppressions";
 export * from "./send-attempts";
+export * from "./ai-provider-keys";
+export * from "./ai-recommendations";

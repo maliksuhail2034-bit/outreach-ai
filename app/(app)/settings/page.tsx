@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShieldCheckIcon, WebhookIcon } from "lucide-react";
+import { KeyRoundIcon, ShieldCheckIcon, WebhookIcon } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -85,6 +85,25 @@ export default async function SettingsPage() {
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/settings/integrations">View</Link>
+            </Button>
+          </CardHeader>
+        </Card>
+      </FadeIn>
+
+      <FadeIn delay={0.25}>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <KeyRoundIcon className="size-4" />
+              </span>
+              <div>
+                <CardTitle>AI</CardTitle>
+                <CardDescription>Connect your own Claude, OpenAI, or Gemini API key.</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/settings/ai">View</Link>
             </Button>
           </CardHeader>
         </Card>

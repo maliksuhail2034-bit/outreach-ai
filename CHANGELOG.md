@@ -3,6 +3,72 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-06 — AI Recommendations v1 (BYOK)
+
+- Added `lib/ai/provider.ts`'s `AiProvider` interface + `AiGenerationError`
+  (retry/invalid_key/failed classification) — mirrors
+  `lib/integrations/provider.ts`'s `IntegrationProvider` split exactly.
+  `lib/ai/providers/{anthropic,openai,google}.ts` implement it against each
+  provider's plain REST API via `fetch` — no vendor SDK dependency added,
+  matching `WebhookIntegrationProvider`'s "no SDK for a single
+  request/response call" precedent. `lib/ai/get-provider.ts` is the one
+  factory every caller depends on, and the seam a future managed-AI option
+  plugs into without touching prompt-building, storage, or the UI.
+- Extracted `lib/crypto/aes-secret.ts`'s generic AES-256-GCM
+  `encryptSecret`/`decryptSecret`/`parseEncryptionKey` out of
+  `lib/crypto/smtp-secret.ts` (now a thin wrapper, behavior-preserving) so a
+  second secret domain doesn't duplicate the cipher logic. Added
+  `lib/crypto/ai-provider-key-secret.ts` as a second thin wrapper, keyed by
+  a new `AI_PROVIDER_KEY_ENCRYPTION_KEY` — deliberately separate from
+  `MAILBOX_ENCRYPTION_KEY`, same "independent blast radii" reasoning
+  `UNSUBSCRIBE_TOKEN_SECRET` already established.
+- Added the `ai_provider_keys` migration (organization-scoped, RLS from
+  creation, unique on `(organization_id, provider)`) — an organization's own
+  BYOK Claude/OpenAI/Gemini key, encrypted at rest, never returned to the
+  client in full (only `key_preview`, e.g. last 4 characters). No managed/
+  app-provided key in v1.
+- Added the `ai_recommendations` migration (organization-scoped, RLS,
+  append-only) storing every "Generate Recommendation" click's outcome —
+  `input_snapshot` keeps the exact deterministic payload sent to the LLM for
+  audit, so a recommendation's wording is always traceable back to the
+  numbers that produced it.
+- Added `lib/ai/snapshot.ts`'s `buildRecommendationSnapshot`, dispatching per
+  entity type (campaign/mailbox/domain/organization) to that entity's
+  already-existing analytics loader
+  (`loadCampaignAnalyticsSnapshot`/`loadMailboxAnalyticsSnapshot`/
+  `loadDomainAnalyticsSnapshot`/`loadOrganizationRollup` +
+  `buildOrganizationInsights`) — the same loaders Comparison pages and the
+  `/analytics` rollup already call. Nothing in this file or downstream
+  calculates a rate, score, or trend; it only gathers what each entity's own
+  engine already produced.
+- Added `lib/ai/prompt.ts`'s `buildRecommendationPrompt`, a pure function
+  turning a snapshot into the one fixed prompt sent to whichever provider is
+  connected — explicitly instructs the model not to invent or recompute any
+  number, structurally enforced by giving it nothing else to compute from.
+- Added `lib/ai/recommendations.ts`'s `generateRecommendation`, the
+  end-to-end orchestrator: load the organization's connected key for the
+  requested provider, decrypt it for this request only, build the snapshot,
+  call the provider, and persist the outcome (success or failure) as one
+  audit row. Never called on a schedule — every call traces back to a
+  Server Function triggered by a user's "Generate Recommendation" click.
+- Added `/settings/ai` (`page.tsx`, `actions.ts`,
+  `components/settings/ai-providers-panel.tsx`,
+  `components/settings/ai-provider-key-form.tsx`) to connect/disconnect a
+  BYOK key per provider, following `/settings/integrations`'s structure.
+- Added `components/ai/recommendation-card.tsx`'s `RecommendationCard`,
+  shared by all four analytics pages (campaign, mailbox, domain,
+  organization) so "Generate Recommendation" renders identically everywhere.
+  Each page passes its own colocated Server Function
+  (`generate{Campaign,Mailbox,Domain,Organization}RecommendationAction`,
+  each independently re-checking ownership) bound to that entity's id.
+  Replaced the Mailbox Analytics page's former disabled "AI recommendations
+  — Not available" placeholder.
+- Added unit tests: `lib/crypto/aes-secret.test.ts` (encrypt/decrypt
+  roundtrip, wrong-key and malformed-ciphertext failure), one test file per
+  provider under `lib/ai/providers/` (success parsing plus
+  retry/invalid_key/failed classification against a mocked `fetch`, no real
+  API calls), and `lib/ai/prompt.test.ts` (prompt builder determinism).
+
 ## 2026-08-05 — Integrations Foundation (`60edfc4`)
 
 - Added `lib/integrations/provider.ts`, a shared, provider-agnostic

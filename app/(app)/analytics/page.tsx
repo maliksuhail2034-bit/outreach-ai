@@ -16,7 +16,9 @@ import { createClient } from "@/lib/supabase/server";
 import {
   countEmailEventsByType,
   countSendAttemptsByStatus,
+  getLatestRecommendation,
   getOrCreateOrganizationForUser,
+  listAiProviderKeys,
   listAnalyticsEvents,
   listCampaignLeads,
   listCampaigns,
@@ -24,6 +26,7 @@ import {
   listSendAttempts,
   listSendAttemptsForCampaignLeads,
 } from "@/lib/db";
+import type { AiProviderName } from "@/lib/ai/get-provider";
 import { bucketByDay } from "@/lib/analytics/time-buckets";
 import { classifyErrorCategory, type ErrorCategory } from "@/lib/analytics/error-category";
 import { previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
@@ -54,6 +57,8 @@ import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/act
 import { InsightsCard } from "@/components/analytics/insights-card";
 import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metrics-overview";
 import { RollupTable, type RollupRow } from "@/components/analytics/rollup-table";
+import { RecommendationCard } from "@/components/ai/recommendation-card";
+import { generateOrganizationRecommendationAction } from "./actions";
 
 const CHART_WINDOW_DAYS = 14;
 const ANALYTICS_ROW_LIMIT = 500;
@@ -298,6 +303,12 @@ export default async function AnalyticsPage({
   // looped here, so a future batched implementation only touches that one
   // function; this page just maps its snapshots into RollupTable rows.
   const rollup = await loadOrganizationRollup(supabase, user.id, organization.id);
+
+  const [aiProviderKeys, latestRecommendation] = await Promise.all([
+    listAiProviderKeys(supabase, organization.id),
+    getLatestRecommendation(supabase, organization.id, "organization", null),
+  ]);
+  const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
 
   // --- Benchmarks — reuses lib/analytics/organization-rollup.ts's
   // calculateOrganizationBenchmarks (itself built on
@@ -600,6 +611,14 @@ export default async function AnalyticsPage({
           title="AI Insights"
           description="Deterministic, rule-based callouts from the reply-rate benchmarks above and the organization's send forecast."
           insights={aiInsights}
+        />
+      </FadeIn>
+
+      <FadeIn delay={1.3}>
+        <RecommendationCard
+          connectedProviders={connectedAiProviders}
+          initialRecommendation={latestRecommendation}
+          generateAction={generateOrganizationRecommendationAction}
         />
       </FadeIn>
     </div>

@@ -4,6 +4,8 @@ import { InboxIcon, MessageCircleReplyIcon, SendIcon, MailCheckIcon, MailWarning
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import { getLatestRecommendation, getOrCreateOrganizationForUser, listAiProviderKeys } from "@/lib/db";
+import type { AiProviderName } from "@/lib/ai/get-provider";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
@@ -25,6 +27,8 @@ import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { InsightsCard } from "@/components/analytics/insights-card";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
+import { RecommendationCard } from "@/components/ai/recommendation-card";
+import { generateDomainRecommendationAction } from "./actions";
 
 const FORECAST_HORIZON_DAYS = 7;
 
@@ -54,6 +58,14 @@ export default async function DomainAnalyticsPage({
     notFound();
   }
   const { domain, domainMailboxes, events, overview, healthScore } = snapshot;
+
+  const namePrefix = user.email?.split("@")[0]?.trim();
+  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const [aiProviderKeys, latestRecommendation] = await Promise.all([
+    listAiProviderKeys(supabase, organization.id),
+    getLatestRecommendation(supabase, organization.id, "domain", domainId),
+  ]);
+  const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
 
   const query = await searchParams;
   const parsedQuery = dateRangeQuerySchema.safeParse({ preset: query.range ?? "7d", start: query.start, end: query.end });
@@ -164,6 +176,14 @@ export default async function DomainAnalyticsPage({
           />
         </>
       )}
+
+      <FadeIn delay={0.65}>
+        <RecommendationCard
+          connectedProviders={connectedAiProviders}
+          initialRecommendation={latestRecommendation}
+          generateAction={generateDomainRecommendationAction.bind(null, domainId)}
+        />
+      </FadeIn>
     </div>
   );
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { insertDomainDnsCheck, listDomainDnsChecks, upsertMailboxHealth } from "./deliverability";
+import {
+  getMailboxHealthByMailboxId,
+  insertDomainDnsCheck,
+  listDomainDnsChecks,
+  upsertMailboxHealth,
+} from "./deliverability";
 
 // Same fake-Client pattern as lib/db/leads.test.ts.
 function createMockClient(result: { data?: unknown; error?: unknown }) {
@@ -11,9 +16,10 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
     eq: vi.fn(),
     order: vi.fn(),
     single: vi.fn(),
+    maybeSingle: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "insert", "upsert", "eq", "order", "single"] as const) {
+  for (const method of ["select", "insert", "upsert", "eq", "order", "single", "maybeSingle"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 
@@ -57,6 +63,18 @@ describe("insertDomainDnsCheck", () => {
       status: "pending",
     });
     expect(result).toEqual({ id: "check-1" });
+  });
+});
+
+describe("getMailboxHealthByMailboxId", () => {
+  it("scopes the lookup to mailbox_id only, with no user filter", async () => {
+    const { client, chainable } = createMockClient({ data: null, error: null });
+
+    await getMailboxHealthByMailboxId(client, "mailbox-1");
+
+    expect(client.from).toHaveBeenCalledWith("mailbox_health");
+    expect(chainable.eq).toHaveBeenCalledWith("mailbox_id", "mailbox-1");
+    expect(chainable.eq).not.toHaveBeenCalledWith("user_id", expect.anything());
   });
 });
 

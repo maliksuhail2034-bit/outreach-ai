@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { getWarmupProfileByMailbox, insertWarmupEvent, updateWarmupProfile } from "./warmup";
+import { getWarmupProfileByMailbox, getWarmupProfileByMailboxId, insertWarmupEvent, updateWarmupProfile } from "./warmup";
 
 // Same fake-Client pattern as lib/db/deliverability.test.ts.
 function createMockClient(result: { data?: unknown; error?: unknown }) {
@@ -32,6 +32,18 @@ describe("getWarmupProfileByMailbox", () => {
     expect(client.from).toHaveBeenCalledWith("warmup_profiles");
     expect(chainable.eq).toHaveBeenCalledWith("organization_id", "org-1");
     expect(chainable.eq).toHaveBeenCalledWith("mailbox_id", "mailbox-1");
+  });
+});
+
+describe("getWarmupProfileByMailboxId", () => {
+  it("scopes the lookup to mailbox_id only, with no organization filter", async () => {
+    const { client, chainable } = createMockClient({ data: null, error: null });
+
+    await getWarmupProfileByMailboxId(client, "mailbox-1");
+
+    expect(client.from).toHaveBeenCalledWith("warmup_profiles");
+    expect(chainable.eq).toHaveBeenCalledWith("mailbox_id", "mailbox-1");
+    expect(chainable.eq).not.toHaveBeenCalledWith("organization_id", expect.anything());
   });
 });
 

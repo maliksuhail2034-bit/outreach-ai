@@ -18,21 +18,9 @@ import {
 import { domainSchema, type DomainInput } from "@/lib/validations/deliverability";
 import { getDnsProvider } from "@/lib/deliverability/get-dns-provider";
 import { calculateDomainHealthScore, calculateMailboxHealthScore } from "@/lib/deliverability/scoring";
+import { STAGE_TO_DELIVERABILITY_STATUS } from "@/lib/deliverability/warmup-status";
 import type { DnsRecordType, WarmupStatus } from "@/lib/deliverability/types";
 import type { WarmupStage } from "@/lib/warmup/types";
-
-// Bridges lib/warmup's richer 6-stage state machine down to
-// lib/deliverability's simpler WarmupStatus, so Mailbox Health's scoring
-// (which predates warmup_profiles) understands warmup progress without
-// its own signature changing — see calculateMailboxHealthScore.
-const STAGE_TO_DELIVERABILITY_STATUS: Record<WarmupStage, WarmupStatus> = {
-  disabled: "not_started",
-  starting: "warming",
-  warming: "warming",
-  healthy: "warmed",
-  cooling: "warming",
-  paused: "paused",
-};
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form already did.

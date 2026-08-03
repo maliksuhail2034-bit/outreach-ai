@@ -42,6 +42,16 @@ export async function getMailboxHealth(supabase: Client, userId: string, mailbox
   return data;
 }
 
+// Admin-context equivalent of getMailboxHealth — filtered by mailbox_id
+// only, no user_id. Same carve-out as getWarmupProfileByMailboxId
+// (lib/db/warmup.ts): reserved for trusted worker code with no user in the
+// loop (lib/deliverability/health-check-worker.ts).
+export async function getMailboxHealthByMailboxId(supabase: Client, mailboxId: string) {
+  const { data, error } = await supabase.from("mailbox_health").select("*").eq("mailbox_id", mailboxId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 // Upserted on mailbox_id (unique) — same reasoning as billing's
 // upsertSubscription (lib/db/billing.ts): a recalculation always replaces
 // the prior row rather than needing separate insert-vs-update branching.

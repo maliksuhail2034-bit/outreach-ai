@@ -25,6 +25,17 @@ export async function getWarmupProfileByMailbox(supabase: Client, organizationId
   return data;
 }
 
+// Admin-context equivalent of getWarmupProfileByMailbox — filtered by
+// mailbox_id only, no organization_id. Reserved for trusted worker code with
+// no user/organization in the loop (lib/deliverability/health-check-worker.ts);
+// the service-role client already bypasses RLS, so the extra organization
+// scope that protects a user-facing read isn't meaningful here.
+export async function getWarmupProfileByMailboxId(supabase: Client, mailboxId: string) {
+  const { data, error } = await supabase.from("warmup_profiles").select("*").eq("mailbox_id", mailboxId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function createWarmupProfile(supabase: Client, values: TablesInsert<"warmup_profiles">) {
   const result = await supabase.from("warmup_profiles").insert(values).select("*").single();
   return unwrap<Tables<"warmup_profiles">>(result);

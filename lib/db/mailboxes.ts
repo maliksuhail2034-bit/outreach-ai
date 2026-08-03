@@ -108,6 +108,16 @@ export async function listMailboxesForReplySync(supabase: Client): Promise<Mailb
   return data;
 }
 
+// Admin-context, across every user — the set the automated deliverability
+// health-check worker (lib/deliverability/health-check-worker.ts) iterates.
+// Credentials are never needed for scoring, so this returns MailboxSafe like
+// every user-facing read, unlike the reply-sync/send-worker admin reads above.
+export async function listActiveMailboxesForHealthCheck(supabase: Client): Promise<MailboxSafe[]> {
+  const { data, error } = await supabase.from("mailboxes").select("*").eq("status", "active");
+  if (error) throw error;
+  return (data ?? []).map(omitPassword);
+}
+
 // Advances a mailbox's IMAP sync cursor. Never touches any other column —
 // deliberately narrower than the general-purpose updateMailbox(), which is
 // userId-scoped and not meant for admin-context worker use.

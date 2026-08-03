@@ -3,6 +3,37 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-03 — Forecasting & Benchmarks (`9e42e85`)
+
+- Filled the previously-unimplemented `Forecaster` seam
+  (`lib/analytics/forecasting.ts`) with a real `LinearTrendForecaster`
+  (least-squares trend extrapolation, confidence that grows with more
+  history and decays further into the horizon) plus `summarizeForecast`.
+  `getForecaster()` now returns this real implementation instead of the
+  placeholder.
+- Integrated forecasting across every existing analytics page — campaign,
+  mailbox, domain, and organization rollup — each showing a "Projected
+  sends, next 7 days" card fed by that page's own already-computed daily
+  timeline (`bucketByDay`/`bucketByDayInRange` output). No new queries: the
+  forecaster consumes the exact `{date, value}[]` series each page already
+  builds for its own charts.
+- Added `lib/analytics/benchmarks.ts`, a shared benchmarking engine:
+  `calculatePeerAverage` (averages a metric across peers, excluding nulls
+  rather than treating them as 0) and `compareToBenchmark`, which reuses
+  `compareMetrics`/`calculateTrend` directly — "entity vs. peer average" is
+  the same operation as "this period vs. last period," just given a
+  different baseline, so no new comparison math was written.
+- Wired the benchmarking engine into the `/analytics` organization rollup:
+  each campaign/mailbox/domain row now shows a reply-rate-vs-organization-
+  average column, computed from the snapshots `loadOrganizationRollup`
+  already loads — no new queries, and never compares across organizations.
+- Extracted `components/analytics/trend-badge.tsx` from
+  `comparison-table.tsx`'s inline badge rendering so the new benchmark
+  column and the existing A-vs-B comparison tables render trends
+  identically instead of duplicating that logic.
+- Added unit tests for `LinearTrendForecaster`, `summarizeForecast`,
+  `calculatePeerAverage`, and `compareToBenchmark`.
+
 ## 2026-08-03 — Automated Deliverability Health Checks (`f99deee`)
 
 - Added `lib/deliverability/health-check-worker.ts`'s

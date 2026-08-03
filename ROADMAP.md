@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `f99deee`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `9e42e85`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -37,7 +37,13 @@ as of commit `f99deee`. See `CHANGELOG.md` for the commit-by-commit history.
   bounce, and reply rate once a domain has real sending history, and domain
   comparison; an organization-wide rollup on `/analytics` (all-time overview
   plus per-campaign/mailbox/domain tables) closing out the last open item in
-  this track.
+  this track. Forecasting & Benchmarks — a shared linear-trend forecasting
+  engine (`lib/analytics/forecasting.ts`) is now available across campaign,
+  mailbox, domain, and organization analytics, projecting sends over the
+  next 7 days from each page's own daily timeline; a shared benchmarking
+  engine (`lib/analytics/benchmarks.ts`) computes peer-group averages and
+  currently surfaces reply-rate benchmarks (entity vs. organization average)
+  in the `/analytics` organization rollup's campaign/mailbox/domain tables.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.

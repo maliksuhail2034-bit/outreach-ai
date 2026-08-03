@@ -3,6 +3,35 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-03 — Automated Deliverability Health Checks (`f99deee`)
+
+- Added `lib/deliverability/health-check-worker.ts`'s
+  `runDeliverabilityHealthCheckWorker`, which recalculates every active
+  mailbox's health score on a schedule instead of requiring a user to click
+  "Recalculate" one mailbox at a time — reusing the existing warmup state
+  machine and `calculateMailboxHealthScore` engine rather than duplicating
+  that logic. Per-mailbox failures are isolated (a try/catch per mailbox,
+  bounded logging) so one bad row can't stop the run, the same
+  failure-isolation shape as `runReplySyncWorker`.
+- Added `app/api/cron/deliverability-health-check`, a scheduled endpoint
+  following the same `CRON_SECRET` bearer-auth/GET+POST structure as
+  `send-emails` and `sync-replies`.
+- Added admin-scoped data-access helpers for the worker to use with no
+  user/organization in the loop: `listActiveMailboxesForHealthCheck`
+  (`lib/db/mailboxes.ts`), `getWarmupProfileByMailboxId`
+  (`lib/db/warmup.ts`), and `getMailboxHealthByMailboxId`
+  (`lib/db/deliverability.ts`).
+- Extracted `STAGE_TO_DELIVERABILITY_STATUS` into
+  `lib/deliverability/warmup-status.ts`, shared by the worker and the
+  existing manual `recalculateMailboxHealthAction` so the warmup-stage-to-
+  status mapping only lives in one place.
+- Mailbox-level automation only — domain-side automated checks remain
+  future work until a real DNS/provider integration exists (see
+  ROADMAP.md).
+- Added unit tests covering the worker's failure isolation (a failing
+  lookup or upsert for one mailbox doesn't stop the rest of the run) and
+  the new admin-scoped helpers.
+
 ## 2026-08-02 — Organization Analytics Rollup (`43c67e3`)
 
 - Added an organization-wide rollup section to `/analytics`: an all-time

@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `43c67e3`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `f99deee`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -22,6 +22,11 @@ as of commit `43c67e3`. See `CHANGELOG.md` for the commit-by-commit history.
   and warmup state machine.
 - **Reply tracking** — inbound reply sync (`app/api/cron/sync-replies`).
 - **Deliverability** — domain/mailbox health data model and settings route.
+  Automated deliverability health checks (mailbox-level) — every active
+  mailbox's health score is now recalculated automatically through a
+  scheduled worker/cron (`lib/deliverability/health-check-worker.ts`,
+  `app/api/cron/deliverability-health-check`), reusing the existing warmup
+  and scoring engines.
 - **Analytics** — event model, metrics engine; campaign-level overview,
   timeline, trends, conversion funnel, sequence-step performance, mailbox
   intelligence insights, health score, and campaign comparison (Phase 2B
@@ -39,11 +44,12 @@ as of commit `43c67e3`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## In progress / partially built
 
-- **Deliverability** — data model, settings UI, and per-mailbox analytics
-  exist; automated health checks/alerts are not yet wired up. The new
-  reputation-provider seam (inbox placement, blacklist, spam testing,
-  reputation score) is architecture only — every signal is `null` until a
-  real provider is connected.
+- **Deliverability** — mailbox-level automated health checks now run on a
+  schedule (see Done); domain-side automation is still future work, deferred
+  until a real DNS/provider integration exists that can produce meaningful
+  domain verification results. The reputation-provider seam (inbox
+  placement, blacklist, spam testing, reputation score) is architecture
+  only — every signal is `null` until a real provider is connected.
 - **Warmup** — state machine, schema, and per-mailbox ramp/forecast
   analytics exist; scheduled warmup send automation and the stats
   -aggregation worker (`warmup_stats` has no writer yet) are not built, so

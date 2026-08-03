@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `9e42e85`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `5a08012`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -44,6 +44,11 @@ as of commit `9e42e85`. See `CHANGELOG.md` for the commit-by-commit history.
   engine (`lib/analytics/benchmarks.ts`) computes peer-group averages and
   currently surfaces reply-rate benchmarks (entity vs. organization average)
   in the `/analytics` organization rollup's campaign/mailbox/domain tables.
+  AI Insights — a shared, deterministic rule-based insights engine
+  (`lib/analytics/insights.ts`) is now available across campaign, mailbox,
+  domain, and organization analytics, surfacing plain-language callouts by
+  reusing each entity's already-computed health scores, trends, forecasts,
+  and benchmarks rather than a second calculation. No LLM integration yet.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.
@@ -67,8 +72,9 @@ as of commit `9e42e85`. See `CHANGELOG.md` for the commit-by-commit history.
   qualification logic yet (`lib/ai/` does not exist).
 - **AI-personalized outreach** — no AI-generated message content in the
   sending pipeline yet.
-- **AI recommendations** — no recommendation engine for deliverability or
-  warmup, mentioned as a placeholder in the Mailbox Analytics UI only.
+- **AI recommendations** — the Mailbox Analytics UI's former placeholder is
+  now backed by deterministic rule-based AI Insights (see Done); an
+  LLM-driven recommendation engine is still not started.
 - **Additional channels** (e.g. LinkedIn) — email-only today, per
   `CLAUDE.md` §1.
 - **Documentation** — this `ROADMAP.md` and `CHANGELOG.md` were backfilled

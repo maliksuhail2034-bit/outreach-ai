@@ -3,6 +3,41 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-03 — AI Insights (`5a08012`)
+
+- Added `lib/analytics/insights.ts`, a shared deterministic, rule-based AI
+  Insights engine — no LLM integration in this milestone, per its explicit
+  scope. Every rule adapts an output another engine already computed rather
+  than calculating anything new: `healthFactorsToInsights` maps a
+  health-score engine's `HealthScoreFactor[]` (already plain-language)
+  straight into the shared insight shape; `trendToInsight` and
+  `benchmarkToInsight` both surface an already-computed `TrendResult`
+  (period-over-period or entity-vs-peer-average); `forecastToInsight` runs
+  a forecast's own first-vs-last projected day back through the same
+  `calculateTrend` every other trend in the app uses. A `higherIsBetter`
+  flag on each rule keeps inverse metrics (e.g. bounces) from being
+  mislabeled "good" when they rise. `collectInsights` filters out rules
+  that didn't fire and falls back to one steady-state insight so a panel is
+  never confusingly empty.
+- Added `components/analytics/insights-card.tsx` (`InsightList`,
+  `InsightsCard`) — entity-agnostic rendering, the same convention
+  `HealthScoreCard`/`RollupTable` already follow.
+- Integrated an "AI Insights" section into all four existing analytics
+  pages — campaign, mailbox, domain, and the `/analytics` organization
+  rollup — each assembling its own candidate list from whichever signals it
+  already has (health-score factors, trends, forecast trajectory, and for
+  the organization rollup, the per-entity reply-rate benchmarks already
+  computed for its rollup tables). No additional database queries: every
+  insight is derived entirely from values each page already computed for
+  an existing card or chart.
+- Unified `lib/campaigns/mailbox-insights.ts`'s `MailboxInsight`/
+  `MailboxInsightTone` to alias the new shared `Insight`/`InsightTone`
+  instead of declaring a parallel copy of the same shape, and extracted
+  `campaign-mailbox-insights.tsx`'s inline insight-list markup into the new
+  `InsightList` so the app's two insight surfaces render identically
+  instead of duplicating the same JSX.
+- Added unit tests for every rule function and `collectInsights`.
+
 ## 2026-08-03 — Forecasting & Benchmarks (`9e42e85`)
 
 - Filled the previously-unimplemented `Forecaster` seam

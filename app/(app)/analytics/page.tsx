@@ -27,8 +27,10 @@ import {
 import { bucketByDay } from "@/lib/analytics/time-buckets";
 import { classifyErrorCategory, type ErrorCategory } from "@/lib/analytics/error-category";
 import { previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
+import { calculatePeerAverage, compareToBenchmark } from "@/lib/analytics/benchmarks";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { ANALYTICS_EVENT_LABELS } from "@/lib/analytics/events";
+import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
 import { groupCounts, rate } from "@/lib/analytics/metrics";
 import { loadOrganizationRollup } from "@/lib/analytics/organization-rollup";
 import type { AnalyticsEventType } from "@/lib/analytics/types";
@@ -51,6 +53,7 @@ import { RollupTable, type RollupRow } from "@/components/analytics/rollup-table
 const CHART_WINDOW_DAYS = 14;
 const ANALYTICS_ROW_LIMIT = 500;
 const TIMELINE_LIMIT = 20;
+const FORECAST_HORIZON_DAYS = 7;
 
 const RANGE_OPTIONS: { preset: "today" | "7d" | "30d" | "90d"; label: string }[] = [
   { preset: "today", label: "Today" },
@@ -167,6 +170,12 @@ export default async function AnalyticsPage({
     attempts.map((attempt) => attempt.claimed_at),
     CHART_WINDOW_DAYS,
   );
+
+  // Reuses lib/analytics/forecasting.ts's LinearTrendForecaster over
+  // dailyVolume, the same series "Sending volume by day" renders below — no
+  // extra query beyond what this page already fetched.
+  const sendForecast = await getForecaster().forecast(dailyVolume, FORECAST_HORIZON_DAYS);
+  const sendForecastSummary = summarizeForecast(sendForecast);
 
   // Failure analysis: classifies each failed attempt's already-stored
   // last_error text (see lib/analytics/error-category.ts) — display-only,
@@ -285,6 +294,22 @@ export default async function AnalyticsPage({
   // function; this page just maps its snapshots into RollupTable rows.
   const rollup = await loadOrganizationRollup(supabase, user.id, organization.id);
 
+  // --- Benchmarks — reuses lib/analytics/benchmarks.ts's
+  // calculatePeerAverage/compareToBenchmark over the overview snapshots
+  // already loaded above by loadOrganizationRollup, strictly within this
+  // organization's own campaigns/mailboxes/domains (never across
+  // organizations). One peer average per entity type, computed once and
+  // compared against each entity of that type below.
+  const campaignReplyRatePeerAverage = calculatePeerAverage(
+    rollup.campaignSnapshots.map((snapshot) => ({ replyRate: snapshot.overview.replyRate })),
+  );
+  const mailboxReplyRatePeerAverage = calculatePeerAverage(
+    rollup.mailboxSnapshots.map((snapshot) => ({ replyRate: snapshot.overview.replyRate })),
+  );
+  const domainReplyRatePeerAverage = calculatePeerAverage(
+    rollup.domainSnapshots.map((snapshot) => ({ replyRate: snapshot.overview.replyRate })),
+  );
+
   const campaignRollupRows: RollupRow[] = rollup.campaignSnapshots.map((snapshot) => ({
     key: snapshot.campaign.id,
     label: snapshot.campaign.name,
@@ -293,6 +318,8 @@ export default async function AnalyticsPage({
     replyRate: snapshot.overview.replyRate,
     bounceRate: snapshot.overview.bounceRate,
     healthScore: snapshot.healthScore.score,
+    replyRateBenchmark:
+      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, campaignReplyRatePeerAverage).replyRate ?? null,
   }));
 
   const mailboxRollupRows: RollupRow[] = rollup.mailboxSnapshots.map((snapshot) => ({
@@ -303,6 +330,8 @@ export default async function AnalyticsPage({
     replyRate: snapshot.overview.replyRate,
     bounceRate: snapshot.overview.bounceRate,
     healthScore: snapshot.health?.health_score ?? null,
+    replyRateBenchmark:
+      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, mailboxReplyRatePeerAverage).replyRate ?? null,
   }));
 
   const domainRollupRows: RollupRow[] = rollup.domainSnapshots.map((snapshot) => ({
@@ -313,6 +342,8 @@ export default async function AnalyticsPage({
     replyRate: snapshot.overview.replyRate,
     bounceRate: snapshot.overview.bounceRate,
     healthScore: snapshot.healthScore.score,
+    replyRateBenchmark:
+      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, domainReplyRatePeerAverage).replyRate ?? null,
   }));
 
   const rangeParam = (await searchParams).range;
@@ -401,6 +432,25 @@ export default async function AnalyticsPage({
             barClassName="bg-secondary-foreground/70"
           />
         </FadeIn>
+      </div>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2">
+          <FadeIn delay={0.48}>
+            <StatCard
+              title={`Projected sends, next ${FORECAST_HORIZON_DAYS} days`}
+              value={sendForecastSummary ? sendForecastSummary.projectedTotal : "—"}
+              icon={<TrendingUpIcon className="size-4" />}
+              isEmpty={!sendForecastSummary}
+              emptyHint="Needs at least two days of send history to project a trend."
+              description={
+                sendForecastSummary
+                  ? `${Math.round(sendForecastSummary.averageConfidence * 100)}% average confidence, from the sending volume trend above`
+                  : undefined
+              }
+            />
+          </FadeIn>
+        </div>
       </div>
 
       <FadeIn delay={0.5}>
@@ -503,7 +553,8 @@ export default async function AnalyticsPage({
         <div className="border-t border-border pt-6 sm:pt-8">
           <h2 className="text-xl font-semibold tracking-tight">Organization rollup</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            All-time totals across every campaign, mailbox, and domain in this organization.
+            All-time totals across every campaign, mailbox, and domain in this organization, each benchmarked against
+            its own peer-group average reply rate.
           </p>
         </div>
       </FadeIn>

@@ -13,6 +13,7 @@ import {
   SendIcon,
   ThumbsUpIcon,
   TrendingDownIcon,
+  TrendingUpIcon,
   TrophyIcon,
   UsersIcon,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/a
 import { summarizeCampaignMetrics } from "@/lib/analytics/campaign-metrics";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { calculateFunnelConversions, identifyBiggestDropOff } from "@/lib/analytics/funnel";
+import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
 import { groupCounts, total } from "@/lib/analytics/metrics";
 import {
   identifyBestStep,
@@ -64,6 +66,7 @@ import { CampaignMailboxInsightsCard } from "@/components/campaigns/campaign-mai
 // /analytics page's 500) still comfortably covers a campaign's full
 // history without pagination.
 const EVENT_FETCH_LIMIT = 5000;
+const FORECAST_HORIZON_DAYS = 7;
 
 function attemptTimestamp(attempt: { resolved_at: string | null; claimed_at: string }) {
   return attempt.resolved_at ?? attempt.claimed_at;
@@ -178,6 +181,13 @@ export default async function CampaignAnalyticsPage({
   const repliesTotal = total(dailyReplies.map((d) => d.value));
   const opensTotal = total(dailyOpens.map((d) => d.value));
   const clicksTotal = total(dailyClicks.map((d) => d.value));
+
+  // --- Forecast — reuses lib/analytics/forecasting.ts's LinearTrendForecaster
+  // directly over dailySends, the exact same series the "Daily sends" chart
+  // below renders, so this needs no extra query beyond what Trends already
+  // fetched.
+  const sendForecast = await getForecaster().forecast(dailySends, FORECAST_HORIZON_DAYS);
+  const forecastSummary = summarizeForecast(sendForecast);
 
   const priorSends = total(bucketByDayInRange(sentTimestamps, priorRange).map((d) => d.value));
   const priorReplies = total(bucketByDayInRange(repliedTimestamps, priorRange).map((d) => d.value));
@@ -411,6 +421,25 @@ export default async function CampaignAnalyticsPage({
         <FadeIn delay={0.56}>
           <DailyBarChart title="Daily clicks" description={`Clicks across the selected range.`} data={dailyClicks} barClassName="bg-secondary-foreground/70" />
         </FadeIn>
+      </div>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2">
+          <FadeIn delay={0.58}>
+            <StatCard
+              title={`Projected sends, next ${FORECAST_HORIZON_DAYS} days`}
+              value={forecastSummary ? forecastSummary.projectedTotal : "—"}
+              icon={<TrendingUpIcon className="size-4" />}
+              isEmpty={!forecastSummary}
+              emptyHint="Needs at least two days of send history in this range to project a trend."
+              description={
+                forecastSummary
+                  ? `${Math.round(forecastSummary.averageConfidence * 100)}% average confidence, from the daily sends trend above`
+                  : undefined
+              }
+            />
+          </FadeIn>
+        </div>
       </div>
 
       <FadeIn delay={0.6}>

@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { InboxIcon, MessageCircleReplyIcon, SendIcon, MailCheckIcon, MailWarningIcon } from "lucide-react";
+import { InboxIcon, MessageCircleReplyIcon, SendIcon, MailCheckIcon, MailWarningIcon, TrendingUpIcon } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
+import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
 import { total } from "@/lib/analytics/metrics";
 import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
@@ -21,6 +22,8 @@ import { MailboxMetricsOverviewCards } from "@/components/analytics/mailbox-metr
 import { HealthScoreCard } from "@/components/analytics/health-score-card";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
 import { DomainDnsStatus } from "@/components/deliverability/domain-dns-status";
+
+const FORECAST_HORIZON_DAYS = 7;
 
 export default async function DomainAnalyticsPage({
   params,
@@ -157,7 +160,7 @@ export default async function DomainAnalyticsPage({
   );
 }
 
-function TrendsSection({
+async function TrendsSection({
   events,
   currentRange,
   priorRange,
@@ -176,6 +179,12 @@ function TrendsSection({
   const dailyOpens = bucketByDayInRange(openedTimestamps, currentRange);
   const dailyReplies = bucketByDayInRange(repliedTimestamps, currentRange);
   const dailyBounces = bucketByDayInRange(bouncedTimestamps, currentRange);
+
+  // Reuses lib/analytics/forecasting.ts's LinearTrendForecaster over
+  // dailySends, the same series "Daily sends" renders below — no extra
+  // query beyond what this section already computes.
+  const sendForecast = await getForecaster().forecast(dailySends, FORECAST_HORIZON_DAYS);
+  const sendForecastSummary = summarizeForecast(sendForecast);
 
   const sendsTotal = total(dailySends.map((d) => d.value));
   const deliveredTotal = total(bucketByDayInRange(deliveredTimestamps, currentRange).map((d) => d.value));
@@ -224,6 +233,25 @@ function TrendsSection({
         <FadeIn delay={0.56}>
           <DailyBarChart title="Daily bounces" description="Bounces across the selected range." data={dailyBounces} barClassName="bg-destructive" />
         </FadeIn>
+      </div>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2">
+          <FadeIn delay={0.58}>
+            <StatCard
+              title={`Projected sends, next ${FORECAST_HORIZON_DAYS} days`}
+              value={sendForecastSummary ? sendForecastSummary.projectedTotal : "—"}
+              icon={<TrendingUpIcon className="size-4" />}
+              isEmpty={!sendForecastSummary}
+              emptyHint="Needs at least two days of send history in this range to project a trend."
+              description={
+                sendForecastSummary
+                  ? `${Math.round(sendForecastSummary.averageConfidence * 100)}% average confidence, from the daily sends trend above`
+                  : undefined
+              }
+            />
+          </FadeIn>
+        </div>
       </div>
     </>
   );

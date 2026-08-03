@@ -1,19 +1,5 @@
-import { MinusIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-
 import type { TrendResult } from "@/lib/analytics/trends";
-import { Badge } from "@/components/ui/badge";
-
-const DIRECTION_VARIANT: Record<TrendResult["direction"], "default" | "secondary" | "destructive"> = {
-  up: "default",
-  down: "destructive",
-  stable: "secondary",
-};
-
-const DIRECTION_ICON: Record<TrendResult["direction"], typeof TrendingUpIcon> = {
-  up: TrendingUpIcon,
-  down: TrendingDownIcon,
-  stable: MinusIcon,
-};
+import { TrendBadge } from "./trend-badge";
 
 function formatValue(value: number | null, format: "count" | "percent") {
   if (value === null) return "—";
@@ -62,24 +48,16 @@ export function ComparisonTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {rows.map((row) => {
-              const Icon = DIRECTION_ICON[row.trend.direction];
-              return (
-                <tr key={row.key}>
-                  <td className="py-3 pl-5 pr-4 text-muted-foreground">{row.label}</td>
-                  <td className="py-3 pr-4 font-medium tabular-nums">{formatValue(row.aValue, row.format)}</td>
-                  <td className="py-3 pr-4 font-medium tabular-nums">{formatValue(row.bValue, row.format)}</td>
-                  <td className="py-3 pr-5">
-                    <Badge variant={DIRECTION_VARIANT[row.trend.direction]} className="gap-1">
-                      <Icon className="size-3" />
-                      {row.trend.percentageChange === null
-                        ? row.trend.direction
-                        : `${Math.abs(row.trend.percentageChange)}%`}
-                    </Badge>
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <td className="py-3 pl-5 pr-4 text-muted-foreground">{row.label}</td>
+                <td className="py-3 pr-4 font-medium tabular-nums">{formatValue(row.aValue, row.format)}</td>
+                <td className="py-3 pr-4 font-medium tabular-nums">{formatValue(row.bValue, row.format)}</td>
+                <td className="py-3 pr-5">
+                  <TrendBadge trend={row.trend} />
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

@@ -12,6 +12,7 @@ import {
   MessageCircleReplyIcon,
   SendIcon,
   ShieldIcon,
+  TrendingUpIcon,
 } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
@@ -29,6 +30,7 @@ import {
 } from "@/lib/db";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
+import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
 import { summarizeMailboxMetrics } from "@/lib/analytics/mailbox-metrics";
 import { groupCounts, rate, total } from "@/lib/analytics/metrics";
 import type { DailyCount } from "@/lib/analytics/time-buckets";
@@ -55,6 +57,7 @@ import { MailboxHealthSummary } from "@/components/mailboxes/mailbox-health-summ
 // Single-mailbox scope, so a generous limit (like the campaign analytics
 // page's) comfortably covers a mailbox's full history without pagination.
 const EVENT_FETCH_LIMIT = 5000;
+const FORECAST_HORIZON_DAYS = 7;
 
 const STAGE_LABEL: Record<WarmupStage, string> = {
   disabled: "Disabled",
@@ -195,6 +198,13 @@ export default async function MailboxAnalyticsPage({
   const deliveredTotal = total(dailyDelivered.map((d) => d.value));
   const repliesTotal = total(dailyReplies.map((d) => d.value));
   const bouncesTotal = total(dailyBounces.map((d) => d.value));
+
+  // --- Forecast — reuses lib/analytics/forecasting.ts's LinearTrendForecaster
+  // over dailySends, the same series "Daily sends" renders below. Named
+  // sendForecast (not forecast) to avoid colliding with the warmup ramp
+  // forecast (forecastNextRamp's result) further down this function.
+  const sendForecast = await getForecaster().forecast(dailySends, FORECAST_HORIZON_DAYS);
+  const sendForecastSummary = summarizeForecast(sendForecast);
 
   const priorSends = total(bucketByDayInRange(sentTimestamps, priorRange).map((d) => d.value));
   const priorDelivered = total(bucketByDayInRange(deliveredTimestamps, priorRange).map((d) => d.value));
@@ -350,6 +360,25 @@ export default async function MailboxAnalyticsPage({
         <FadeIn delay={0.4}>
           <DailyBarChart title="Daily bounces" description="Bounces across the selected range." data={dailyBounces} barClassName="bg-destructive" />
         </FadeIn>
+      </div>
+
+      <div className="@container">
+        <div className="grid gap-4 @sm:grid-cols-2">
+          <FadeIn delay={0.41}>
+            <StatCard
+              title={`Projected sends, next ${FORECAST_HORIZON_DAYS} days`}
+              value={sendForecastSummary ? sendForecastSummary.projectedTotal : "—"}
+              icon={<TrendingUpIcon className="size-4" />}
+              isEmpty={!sendForecastSummary}
+              emptyHint="Needs at least two days of send history in this range to project a trend."
+              description={
+                sendForecastSummary
+                  ? `${Math.round(sendForecastSummary.averageConfidence * 100)}% average confidence, from the daily sends trend above`
+                  : undefined
+              }
+            />
+          </FadeIn>
+        </div>
       </div>
 
       <FadeIn delay={0.42}>

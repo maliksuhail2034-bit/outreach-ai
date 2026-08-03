@@ -1,6 +1,8 @@
 import Link from "next/link";
 
+import type { TrendResult } from "@/lib/analytics/trends";
 import { ScoreBadge } from "@/components/deliverability/score-badge";
+import { TrendBadge } from "./trend-badge";
 
 export interface RollupRow {
   key: string;
@@ -10,6 +12,11 @@ export interface RollupRow {
   replyRate: number | null;
   bounceRate: number | null;
   healthScore: number | null;
+  // This row's reply rate vs. the peer-group average (see
+  // lib/analytics/benchmarks.ts's compareToBenchmark) — null when there's
+  // no peer average to compare against yet (e.g. only one entity of this
+  // type exists), not a fabricated "stable."
+  replyRateBenchmark?: TrendResult | null;
 }
 
 // Entity-agnostic "every X in the organization, one row each" table — the
@@ -29,6 +36,11 @@ export function RollupTable({
   emptyLabel: string;
   rows: RollupRow[];
 }) {
+  // Only shown when the caller actually passes benchmark data (rollup rows
+  // that don't opt in leave replyRateBenchmark undefined) — existing
+  // callers render exactly as before with no empty column.
+  const showBenchmarkColumn = rows.some((row) => row.replyRateBenchmark !== undefined);
+
   return (
     <div className="rounded-xl border border-border bg-card/60 shadow-sm backdrop-blur-sm">
       <div className="border-b border-border p-5">
@@ -46,7 +58,8 @@ export function RollupTable({
                 <th className="py-3 pr-4 font-medium">Sent</th>
                 <th className="py-3 pr-4 font-medium">Reply rate</th>
                 <th className="py-3 pr-4 font-medium">Bounce rate</th>
-                <th className="py-3 pr-5 font-medium">Health</th>
+                <th className="py-3 pr-4 font-medium">Health</th>
+                {showBenchmarkColumn && <th className="py-3 pr-5 font-medium">Reply rate vs. avg</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -60,7 +73,12 @@ export function RollupTable({
                   <td className="py-3 pr-4 tabular-nums">{row.sentCount.toLocaleString()}</td>
                   <td className="py-3 pr-4 tabular-nums">{row.replyRate === null ? "—" : `${row.replyRate}%`}</td>
                   <td className="py-3 pr-4 tabular-nums">{row.bounceRate === null ? "—" : `${row.bounceRate}%`}</td>
-                  <td className="py-3 pr-5">{row.healthScore === null ? "—" : <ScoreBadge score={row.healthScore} />}</td>
+                  <td className="py-3 pr-4">{row.healthScore === null ? "—" : <ScoreBadge score={row.healthScore} />}</td>
+                  {showBenchmarkColumn && (
+                    <td className="py-3 pr-5">
+                      {row.replyRateBenchmark ? <TrendBadge trend={row.replyRateBenchmark} /> : "—"}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

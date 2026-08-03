@@ -3,11 +3,11 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { BarChart3Icon, MailPlusIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { BarChart3Icon, MailPlusIcon, PencilIcon, PlugZapIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
-import { deleteMailboxAction } from "@/app/(app)/mailboxes/actions";
+import { deleteMailboxAction, disconnectGmailMailboxAction } from "@/app/(app)/mailboxes/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,7 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   active: "default",
   paused: "secondary",
   error: "destructive",
+  disconnected: "outline",
 };
 
 function statusLabel(status: string) {
@@ -37,6 +38,8 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
   const [editing, setEditing] = useState<MailboxSafe | null>(null);
   const [deleting, setDeleting] = useState<MailboxSafe | null>(null);
   const [isDeleting, startDeleteTransition] = useTransition();
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  const [isDisconnecting, startDisconnectTransition] = useTransition();
 
   function handleDelete() {
     if (!deleting) return;
@@ -52,28 +55,50 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
     });
   }
 
+  function handleDisconnectGmail(mailboxId: string) {
+    setDisconnectingId(mailboxId);
+    startDisconnectTransition(async () => {
+      try {
+        await disconnectGmailMailboxAction(mailboxId);
+        toast.success("Google account disconnected.");
+      } catch {
+        toast.error("Couldn't disconnect this mailbox. Try again.");
+      } finally {
+        setDisconnectingId(null);
+      }
+    });
+  }
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-4">
         <div>
           <CardTitle>Connected mailboxes</CardTitle>
-          <CardDescription>SMTP accounts you can send campaigns from.</CardDescription>
+          <CardDescription>SMTP and Gmail accounts you can send campaigns from.</CardDescription>
         </div>
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm">
-              <MailPlusIcon />
-              Add mailbox
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Connect a mailbox</DialogTitle>
-              <DialogDescription>Add the SMTP credentials for the account you&apos;ll send from.</DialogDescription>
-            </DialogHeader>
-            <MailboxForm mode="create" domains={domains} onSuccess={() => setAddOpen(false)} />
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/api/oauth/google/start">
+              <PlugZapIcon />
+              Connect Google Workspace
+            </Link>
+          </Button>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm">
+                <MailPlusIcon />
+                Add mailbox
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Connect a mailbox</DialogTitle>
+                <DialogDescription>Add the SMTP credentials for the account you&apos;ll send from.</DialogDescription>
+              </DialogHeader>
+              <MailboxForm mode="create" domains={domains} onSuccess={() => setAddOpen(false)} />
+            </DialogContent>
+          </Dialog>
+        </div>
       </CardHeader>
 
       <CardContent>
@@ -89,6 +114,9 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="truncate font-medium">{mailbox.display_name || mailbox.email}</p>
+                    <Badge variant={mailbox.email_provider === "gmail" ? "default" : "outline"}>
+                      {mailbox.email_provider === "gmail" ? "Gmail" : "SMTP"}
+                    </Badge>
                     <Badge variant={STATUS_VARIANT[mailbox.status] ?? "outline"}>{statusLabel(mailbox.status)}</Badge>
                     <Badge variant={mailbox.imap_enabled ? "secondary" : "outline"}>
                       {mailbox.imap_enabled ? "Reply tracking on" : "Reply tracking off"}
@@ -115,6 +143,17 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                   >
                     <PencilIcon className="size-4" />
                   </Button>
+                  {mailbox.email_provider === "gmail" && mailbox.status !== "disconnected" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Disconnect ${mailbox.email}`}
+                      disabled={isDisconnecting && disconnectingId === mailbox.id}
+                      onClick={() => handleDisconnectGmail(mailbox.id)}
+                    >
+                      <UnplugIcon className="size-4" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"

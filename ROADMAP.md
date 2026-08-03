@@ -19,7 +19,23 @@ as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
 - **Sending engine** — claim-due-sends pipeline, send attempts tracking,
   retry/failure hardening, SMTP provider.
 - **Mailbox management** — mailbox CRUD, IMAP configuration, warmup profiles
-  and warmup state machine.
+  and warmup state machine. Google Workspace / Gmail Integration — a mailbox
+  can now be connected via Google OAuth instead of a manually-entered SMTP/
+  IMAP password. Not a new provider pipeline: `smtp.gmail.com`/
+  `imap.gmail.com` accept OAuth2/XOAUTH2 over the same real SMTP/IMAP
+  protocol `SmtpEmailProvider`/`ImapReplyChecker` already speak, so both
+  classes gained a small in-place auth-resolution branch
+  (`mailboxes.email_provider`/`reply_provider = 'gmail'`) rather than a
+  parallel Gmail-specific pipeline — `getEmailProvider()`/
+  `getReplyProvider()`, `send-worker.ts`/`reply-worker.ts`, campaigns,
+  analytics, warmup, and health scoring are all unchanged. New Route
+  Handlers (`app/api/oauth/google/start`, `.../callback`) drive the OAuth
+  consent flow; only the refresh token is persisted (encrypted with the
+  same `MAILBOX_ENCRYPTION_KEY`/AES-256-GCM scheme as SMTP/IMAP passwords),
+  refreshed into a short-lived access token fresh on every send/reply-sync.
+  Disconnecting a Gmail mailbox clears the local credential and marks it
+  `disconnected` — Google's token-revocation endpoint is deliberately not
+  called yet (planned for a later security/compliance milestone).
 - **Reply tracking** — inbound reply sync (`app/api/cron/sync-replies`).
 - **Deliverability** — domain/mailbox health data model and settings route.
   Automated deliverability health checks (mailbox-level) — every active

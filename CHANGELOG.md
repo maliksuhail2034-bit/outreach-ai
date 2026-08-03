@@ -3,6 +3,78 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-07 — Google Workspace / Gmail Integration
+
+- Added the `gmail_oauth` migration: `mailboxes.email_provider`
+  (`'smtp'` | `'gmail'`, default `'smtp'`) as the send-side seam symmetric to
+  the existing `reply_provider` column, widened `reply_provider`'s check
+  constraint to add `'gmail'` (exactly what that column's original comment
+  in `20260731100000_mailboxes_imap.sql` already said would happen),
+  widened `status` to add `'disconnected'`, relaxed
+  `encrypted_smtp_password` to nullable with a conditional check (a Gmail
+  mailbox has no SMTP password), and added nullable
+  `encrypted_google_refresh_token`. Purely additive — every existing row
+  defaults to `email_provider = 'smtp'`, its exact current behavior.
+- Extended `lib/email/providers/smtp.ts`'s `SmtpEmailProvider` and
+  `lib/email/reply-providers/imap.ts`'s `ImapReplyChecker` in place with an
+  auth-resolution branch, rather than adding parallel Gmail-specific
+  classes: `smtp.gmail.com`/`imap.gmail.com` accept OAuth2/XOAUTH2 over the
+  same real SMTP/IMAP protocol these classes already speak (confirmed via
+  `nodemailer`'s and `imapflow`'s own OAuth support before writing any code),
+  so a `'gmail'` mailbox refreshes its stored refresh token into a
+  short-lived access token and builds an OAuth2 auth object; a `'smtp'`/
+  `'imap'` mailbox decrypts its password exactly as before. Every other
+  line in both classes — address formatting, SMTP error classification,
+  IMAP UID-cursor sync, MIME parsing, `ReplyMessage` normalization — is
+  unchanged. `getEmailProvider()`/`getReplyProvider()`
+  (`lib/email/get-provider.ts`/`get-reply-provider.ts`), `send-worker.ts`,
+  `reply-worker.ts`, campaigns, analytics, warmup, and deliverability
+  scoring needed zero changes — confirmed by inspection before
+  implementation, not assumed.
+- Added `lib/email/google-oauth.ts` (`buildGoogleAuthUrl`,
+  `exchangeCodeForTokens`, `refreshGoogleAccessToken`, `getGoogleUserInfo`,
+  `GoogleOAuthError`) and `lib/email/google-constants.ts` — plain `fetch`
+  against Google's OAuth endpoints, no vendor SDK, matching this codebase's
+  existing convention for every external HTTP integration. Only the refresh
+  token is ever persisted; a fresh access token is resolved on every send/
+  reply-sync rather than cached, the same "resolve credentials on every
+  use" pattern the SMTP/IMAP password path already follows. The refresh
+  token is encrypted with the exact same `lib/crypto/smtp-secret.ts`
+  functions and `MAILBOX_ENCRYPTION_KEY` as SMTP/IMAP passwords — reused
+  as-is (a Google refresh token is the same kind of secret: this mailbox's
+  own send/receive credential), no new encryption key.
+- Added `app/api/oauth/google/start` and `.../callback` Route Handlers —
+  the OAuth consent/callback flow, following the same "Route Handler for a
+  third-party callback" convention `app/auth/confirm/route.ts` already
+  established for Supabase's own email-link flow. CSRF protection is a
+  random-value double-submit cookie (no signing secret needed — an attacker
+  who can't read/set the `httpOnly` cookie can't forge a matching `state`).
+  The callback never trusts identity from Google's response, only which
+  Google account consented; it re-derives the outreach-ai user from the
+  existing session. A new `mailboxes` row is created (or an existing one
+  reconnected) via the unchanged `createMailbox`/`updateMailbox` functions,
+  with `email` set directly from Google's own account info rather than a
+  hand-typed field.
+- Added `lib/db/mailboxes.ts`'s `getMailboxByUserAndEmail`, a natural-key
+  lookup mirroring `getIntegrationByProvider`/`getAiProviderKeyByProvider`'s
+  shape, so the callback can tell a first-time connect from a reconnect.
+- Added `disconnectGmailMailboxAction` (`app/(app)/mailboxes/actions.ts`):
+  clears the stored refresh token and moves the mailbox to `status =
+  'disconnected'` — on its own enough to stop `claim_due_sends()` and
+  `listMailboxesForReplySync()` from using it, since both already filter on
+  `status = 'active'`. Deliberately does not call Google's token-revocation
+  endpoint in v1 (planned for a later security/compliance milestone).
+- Added a "Connect Google Workspace" entry point and a Gmail/SMTP provider
+  badge to `components/mailboxes/mailbox-list.tsx`; `mailbox-form.tsx`'s
+  edit mode shows a read-only "connected via Google" state instead of
+  SMTP/IMAP fields for a Gmail mailbox, while reusing the exact same
+  `updateMailboxAction`/`mailboxSchema` path for every provider-agnostic
+  setting (display name, limits, domain, status, warmup).
+- Added unit tests for `lib/email/google-oauth.ts` (auth URL construction,
+  token exchange/refresh, userinfo lookup, and
+  retry/invalid_grant/failed error classification against a mocked
+  `fetch`).
+
 ## 2026-08-06 — AI Recommendations v1 (BYOK)
 
 - Added `lib/ai/provider.ts`'s `AiProvider` interface + `AiGenerationError`

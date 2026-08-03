@@ -769,8 +769,10 @@ export type Database = {
           display_name: string | null
           domain_id: string | null
           email: string
+          email_provider: string
+          encrypted_google_refresh_token: string | null
           encrypted_imap_password: string | null
-          encrypted_smtp_password: string
+          encrypted_smtp_password: string | null
           hourly_limit: number
           id: string
           imap_enabled: boolean
@@ -795,8 +797,10 @@ export type Database = {
           display_name?: string | null
           domain_id?: string | null
           email: string
+          email_provider?: string
+          encrypted_google_refresh_token?: string | null
           encrypted_imap_password?: string | null
-          encrypted_smtp_password: string
+          encrypted_smtp_password?: string | null
           hourly_limit?: number
           id?: string
           imap_enabled?: boolean
@@ -821,8 +825,10 @@ export type Database = {
           display_name?: string | null
           domain_id?: string | null
           email?: string
+          email_provider?: string
+          encrypted_google_refresh_token?: string | null
           encrypted_imap_password?: string | null
-          encrypted_smtp_password?: string
+          encrypted_smtp_password?: string | null
           hourly_limit?: number
           id?: string
           imap_enabled?: boolean

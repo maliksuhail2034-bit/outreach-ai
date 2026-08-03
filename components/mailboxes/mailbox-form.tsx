@@ -25,6 +25,16 @@ type MailboxFormProps =
 export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormProps) {
   const [isPending, startTransition] = useTransition();
   const [isTesting, startTestTransition] = useTransition();
+  // A Gmail-connected mailbox has no SMTP/IMAP credentials to edit — the
+  // email, host/port/username, and reply-tracking config were all set from
+  // Google's OAuth response at connect time (see
+  // app/api/oauth/google/callback/route.ts) and stay fixed. Every other
+  // field (display name, limits, domain, status, warmup) is provider-
+  // agnostic and reuses the exact same updateMailboxAction/mailboxSchema
+  // path a manual mailbox does — defaultValues below already carries the
+  // Gmail row's existing smtp/imap values through unchanged since this
+  // component simply never renders a field for them in this mode.
+  const isGmailEdit = mode === "edit" && mailbox.email_provider === "gmail";
 
   const form = useForm<MailboxInput>({
     resolver: zodResolver(mailboxSchema),
@@ -112,19 +122,26 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField
-            control={form.control}
-            name="email"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Email</FormLabel>
-                <FormControl>
-                  <Input placeholder="jane@yourdomain.com" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {isGmailEdit ? (
+            <FormItem>
+              <FormLabel>Email</FormLabel>
+              <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">{mailbox.email}</p>
+            </FormItem>
+          ) : (
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl>
+                    <Input placeholder="jane@yourdomain.com" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           <FormField
             control={form.control}
             name="displayName"
@@ -140,74 +157,85 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
           />
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
-          <FormField
-            control={form.control}
-            name="smtpHost"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>SMTP host</FormLabel>
-                <FormControl>
-                  <Input placeholder="smtp.yourdomain.com" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="smtpPort"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Port</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    name={field.name}
-                    ref={field.ref}
-                    value={field.value}
-                    onBlur={field.onBlur}
-                    onChange={(e) => field.onChange(e.target.valueAsNumber)}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        {isGmailEdit && (
+          <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            Connected via Google Workspace — sending and reply tracking use this Google account&apos;s own
+            credentials, refreshed automatically. Disconnect it from the mailbox list to remove access.
+          </p>
+        )}
 
-        <FormField
-          control={form.control}
-          name="smtpUsername"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>SMTP username</FormLabel>
-              <FormControl>
-                <Input placeholder="jane@yourdomain.com" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="smtpPassword"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>
-                SMTP password
-                {mode === "edit" && (
-                  <span className="font-normal text-muted-foreground"> (leave blank to keep current)</span>
+        {!isGmailEdit && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+              <FormField
+                control={form.control}
+                name="smtpHost"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>SMTP host</FormLabel>
+                    <FormControl>
+                      <Input placeholder="smtp.yourdomain.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
                 )}
-              </FormLabel>
-              <FormControl>
-                <Input type="password" autoComplete="new-password" required={mode === "create"} {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+              />
+              <FormField
+                control={form.control}
+                name="smtpPort"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Port</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        name={field.name}
+                        ref={field.ref}
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="smtpUsername"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>SMTP username</FormLabel>
+                  <FormControl>
+                    <Input placeholder="jane@yourdomain.com" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="smtpPassword"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    SMTP password
+                    {mode === "edit" && (
+                      <span className="font-normal text-muted-foreground"> (leave blank to keep current)</span>
+                    )}
+                  </FormLabel>
+                  <FormControl>
+                    <Input type="password" autoComplete="new-password" required={mode === "create"} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
@@ -341,6 +369,7 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
           )}
         />
 
+        {!isGmailEdit && (
         <div className="space-y-4 rounded-lg border border-border p-4">
           <FormField
             control={form.control}
@@ -435,6 +464,7 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             </>
           )}
         </div>
+        )}
 
         <DialogFooter>
           <Button type="submit" disabled={isPending}>

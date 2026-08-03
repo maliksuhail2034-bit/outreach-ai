@@ -2,6 +2,8 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
+import { refreshGoogleAccessToken } from "@/lib/email/google-oauth";
+import { GMAIL_IMAP_HOST, GMAIL_IMAP_PORT } from "@/lib/email/google-constants";
 import type { Tables } from "@/types/database.types";
 import type { FetchResult, ReplyMessage, ReplyProvider, SyncCursor } from "../reply-provider";
 
@@ -26,19 +28,39 @@ function normalizeReferences(raw: string | string[] | undefined): string[] {
 // Reuses lib/crypto/smtp-secret.ts as-is for the IMAP password: the
 // functions are generic AES-256-GCM string encryption despite the name,
 // nothing SMTP-specific inside.
+//
+// A Gmail-connected mailbox (reply_provider = 'gmail', see the gmail_oauth
+// migration) authenticates the same real IMAP connection with a fresh
+// OAuth2 access token instead of a password — see resolveImapConnection
+// below. runReplySyncWorker() already treats any thrown error as "skip this
+// mailbox for this run" (lib/email/reply-worker.ts), so a refresh failure
+// here needs no special classification, unlike the send path.
+async function resolveImapConnection(mailbox: Mailbox) {
+  if (mailbox.reply_provider === "gmail") {
+    if (!mailbox.encrypted_google_refresh_token) {
+      throw new Error("This mailbox's Google connection is missing — reconnect it in Settings.");
+    }
+    const refreshToken = decryptSmtpPassword(mailbox.encrypted_google_refresh_token);
+    const accessToken = await refreshGoogleAccessToken(refreshToken);
+    return { host: GMAIL_IMAP_HOST, port: GMAIL_IMAP_PORT, secure: true, auth: { user: mailbox.email, accessToken } };
+  }
+
+  const password = decryptSmtpPassword(mailbox.encrypted_imap_password ?? "");
+  return {
+    host: mailbox.imap_host ?? "",
+    port: mailbox.imap_port,
+    secure: true,
+    auth: { user: mailbox.imap_username ?? "", pass: password },
+  };
+}
+
 export class ImapReplyChecker implements ReplyProvider {
   constructor(private readonly mailbox: Mailbox) {}
 
   async fetchNewMessages(): Promise<FetchResult> {
-    const password = decryptSmtpPassword(this.mailbox.encrypted_imap_password ?? "");
+    const connection = await resolveImapConnection(this.mailbox);
 
-    const client = new ImapFlow({
-      host: this.mailbox.imap_host ?? "",
-      port: this.mailbox.imap_port,
-      secure: true,
-      auth: { user: this.mailbox.imap_username ?? "", pass: password },
-      logger: false,
-    });
+    const client = new ImapFlow({ ...connection, logger: false });
 
     await client.connect();
     try {

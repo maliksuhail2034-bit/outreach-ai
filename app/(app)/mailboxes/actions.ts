@@ -103,6 +103,27 @@ export async function deleteMailboxAction(id: string) {
   revalidatePath("/dashboard");
 }
 
+// Disconnects a Gmail-connected mailbox without deleting it: clears the
+// stored refresh token (the only Google credential this app persists) and
+// moves status to 'disconnected', which is on its own enough to stop
+// claim_due_sends()/listMailboxesForReplySync() from using it (both already
+// filter on status = 'active' — see the gmail_oauth migration). Deliberately
+// does not call Google's token-revocation endpoint in v1 — that's planned
+// for a later security/compliance milestone; local credential removal is
+// enough to stop this app from being able to send/read as this account.
+export async function disconnectGmailMailboxAction(id: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await updateMailbox(supabase, user.id, id, {
+    encrypted_google_refresh_token: null,
+    status: "disconnected",
+  });
+
+  revalidatePath("/mailboxes");
+  revalidatePath("/dashboard");
+}
+
 const TEST_CONNECTION_TIMEOUT_MS = 10_000;
 
 export interface TestImapConnectionInput {
@@ -152,11 +173,13 @@ export async function testImapConnectionAction(
     user_id: user.id,
     domain_id: null,
     email: "",
+    email_provider: "smtp",
     display_name: null,
     smtp_host: "",
     smtp_port: 587,
     smtp_username: "",
     encrypted_smtp_password: "",
+    encrypted_google_refresh_token: null,
     daily_limit: 1,
     hourly_limit: 1,
     cooldown_minutes: 0,

@@ -1,6 +1,8 @@
 import nodemailer from "nodemailer";
 
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
+import { GoogleOAuthError, refreshGoogleAccessToken } from "@/lib/email/google-oauth";
+import { GMAIL_SMTP_HOST, GMAIL_SMTP_PORT } from "@/lib/email/google-constants";
 import type { Tables } from "@/types/database.types";
 import { EmailSendError, type EmailProvider, type OutboundEmailMessage, type SendResult } from "../provider";
 
@@ -54,6 +56,51 @@ function classifySmtpError(error: unknown): EmailSendError {
   return new EmailSendError(message, "retry");
 }
 
+// Resolves the connection details nodemailer needs — real SMTP either way,
+// just a different auth strategy. A Gmail-connected mailbox (email_provider
+// = 'gmail', see the gmail_oauth migration) has no SMTP password to decrypt;
+// it refreshes its stored Google refresh token into a short-lived access
+// token instead, fresh for every send (never cached), the same "resolve
+// credentials on every use" pattern the password path already follows.
+async function resolveSmtpConnection(mailbox: Mailbox) {
+  if (mailbox.email_provider === "gmail") {
+    if (!mailbox.encrypted_google_refresh_token) {
+      throw new EmailSendError("This mailbox's Google connection is missing — reconnect it in Settings.", "failed");
+    }
+    const refreshToken = decryptSmtpPassword(mailbox.encrypted_google_refresh_token);
+    let accessToken: string;
+    try {
+      accessToken = await refreshGoogleAccessToken(refreshToken);
+    } catch (error) {
+      // Translated into the same EmailSendError shape classifySmtpError
+      // produces, so send-worker.ts's catch block classifies this exactly
+      // like an SMTP-level auth failure — invalid_grant (Google revoked
+      // access) maps to "failed" the same way a real SMTP 535 auth
+      // rejection already would, not endlessly retried.
+      if (error instanceof GoogleOAuthError) {
+        throw new EmailSendError(error.message, error.outcome === "retry" ? "retry" : "failed");
+      }
+      throw error;
+    }
+    return {
+      host: GMAIL_SMTP_HOST,
+      port: GMAIL_SMTP_PORT,
+      secure: false,
+      requireTLS: true,
+      auth: { type: "OAuth2" as const, user: mailbox.email, accessToken },
+    };
+  }
+
+  const password = decryptSmtpPassword(mailbox.encrypted_smtp_password ?? "");
+  return {
+    host: mailbox.smtp_host,
+    port: mailbox.smtp_port,
+    secure: mailbox.smtp_port === 465,
+    requireTLS: mailbox.smtp_port !== 465,
+    auth: { user: mailbox.smtp_username, pass: password },
+  };
+}
+
 // Sends exactly one email over SMTP using a single mailbox's credentials.
 // No retries, no batching, no connection reuse across calls — a fresh
 // transport per send, matching the "send one message" scope of this class.
@@ -61,18 +108,8 @@ export class SmtpEmailProvider implements EmailProvider {
   constructor(private readonly mailbox: Mailbox) {}
 
   async send(message: OutboundEmailMessage): Promise<SendResult> {
-    const password = decryptSmtpPassword(this.mailbox.encrypted_smtp_password);
-
-    const transporter = nodemailer.createTransport({
-      host: this.mailbox.smtp_host,
-      port: this.mailbox.smtp_port,
-      secure: this.mailbox.smtp_port === 465,
-      requireTLS: this.mailbox.smtp_port !== 465,
-      auth: {
-        user: this.mailbox.smtp_username,
-        pass: password,
-      },
-    });
+    const connection = await resolveSmtpConnection(this.mailbox);
+    const transporter = nodemailer.createTransport(connection);
 
     try {
       const info = await transporter.sendMail({

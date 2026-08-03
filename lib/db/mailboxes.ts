@@ -39,6 +39,21 @@ export async function getMailbox(supabase: Client, userId: string, id: string): 
   return omitPassword(unwrap<Mailbox>(result));
 }
 
+// Natural-key lookup on the (user_id, email) unique constraint — used by
+// the Google OAuth callback to tell a first-time connect from a reconnect
+// of an already-connected Gmail mailbox, same "look up the one row for this
+// natural key" shape as getIntegrationByProvider/getAiProviderKeyByProvider.
+export async function getMailboxByUserAndEmail(supabase: Client, userId: string, email: string): Promise<MailboxSafe | null> {
+  const { data, error } = await supabase
+    .from("mailboxes")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("email", email)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? omitPassword(data) : null;
+}
+
 // Returns the full row, including the encrypted credential. Restricted to
 // the trusted sending worker (called with lib/supabase/admin.ts) — never
 // call this from a code path that can reach a browser or a client-facing

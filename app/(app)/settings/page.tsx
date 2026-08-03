@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShieldCheckIcon } from "lucide-react";
+import { ShieldCheckIcon, WebhookIcon } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -66,6 +66,25 @@ export default async function SettingsPage() {
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/settings/deliverability">View</Link>
+            </Button>
+          </CardHeader>
+        </Card>
+      </FadeIn>
+
+      <FadeIn delay={0.2}>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <WebhookIcon className="size-4" />
+              </span>
+              <div>
+                <CardTitle>Integrations</CardTitle>
+                <CardDescription>Send your organization digest to a webhook on a schedule.</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/settings/integrations">View</Link>
             </Button>
           </CardHeader>
         </Card>

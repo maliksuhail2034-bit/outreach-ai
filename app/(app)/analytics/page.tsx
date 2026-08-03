@@ -27,13 +27,16 @@ import {
 import { bucketByDay } from "@/lib/analytics/time-buckets";
 import { classifyErrorCategory, type ErrorCategory } from "@/lib/analytics/error-category";
 import { previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
-import { calculatePeerAverage, compareToBenchmark } from "@/lib/analytics/benchmarks";
+import { compareToBenchmark } from "@/lib/analytics/benchmarks";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { ANALYTICS_EVENT_LABELS } from "@/lib/analytics/events";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
-import { benchmarkToInsight, collectInsights, forecastToInsight, type Insight } from "@/lib/analytics/insights";
 import { groupCounts, rate } from "@/lib/analytics/metrics";
-import { loadOrganizationRollup } from "@/lib/analytics/organization-rollup";
+import {
+  buildOrganizationInsights,
+  calculateOrganizationBenchmarks,
+  loadOrganizationRollup,
+} from "@/lib/analytics/organization-rollup";
 import type { AnalyticsEventType } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -296,21 +299,14 @@ export default async function AnalyticsPage({
   // function; this page just maps its snapshots into RollupTable rows.
   const rollup = await loadOrganizationRollup(supabase, user.id, organization.id);
 
-  // --- Benchmarks — reuses lib/analytics/benchmarks.ts's
-  // calculatePeerAverage/compareToBenchmark over the overview snapshots
-  // already loaded above by loadOrganizationRollup, strictly within this
-  // organization's own campaigns/mailboxes/domains (never across
-  // organizations). One peer average per entity type, computed once and
-  // compared against each entity of that type below.
-  const campaignReplyRatePeerAverage = calculatePeerAverage(
-    rollup.campaignSnapshots.map((snapshot) => ({ replyRate: snapshot.overview.replyRate })),
-  );
-  const mailboxReplyRatePeerAverage = calculatePeerAverage(
-    rollup.mailboxSnapshots.map((snapshot) => ({ replyRate: snapshot.overview.replyRate })),
-  );
-  const domainReplyRatePeerAverage = calculatePeerAverage(
-    rollup.domainSnapshots.map((snapshot) => ({ replyRate: snapshot.overview.replyRate })),
-  );
+  // --- Benchmarks — reuses lib/analytics/organization-rollup.ts's
+  // calculateOrganizationBenchmarks (itself built on
+  // lib/analytics/benchmarks.ts's calculatePeerAverage) over the overview
+  // snapshots already loaded above by loadOrganizationRollup, strictly
+  // within this organization's own campaigns/mailboxes/domains (never
+  // across organizations). One peer average per entity type, shared with
+  // buildOrganizationInsights below so it's computed only once.
+  const benchmarks = calculateOrganizationBenchmarks(rollup);
 
   const campaignRollupRows: RollupRow[] = rollup.campaignSnapshots.map((snapshot) => ({
     key: snapshot.campaign.id,
@@ -321,7 +317,7 @@ export default async function AnalyticsPage({
     bounceRate: snapshot.overview.bounceRate,
     healthScore: snapshot.healthScore.score,
     replyRateBenchmark:
-      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, campaignReplyRatePeerAverage).replyRate ?? null,
+      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, benchmarks.campaignReplyRatePeerAverage).replyRate ?? null,
   }));
 
   const mailboxRollupRows: RollupRow[] = rollup.mailboxSnapshots.map((snapshot) => ({
@@ -333,7 +329,7 @@ export default async function AnalyticsPage({
     bounceRate: snapshot.overview.bounceRate,
     healthScore: snapshot.health?.health_score ?? null,
     replyRateBenchmark:
-      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, mailboxReplyRatePeerAverage).replyRate ?? null,
+      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, benchmarks.mailboxReplyRatePeerAverage).replyRate ?? null,
   }));
 
   const domainRollupRows: RollupRow[] = rollup.domainSnapshots.map((snapshot) => ({
@@ -345,23 +341,13 @@ export default async function AnalyticsPage({
     bounceRate: snapshot.overview.bounceRate,
     healthScore: snapshot.healthScore.score,
     replyRateBenchmark:
-      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, domainReplyRatePeerAverage).replyRate ?? null,
+      compareToBenchmark({ replyRate: snapshot.overview.replyRate }, benchmarks.domainReplyRatePeerAverage).replyRate ?? null,
   }));
 
-  // --- AI Insights — deterministic, rule-based (no LLM): one benchmark
-  // callout per campaign/mailbox/domain that's significantly off its own
-  // peer-group average (reusing the replyRateBenchmark already computed
-  // for each rollup row above), plus the org-wide send forecast computed
-  // earlier on this page.
-  const rollupBenchmarkInsights: (Insight | null)[] = [
-    ...campaignRollupRows.map((row) => (row.replyRateBenchmark ? benchmarkToInsight(row.label, "reply rate", row.replyRateBenchmark) : null)),
-    ...mailboxRollupRows.map((row) => (row.replyRateBenchmark ? benchmarkToInsight(row.label, "reply rate", row.replyRateBenchmark) : null)),
-    ...domainRollupRows.map((row) => (row.replyRateBenchmark ? benchmarkToInsight(row.label, "reply rate", row.replyRateBenchmark) : null)),
-  ];
-  const aiInsights = collectInsights(
-    [...rollupBenchmarkInsights, forecastToInsight("Sending volume", sendForecast)],
-    "No notable changes across your organization right now — everything is steady.",
-  );
+  // --- AI Insights — deterministic, rule-based (no LLM), shared with
+  // lib/integrations/digest.ts's organization digest so this composition
+  // exists in exactly one place — see buildOrganizationInsights.
+  const aiInsights = buildOrganizationInsights(rollup, benchmarks, sendForecast);
 
   const rangeParam = (await searchParams).range;
   const parsedRange = dateRangeQuerySchema.safeParse({ preset: rangeParam });

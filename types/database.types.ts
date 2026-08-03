@@ -475,6 +475,53 @@ export type Database = {
           },
         ]
       }
+      integrations: {
+        Row: {
+          config: Json
+          created_at: string
+          id: string
+          last_error: string | null
+          last_sent_at: string | null
+          last_status: string | null
+          organization_id: string
+          provider: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          last_sent_at?: string | null
+          last_status?: string | null
+          organization_id: string
+          provider: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          last_sent_at?: string | null
+          last_status?: string | null
+          organization_id?: string
+          provider?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integrations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lead_lists: {
         Row: {
           created_at: string

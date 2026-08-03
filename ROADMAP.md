@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `5a08012`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -49,6 +49,16 @@ as of commit `5a08012`. See `CHANGELOG.md` for the commit-by-commit history.
   domain, and organization analytics, surfacing plain-language callouts by
   reusing each entity's already-computed health scores, trends, forecasts,
   and benchmarks rather than a second calculation. No LLM integration yet.
+- **Integrations** — Integrations Foundation: a shared, provider-agnostic
+  integration abstraction (`lib/integrations/provider.ts`, mirroring the
+  existing `EmailProvider`/`ReputationProvider` pattern) with a real
+  webhook provider as its first implementation. An organization digest
+  builder (`lib/integrations/digest.ts`) reuses the existing organization
+  rollup, benchmarking, forecasting, and AI Insights engines rather than a
+  new data pipeline, delivered by a scheduled digest worker/cron
+  (`lib/integrations/digest-worker.ts`, `app/api/cron/integrations-digest`).
+  A `/settings/integrations` page lets an organization connect, test, and
+  manage a webhook.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.

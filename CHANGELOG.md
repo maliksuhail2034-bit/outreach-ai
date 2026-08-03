@@ -3,6 +3,49 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — Integrations Foundation (`60edfc4`)
+
+- Added `lib/integrations/provider.ts`, a shared, provider-agnostic
+  `IntegrationProvider` abstraction — mirrors `lib/email/provider.ts`'s
+  `EmailProvider` split (interface + classified delivery error + factory)
+  exactly, so a future provider (Slack, Zapier, a CRM) plugs in via
+  `lib/integrations/get-provider.ts`'s factory without touching any caller.
+- Added `lib/integrations/providers/webhook.ts`'s `WebhookIntegrationProvider`
+  — a real (not placeholder) implementation, since a generic outbound
+  webhook needs no vendor SDK or credentials beyond a URL, unlike
+  `DnsProvider`/`ReputationProvider`, which still have no real data source
+  to plug into. Posts the digest as JSON with a bounded timeout and
+  classified retry/failed outcomes.
+- Added `lib/integrations/digest.ts`'s `buildOrganizationDigest` — the
+  reuse centerpiece of this milestone: it builds an organization's digest
+  payload from `loadOrganizationRollup`, `calculateOrganizationBenchmarks`,
+  `getForecaster`, and `buildOrganizationInsights` (all pre-existing
+  engines), the same composition `/analytics`'s rollup page already
+  performs, rather than a second assembly. Extracted
+  `calculateOrganizationBenchmarks`/`buildOrganizationInsights` out of that
+  page's inline logic into `lib/analytics/organization-rollup.ts` so both
+  the page and the digest builder share one implementation — no duplicated
+  business logic.
+- Fixed `loadOrganizationRollup`'s org-wide event fetch to explicitly scope
+  by the organization's own mailboxes instead of relying solely on RLS —
+  required to make it safe to call from the new admin-context digest
+  worker (which bypasses RLS entirely), and a genuine defense-in-depth
+  improvement for the existing `/analytics` page too. Behavior-preserving
+  for that page's existing output.
+- Added `lib/integrations/digest-worker.ts`'s `runIntegrationsDigestWorker`,
+  iterating every enabled integration across every organization with
+  per-integration failure isolation — the same shape as
+  `runDeliverabilityHealthCheckWorker`/`runReplySyncWorker`. Added
+  `app/api/cron/integrations-digest`, following the same `CRON_SECRET`
+  bearer-auth/GET+POST structure as the other three cron routes.
+- Added `/settings/integrations` (`page.tsx`, `actions.ts`,
+  `components/settings/integrations-panel.tsx`,
+  `components/settings/webhook-integration-form.tsx`) to connect, enable/
+  disable, send a test digest for, and disconnect a webhook — each Server
+  Function independently re-checks organization ownership.
+- Added the `integrations` migration (organization-scoped, RLS from its
+  first migration, unique on `(organization_id, provider)`).
+
 ## 2026-08-03 — AI Insights (`5a08012`)
 
 - Added `lib/analytics/insights.ts`, a shared deterministic, rule-based AI

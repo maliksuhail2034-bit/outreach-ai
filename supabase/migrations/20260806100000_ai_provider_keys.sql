@@ -35,7 +35,7 @@ create table public.ai_provider_keys (
 comment on table public.ai_provider_keys is 'Per-organization, bring-your-own AI provider API keys (Claude/OpenAI/Gemini) used to generate AI Recommendations. One row per organization per provider. No managed/app-provided key in v1.';
 comment on column public.ai_provider_keys.encrypted_api_key is 'AES-256-GCM ciphertext, see lib/crypto/ai-provider-key-secret.ts. Never exposed to the client.';
 comment on column public.ai_provider_keys.key_preview is 'Display-only fragment (e.g. last 4 characters) of the plaintext key, captured at connect time, so the UI never needs to decrypt the stored key just to render it.';
-comment on column public.ai_provider_keys.model is 'Optional model override (e.g. "claude-sonnet-4-5"); null means the provider's default model (see lib/ai/providers/*.ts).';
+comment on column public.ai_provider_keys.model is 'Optional model override (e.g. "claude-sonnet-4-5"); null means the provider''s default model (see lib/ai/providers/*.ts).';
 
 create index ai_provider_keys_organization_id_idx on public.ai_provider_keys (organization_id);
 

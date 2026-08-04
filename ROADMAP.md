@@ -2,7 +2,7 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `ca8aa7c`. See `CHANGELOG.md` for the commit-by-commit history.
 
 ## Done
 
@@ -19,7 +19,8 @@ as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
 - **Sending engine** — claim-due-sends pipeline, send attempts tracking,
   retry/failure hardening, SMTP provider.
 - **Mailbox management** — mailbox CRUD, IMAP configuration, warmup profiles
-  and warmup state machine. Google Workspace / Gmail Integration — a mailbox
+  and warmup state machine. **Google Workspace / Gmail Integration — COMPLETE
+  (production-validated 2026-08-04, see CHANGELOG.md `ca8aa7c`).** A mailbox
   can now be connected via Google OAuth instead of a manually-entered SMTP/
   IMAP password. Not a new provider pipeline: `smtp.gmail.com`/
   `imap.gmail.com` accept OAuth2/XOAUTH2 over the same real SMTP/IMAP
@@ -31,11 +32,18 @@ as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
   analytics, warmup, and health scoring are all unchanged. New Route
   Handlers (`app/api/oauth/google/start`, `.../callback`) drive the OAuth
   consent flow; only the refresh token is persisted (encrypted with the
-  same `MAILBOX_ENCRYPTION_KEY`/AES-256-GCM scheme as SMTP/IMAP passwords),
-  refreshed into a short-lived access token fresh on every send/reply-sync.
-  Disconnecting a Gmail mailbox clears the local credential and marks it
-  `disconnected` — Google's token-revocation endpoint is deliberately not
-  called yet (planned for a later security/compliance milestone).
+  same `MAILBOX_ENCRYPTION_KEY`/AES-256-GCM scheme as SMTP/IMAP passwords,
+  and now correctly stripped from every user-facing read path, see
+  `MailboxSafe`), refreshed into a short-lived access token fresh on every
+  send/reply-sync. Disconnecting a Gmail mailbox clears the local credential
+  and marks it `disconnected` — Google's token-revocation endpoint is
+  deliberately not called yet (planned for a later security/compliance
+  milestone). Real OAuth credentials, a real SMTP XOAUTH2 send, and a real
+  IMAP XOAUTH2 reply-sync match (via the shared `lib/email/message-id.ts`
+  normalization, fixing a bug where the SMTP and IMAP sides compared
+  Message-IDs in different forms) were all validated end to end against a
+  live Gmail account, with campaign and mailbox analytics confirmed to
+  reflect the resulting activity correctly.
 - **Reply tracking** — inbound reply sync (`app/api/cron/sync-replies`).
 - **Deliverability** — domain/mailbox health data model and settings route.
   Automated deliverability health checks (mailbox-level) — every active
@@ -93,6 +101,17 @@ as of commit `60edfc4`. See `CHANGELOG.md` for the commit-by-commit history.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.
+
+## Current milestone
+
+- **Microsoft 365 / Outlook integration** — the next mailbox provider,
+  following the Gmail integration above as the template: OAuth2 connect
+  flow, refresh token encrypted at rest with the existing
+  `MAILBOX_ENCRYPTION_KEY`/AES-256-GCM scheme, and an in-place
+  auth-resolution branch in `SmtpEmailProvider`/`ImapReplyChecker`
+  (Microsoft 365's SMTP/IMAP endpoints support XOAUTH2 the same way Gmail's
+  do) rather than a parallel provider pipeline. **Planned, not started** —
+  no code, migration, or Azure AD app registration yet.
 
 ## In progress / partially built
 

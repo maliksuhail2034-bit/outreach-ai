@@ -3,6 +3,48 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-04 — Gmail Integration Complete: Production-Validated (`ca8aa7c`)
+
+Closes out the Google Workspace / Gmail Integration milestone below —
+production-validated end to end, no code changes outstanding.
+
+- **Google OAuth** — consent/callback flow validated against real Google
+  Cloud OAuth credentials (previously blocked on credential provisioning).
+  Corrected `lib/email/google-constants.ts`'s `GMAIL_OAUTH_SCOPES`: this app
+  authenticates directly against `smtp.gmail.com`/`imap.gmail.com` via
+  XOAUTH2 rather than calling the Gmail REST API, so the REST-only
+  `gmail.send`/`gmail.readonly` scopes originally requested don't work —
+  Google's SMTP/IMAP servers only honor the broader `https://mail.google.com/`
+  scope for XOAUTH2.
+- **Refresh token encryption** — closed a field-exposure gap in
+  `lib/db/mailboxes.ts`: `MailboxSafe`/`omitPassword` now also strips
+  `encrypted_google_refresh_token` (previously only the SMTP/IMAP password
+  fields were stripped), so a Gmail mailbox's refresh token can never reach a
+  user-facing read path.
+- **SMTP XOAUTH2 sending** — validated with a real send through
+  `SmtpEmailProvider` against `smtp.gmail.com`.
+- **IMAP XOAUTH2 reply sync** — validated with a real inbound reply fetched
+  through `ImapReplyChecker` against `imap.gmail.com`.
+- **Shared Message-ID normalization** — root-caused and fixed the bug that
+  was blocking reply matching: `SmtpEmailProvider` stored `providerMessageId`
+  with its raw angle brackets while `ImapReplyChecker` compared against a
+  bracket-stripped `In-Reply-To`/`References`, so a real reply could never
+  match its sent message. Extracted the existing (previously IMAP-only)
+  `normalizeMessageId()` into a new shared `lib/email/message-id.ts` and
+  applied it to `smtp.ts`'s returned `providerMessageId` too, so both sides
+  of the send/reply comparison now use the same canonical form.
+- **Campaign analytics validation** — confirmed a matched reply correctly
+  advances `campaign_leads.status` to `'replied'` and clears
+  `current_step_id`/`next_send_at`.
+- **Mailbox analytics validation** — confirmed the Gmail-connected mailbox's
+  send/reply activity is correctly reflected in mailbox analytics.
+- **End-to-end production validation** — a real message sent via SMTP
+  XOAUTH2, replied to from a live Gmail account, and matched via IMAP
+  XOAUTH2 reply-sync, recorded as an `email_events` `'replied'` row
+  (`matchedVia: "header"`) with the lead correctly advanced to `'replied'`.
+- **Tests** — `npm run typecheck`, `npm run lint`, `npm run build`, and the
+  affected Vitest suites (`lib/email`, 54 tests across 5 files) all passed.
+
 ## 2026-08-07 — Google Workspace / Gmail Integration
 
 - Added the `gmail_oauth` migration: `mailboxes.email_provider`

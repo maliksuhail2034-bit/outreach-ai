@@ -2,10 +2,10 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `1da3e26`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `da9bf94`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Mailbox Validation & UX
-(2026-08-04, commit `1da3e26`).
+**Last completed milestone:** Email Verification Integration
+(2026-08-09, commit `da9bf94`).
 
 ## Integration status
 
@@ -13,9 +13,10 @@ Completed
 - ✓ Gmail
 - ✓ Microsoft 365 / Outlook
 - ✓ Generic SMTP / IMAP
+- ✓ Email Verification (MillionVerifier)
 
 Current
-- → Email Verification Integration
+- (none — next milestone not yet selected)
 
 Planned
 - AI Providers
@@ -154,16 +155,31 @@ Planned
   CHANGELOG entry above for details (`verifySmtpConnection()`, uses
   nodemailer's `transporter.verify()`, connection/auth only, never sends a
   message).
+- **Email Verification Integration — COMPLETE (2026-08-09, see
+  CHANGELOG.md commit `da9bf94`).** Bring Your Own Key (BYOK) only, same
+  shape as AI Recommendations: an organization connects its own
+  MillionVerifier API key (`/settings/verification`,
+  `verification_provider_keys`); outreach-ai never purchases verification
+  credit on a user's behalf. A shared `lib/verification/` abstraction
+  (`lib/verification/provider.ts`, mirroring `lib/ai/provider.ts`) wraps a
+  plain `fetch` call to MillionVerifier's real-time API — confirmed against
+  the live endpoint directly, since its published resultcode table doesn't
+  match actual behavior. `leads` gains a single `verification_status`
+  column (in-place only, no audit/history table) plus a derived risk score
+  and raw provider detail. Individual verification is a synchronous
+  "Verify" button; bulk verification is always queued
+  (`verification_status = 'pending'`) and picked up by a new
+  `claim_due_verifications()`-driven cron worker
+  (`app/api/cron/verify-leads`), the same atomic claim pattern
+  `claim_due_sends()` uses for campaign sends — never a synchronous batch.
+  Live production validation against a real paid MillionVerifier account is
+  still pending, the same gate Gmail/Outlook had before their own
+  production validation.
 
 ## Current milestone
 
-- **Email Verification Integration** — **not started.**
-  Goal: integrate a professional email verification provider so users can
-  validate leads before sending campaigns. Scope: verify individual email
-  addresses; bulk verification; disposable email detection; catch-all
-  detection; role account detection; invalid email detection; risk score;
-  store verification status on leads; show verification badges in the UI;
-  allow filtering by verification status.
+No milestone currently in progress — the next milestone has not been
+selected yet.
 
 ## In progress / partially built
 

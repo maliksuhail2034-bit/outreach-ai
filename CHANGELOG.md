@@ -3,6 +3,67 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-09 — Email Verification Integration Complete (Commit: da9bf94)
+
+- **BYOK email verification via MillionVerifier** — `/settings/verification`
+  lets an organization connect its own MillionVerifier API key
+  (`verification_provider_keys`, organization-scoped, one row per
+  organization per provider). Outreach-ai never purchases verification
+  credit on a user's behalf in v1.
+- **New provider abstraction** — `lib/verification/provider.ts`
+  (`VerificationProvider`, `VerificationError` with
+  `retry`/`invalid_key`/`failed` outcomes) and `lib/verification/get-provider.ts`,
+  mirroring `lib/ai/provider.ts`/`get-provider.ts` exactly. First and only
+  implementation is `lib/verification/providers/millionverifier.ts` — plain
+  `fetch`, no vendor SDK.
+- **MillionVerifier's real-time API confirmed against the live endpoint**,
+  not just its docs — its published `resultcode` table (1=ok, 2=catch_all,
+  3=unknown, 4=error, 5=disposable, 6=invalid) does not match what the API
+  actually returns for its own documented test keys, so classification maps
+  off the self-describing `result` string only, never `resultcode`. The API
+  always responds HTTP 200; account-level failures (bad key, no credits,
+  blocked IP) surface as `{ result: "", error: "<message>" }` rather than a
+  non-2xx status.
+- **`leads` gains a single verification_status column** (`unverified` /
+  `pending` / `valid` / `invalid` / `catch_all` / `unknown` / `error`), plus
+  `verification_risk_score` (derived 0-100, not provider-native —
+  MillionVerifier's API doesn't return a score), `verification_detail`
+  (jsonb, raw provider signals), `verified_at`, and
+  `verification_locked_until`. In-place only, no audit/history table in v1.
+- **Individual verification is synchronous** — a "Verify" button on each
+  lead row calls `verifyLeadAction` -> `lib/verification/verify.ts`
+  directly, mirroring `generateRecommendation()`'s BYOK-key-lookup ->
+  decrypt -> call -> persist shape.
+- **Bulk verification is always queued, never a synchronous batch** — "Queue
+  verification" flips selected leads to `verification_status = 'pending'`;
+  a new `claim_due_verifications()` Postgres function
+  (`supabase/migrations/20260809110000_leads_verification.sql`) claims due
+  rows with the same atomic `for update skip locked` pattern as
+  `claim_due_sends()`, driven by `lib/verification/bulk-worker.ts` and a new
+  `app/api/cron/verify-leads` route (`CRON_SECRET`-gated, same shape as the
+  other four cron routes).
+- **New encryption key** — `VERIFICATION_PROVIDER_KEY_ENCRYPTION_KEY`
+  (AES-256-GCM via `lib/crypto/verification-provider-key-secret.ts`, reusing
+  the existing generic `lib/crypto/aes-secret.ts` cipher code), deliberately
+  separate from `MAILBOX_ENCRYPTION_KEY`/`AI_PROVIDER_KEY_ENCRYPTION_KEY` —
+  same blast-radius-isolation reasoning as those two.
+- **Lead table UI** — verification status badge column, per-lead "Verify"
+  button, bulk "Queue verification" action, and a verification-status filter
+  dropdown (client-side over the already-loaded page of leads).
+- **No changes to leads' multi-tenancy model** — `leads` stays
+  `user_id`-scoped (unchanged); `verification_provider_keys` is
+  `organization_id`-scoped like `ai_provider_keys`, resolved per-lead via
+  the owning user's organization membership.
+- **Live production validation is still pending** — implementation was
+  verified against MillionVerifier's public demo/test API keys (confirming
+  the real response shape and account-error handling) but not against a
+  real paid account or a real lead's mailbox, the same gate Gmail/Outlook
+  had before their own production validation.
+- **All checks passed**: `npm run typecheck`, `npm run lint`, `npm run
+  build`, and the full test suite (441 tests, no regressions).
+
+Commit: `da9bf94`
+
 ## 2026-08-04 — Mailbox Validation & UX Complete (Commit: 1da3e26)
 
 - **SMTP connection testing added** — `verifySmtpConnection()`

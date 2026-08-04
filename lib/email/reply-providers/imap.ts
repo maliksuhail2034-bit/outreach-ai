@@ -4,17 +4,11 @@ import { simpleParser } from "mailparser";
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { refreshGoogleAccessToken } from "@/lib/email/google-oauth";
 import { GMAIL_IMAP_HOST, GMAIL_IMAP_PORT } from "@/lib/email/google-constants";
+import { normalizeMessageId } from "@/lib/email/message-id";
 import type { Tables } from "@/types/database.types";
 import type { FetchResult, ReplyMessage, ReplyProvider, SyncCursor } from "../reply-provider";
 
 type Mailbox = Tables<"mailboxes">;
-
-function normalizeMessageId(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/^</, "").replace(/>$/, "");
-}
 
 function normalizeReferences(raw: string | string[] | undefined): string[] {
   if (!raw) return [];

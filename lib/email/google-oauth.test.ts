@@ -29,7 +29,7 @@ describe("buildGoogleAuthUrl", () => {
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("csrf-nonce");
-    expect(url.searchParams.get("scope")).toContain("gmail.send");
+    expect(url.searchParams.get("scope")).toContain("mail.google.com");
   });
 
   it("throws a clear error when client credentials are missing", () => {

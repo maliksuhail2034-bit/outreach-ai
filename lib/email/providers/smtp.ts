@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { GoogleOAuthError, refreshGoogleAccessToken } from "@/lib/email/google-oauth";
 import { GMAIL_SMTP_HOST, GMAIL_SMTP_PORT } from "@/lib/email/google-constants";
+import { normalizeMessageId } from "@/lib/email/message-id";
 import type { Tables } from "@/types/database.types";
 import { EmailSendError, type EmailProvider, type OutboundEmailMessage, type SendResult } from "../provider";
 
@@ -121,7 +122,7 @@ export class SmtpEmailProvider implements EmailProvider {
         replyTo: message.replyTo,
       });
 
-      return { providerMessageId: info.messageId };
+      return { providerMessageId: normalizeMessageId(info.messageId) ?? info.messageId };
     } catch (error) {
       throw classifySmtpError(error);
     }

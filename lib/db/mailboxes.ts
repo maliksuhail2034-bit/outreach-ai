@@ -3,15 +3,19 @@ import type { Client } from "./shared";
 import { unwrap } from "./shared";
 
 type Mailbox = Tables<"mailboxes">;
-export type MailboxSafe = Omit<Mailbox, "encrypted_smtp_password" | "encrypted_imap_password">;
+export type MailboxSafe = Omit<
+  Mailbox,
+  "encrypted_smtp_password" | "encrypted_imap_password" | "encrypted_google_refresh_token"
+>;
 
-// Strips both encrypted credentials before a row can reach any user-facing
-// code path. Only getMailboxCredentials()/listMailboxesForReplySync()
+// Strips all three encrypted credentials before a row can reach any
+// user-facing code path. Only getMailboxCredentials()/listMailboxesForReplySync()
 // (below) return them.
 function omitPassword(row: Mailbox): MailboxSafe {
   const safe: Partial<Mailbox> = { ...row };
   delete safe.encrypted_smtp_password;
   delete safe.encrypted_imap_password;
+  delete safe.encrypted_google_refresh_token;
   return safe as MailboxSafe;
 }
 

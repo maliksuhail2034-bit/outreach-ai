@@ -2,7 +2,26 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `ca8aa7c`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `316856d`. See `CHANGELOG.md` for the commit-by-commit history.
+
+**Last completed milestone:** Microsoft 365 / Outlook Integration
+(2026-08-04, commit `316856d`).
+
+## Integration status
+
+Completed
+- ✓ Gmail
+- ✓ Microsoft 365 / Outlook
+
+Current
+- → Generic SMTP
+
+Planned
+- AI Providers
+- CRM Integrations
+- Email Verification
+- Lead Enrichment
+- Automation Platforms
 
 ## Done
 
@@ -101,17 +120,35 @@ as of commit `ca8aa7c`. See `CHANGELOG.md` for the commit-by-commit history.
 - **Billing** — Stripe integration, webhook handler, plan gating.
 - **Testing foundation** — Vitest, unit tests for scheduling, unsubscribe
   tokens, campaign metrics, and mailbox metrics.
+- **Microsoft 365 / Outlook Integration — COMPLETE (implementation,
+  2026-08-04, see CHANGELOG.md commit `316856d`).** Follows the Gmail
+  integration above as the template, same non-Graph reasoning: a mailbox can
+  now be connected via Microsoft OAuth (work/school or personal Outlook.com,
+  through Microsoft's `/common/` endpoint) instead of a manually-entered
+  SMTP/IMAP password. Not a new provider pipeline —
+  `smtp.office365.com`/`outlook.office365.com` accept OAuth2/XOAUTH2 over the
+  same real SMTP/IMAP protocol `SmtpEmailProvider`/`ImapReplyChecker` already
+  speak, so both classes gained another in-place auth-resolution branch
+  (`mailboxes.email_provider`/`reply_provider = 'outlook'`) rather than a
+  parallel pipeline — `getEmailProvider()`/`getReplyProvider()`,
+  `send-worker.ts`/`reply-worker.ts`, campaigns, and analytics are all
+  unchanged. The connected account's email is read from the OAuth
+  `id_token`'s claims, not Microsoft Graph. New Route Handlers
+  (`app/api/oauth/microsoft/start`, `.../callback`) drive the OAuth consent
+  flow; only the refresh token is persisted (same `MAILBOX_ENCRYPTION_KEY`/
+  AES-256-GCM scheme as every other mailbox credential, stripped from every
+  user-facing read path). All checks (typecheck/lint/build/full test suite,
+  433 tests) passed. **Live production validation (a real OAuth connect and
+  a real SMTP/IMAP send+reply-sync round trip) is still pending** — blocked
+  on a real Azure app registration's `MICROSOFT_OAUTH_CLIENT_ID`/`SECRET`,
+  the same gate Gmail had before its own production validation.
 
 ## Current milestone
 
-- **Microsoft 365 / Outlook integration** — the next mailbox provider,
-  following the Gmail integration above as the template: OAuth2 connect
-  flow, refresh token encrypted at rest with the existing
-  `MAILBOX_ENCRYPTION_KEY`/AES-256-GCM scheme, and an in-place
-  auth-resolution branch in `SmtpEmailProvider`/`ImapReplyChecker`
-  (Microsoft 365's SMTP/IMAP endpoints support XOAUTH2 the same way Gmail's
-  do) rather than a parallel provider pipeline. **Planned, not started** —
-  no code, migration, or Azure AD app registration yet.
+- **Generic SMTP Integration** — allow users to connect any SMTP/IMAP
+  provider, including Zoho, Hostinger, Namecheap, GoDaddy, Fastmail, cPanel
+  mail, Exchange SMTP, and custom corporate mail servers. Reuses the
+  Gmail/Outlook provider architecture. **Not started.**
 
 ## In progress / partially built
 

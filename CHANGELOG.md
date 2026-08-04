@@ -3,6 +3,66 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-04 — Microsoft 365 / Outlook Integration Complete (Commit: 316856d)
+
+- **Microsoft OAuth implementation** — `lib/email/microsoft-oauth.ts`:
+  `buildMicrosoftAuthUrl`/`exchangeCodeForTokens`/`refreshMicrosoftAccessToken`/
+  `getMicrosoftUserInfo`, classified `MicrosoftOAuthError`
+  (`retry`/`invalid_grant`/`failed`), mirroring `google-oauth.ts`'s shape
+  exactly. Uses Microsoft's `/common/` authorize+token endpoints so a single
+  app registration supports both Microsoft 365 work/school accounts and
+  personal Outlook.com accounts.
+- **OAuth callback flow** — `app/api/oauth/microsoft/start` and `.../callback`
+  Route Handlers, mirroring the Google OAuth routes: state-cookie CSRF
+  protection, reconnect-vs-new-connect detection via the existing
+  `getMailboxByUserAndEmail`, and the connected account's email read directly
+  from the OAuth `id_token`'s claims rather than a Microsoft Graph call.
+- **Refresh token encryption** — added nullable
+  `mailboxes.encrypted_microsoft_refresh_token` (`microsoft_oauth`
+  migration), encrypted with the exact same AES-256-GCM scheme and
+  `MAILBOX_ENCRYPTION_KEY` as the SMTP/IMAP passwords and the Google refresh
+  token; `MailboxSafe`/`omitPassword()` strips it from every user-facing
+  read path.
+- **SMTP XOAUTH2 support** — `SmtpEmailProvider`'s `resolveSmtpConnection`
+  gained an `email_provider === "outlook"` branch, refreshing the stored
+  Microsoft refresh token into a short-lived access token against
+  `smtp.office365.com` fresh on every send.
+- **IMAP XOAUTH2 support** — `ImapReplyChecker`'s `resolveImapConnection`
+  gained the equivalent `reply_provider === "outlook"` branch against
+  `outlook.office365.com`.
+- **Outlook mailbox connect/disconnect** — a "Connect Microsoft 365" entry
+  point and an Outlook badge in `components/mailboxes/mailbox-list.tsx`;
+  `mailbox-form.tsx`'s edit mode shows the same read-only "connected via
+  OAuth" state for an Outlook mailbox as it already does for Gmail;
+  `disconnectOutlookMailboxAction` clears the stored refresh token and moves
+  the mailbox to `status = 'disconnected'`.
+- **Provider abstraction reused (no worker refactors)** — no new
+  `EmailProvider`/`ReplyProvider` implementation, no factory branching added
+  to `get-provider.ts`/`get-reply-provider.ts`: Outlook is another
+  auth-resolution branch inside the existing SMTP/IMAP classes, the same
+  shape the Gmail integration already established.
+- **Message-ID normalization compatibility** — no changes needed to
+  `lib/email/message-id.ts`; Outlook's SMTP/IMAP responses use standard
+  RFC 5322 Message-IDs, so the existing shared normalization already applies
+  without modification.
+- **Full implementation completed** — schema migration
+  (`20260808100000_microsoft_oauth.sql`, applied), token module with unit
+  tests, OAuth routes, provider branches, mailbox UI, and `.env.example`
+  documentation.
+- **All checks passed**: `npm run typecheck`, `npm run lint`, `npm run
+  build`, and the full test suite (433 tests).
+
+Commit: `316856d`
+
+### Engineering notes
+
+- Zero modifications to `lib/email/send-worker.ts`.
+- Zero modifications to `lib/email/reply-worker.ts`.
+- Zero modifications to the analytics pipeline (`lib/analytics/`).
+- Zero modifications to the campaign pipeline (`lib/campaigns/`).
+- Outlook is implemented as a provider, not a second architecture — same
+  `EmailProvider`/`ReplyProvider` interfaces, same factories, same workers.
+
 ## 2026-08-04 — Gmail Integration Complete: Production-Validated (`ca8aa7c`)
 
 Closes out the Google Workspace / Gmail Integration milestone below —

@@ -3,10 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createMailbox, deleteMailbox, getMailboxImapCredential, updateMailbox } from "@/lib/db";
+import { createMailbox, deleteMailbox, getMailboxImapCredential, getMailboxSmtpCredential, updateMailbox } from "@/lib/db";
 import { mailboxSchema, type MailboxInput } from "@/lib/validations/mailboxes";
 import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { ImapReplyChecker } from "@/lib/email/reply-providers/imap";
+import { verifySmtpConnection } from "@/lib/email/providers/smtp";
 import { assertWithinMailboxLimit } from "@/lib/billing/limits";
 import type { Tables } from "@/types/database.types";
 
@@ -229,5 +230,90 @@ export async function testImapConnectionAction(
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Couldn't connect to the IMAP server." };
+  }
+}
+
+export interface TestSmtpConnectionInput {
+  mailboxId?: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUsername: string;
+  smtpPassword: string;
+}
+
+// Live SMTP connection/auth check, independent of the send worker. Reuses
+// verifySmtpConnection (lib/email/providers/smtp.ts) — which itself reuses
+// send()'s exact connection-resolution logic — by feeding it a placeholder
+// mailbox row, the same pattern testImapConnectionAction above already
+// established. nodemailer's transporter.verify() never issues MAIL FROM/
+// RCPT TO/DATA, so this never sends a message.
+export async function testSmtpConnectionAction(
+  input: TestSmtpConnectionInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const host = input.smtpHost.trim();
+  const username = input.smtpUsername.trim();
+  if (!host || !username) {
+    return { ok: false, error: "Enter the SMTP host and username to test the connection." };
+  }
+
+  let encryptedPassword: string;
+  if (input.smtpPassword) {
+    encryptedPassword = encryptSmtpPassword(input.smtpPassword);
+  } else if (input.mailboxId) {
+    const existing = await getMailboxSmtpCredential(supabase, user.id, input.mailboxId);
+    if (!existing?.encrypted_smtp_password) {
+      return { ok: false, error: "Enter the SMTP password to test the connection." };
+    }
+    encryptedPassword = existing.encrypted_smtp_password;
+  } else {
+    return { ok: false, error: "Enter the SMTP password to test the connection." };
+  }
+
+  // Every field verifySmtpConnection never reads gets a neutral placeholder
+  // — see testImapConnectionAction's identical comment above. Not a real
+  // row, never persisted.
+  const testMailbox: Tables<"mailboxes"> = {
+    id: "00000000-0000-0000-0000-000000000000",
+    user_id: user.id,
+    domain_id: null,
+    email: username,
+    email_provider: "smtp",
+    display_name: null,
+    smtp_host: host,
+    smtp_port: input.smtpPort,
+    smtp_username: username,
+    encrypted_smtp_password: encryptedPassword,
+    encrypted_google_refresh_token: null,
+    encrypted_microsoft_refresh_token: null,
+    daily_limit: 1,
+    hourly_limit: 1,
+    cooldown_minutes: 0,
+    warmup_enabled: false,
+    status: "active",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    reply_provider: "imap",
+    imap_enabled: false,
+    imap_host: null,
+    imap_port: 993,
+    imap_username: null,
+    encrypted_imap_password: null,
+    imap_uid_validity: null,
+    imap_last_uid: null,
+  };
+
+  try {
+    await Promise.race([
+      verifySmtpConnection(testMailbox),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Connection timed out after 10 seconds.")), TEST_CONNECTION_TIMEOUT_MS),
+      ),
+    ]);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Couldn't connect to the SMTP server." };
   }
 }

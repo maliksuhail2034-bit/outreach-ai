@@ -114,6 +114,20 @@ export async function getMailboxImapCredential(supabase: Client, userId: string,
   return data;
 }
 
+// Same shape as getMailboxImapCredential above, for the SMTP password — lets
+// testSmtpConnectionAction test-connect using a stored credential without
+// requiring the password to be re-entered.
+export async function getMailboxSmtpCredential(supabase: Client, userId: string, id: string) {
+  const { data, error } = await supabase
+    .from("mailboxes")
+    .select("encrypted_smtp_password")
+    .eq("user_id", userId)
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 // Reply-tracking reads/writes, admin-context — same carve-out as
 // getMailboxCredentials: restricted to the trusted reply-sync worker
 // (lib/email/reply-worker.ts), never a code path reachable by a browser.

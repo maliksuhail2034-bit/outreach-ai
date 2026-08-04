@@ -8,7 +8,12 @@ import { toast } from "sonner";
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
 import { mailboxSchema, type MailboxInput } from "@/lib/validations/mailboxes";
-import { createMailboxAction, testImapConnectionAction, updateMailboxAction } from "@/app/(app)/mailboxes/actions";
+import {
+  createMailboxAction,
+  testImapConnectionAction,
+  testSmtpConnectionAction,
+  updateMailboxAction,
+} from "@/app/(app)/mailboxes/actions";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -25,6 +30,10 @@ type MailboxFormProps =
 export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormProps) {
   const [isPending, startTransition] = useTransition();
   const [isTesting, startTestTransition] = useTransition();
+  // Separate from isTesting/startTestTransition above (which is IMAP-only)
+  // so the SMTP and IMAP "Test connection" buttons can run independently
+  // rather than disabling each other.
+  const [isTestingSmtp, startTestSmtpTransition] = useTransition();
   // A Gmail-connected mailbox has no SMTP/IMAP credentials to edit — the
   // email, host/port/username, and reply-tracking config were all set from
   // Google's OAuth response at connect time (see
@@ -99,6 +108,24 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
       });
       if (result.ok) {
         toast.success("Connected — reply tracking can reach this inbox.");
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  function onTestSmtpConnection() {
+    const { smtpHost, smtpPort, smtpUsername, smtpPassword } = form.getValues();
+    startTestSmtpTransition(async () => {
+      const result = await testSmtpConnectionAction({
+        mailboxId: mode === "edit" ? mailbox.id : undefined,
+        smtpHost: smtpHost ?? "",
+        smtpPort,
+        smtpUsername: smtpUsername ?? "",
+        smtpPassword: smtpPassword ?? "",
+      });
+      if (result.ok) {
+        toast.success("Connected — this mailbox can send campaigns.");
       } else {
         toast.error(result.error);
       }
@@ -241,6 +268,10 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
                 </FormItem>
               )}
             />
+
+            <Button type="button" variant="outline" size="sm" disabled={isTestingSmtp} onClick={onTestSmtpConnection}>
+              {isTestingSmtp ? "Testing…" : "Test connection"}
+            </Button>
           </>
         )}
 

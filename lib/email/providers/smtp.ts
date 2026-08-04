@@ -161,3 +161,17 @@ export class SmtpEmailProvider implements EmailProvider {
     }
   }
 }
+
+// Verifies the connection/EHLO/AUTH handshake without sending a message —
+// nodemailer's transporter.verify() does the same negotiation send() does up
+// through authentication, then closes, never issuing MAIL FROM/RCPT TO/DATA.
+// Used only by testSmtpConnectionAction (see app/(app)/mailboxes/actions.ts)
+// for the mailbox form's "Test connection" button; send() above is
+// completely unaffected — this is purely additive and reuses
+// resolveSmtpConnection exactly as send() does, so it exercises the same
+// Gmail/Outlook/manual auth branches a real send would.
+export async function verifySmtpConnection(mailbox: Mailbox): Promise<void> {
+  const connection = await resolveSmtpConnection(mailbox);
+  const transporter = nodemailer.createTransport(connection);
+  await transporter.verify();
+}

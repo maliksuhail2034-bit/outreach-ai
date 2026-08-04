@@ -5,10 +5,13 @@ import { unwrap } from "./shared";
 type Mailbox = Tables<"mailboxes">;
 export type MailboxSafe = Omit<
   Mailbox,
-  "encrypted_smtp_password" | "encrypted_imap_password" | "encrypted_google_refresh_token"
+  | "encrypted_smtp_password"
+  | "encrypted_imap_password"
+  | "encrypted_google_refresh_token"
+  | "encrypted_microsoft_refresh_token"
 >;
 
-// Strips all three encrypted credentials before a row can reach any
+// Strips all four encrypted credentials before a row can reach any
 // user-facing code path. Only getMailboxCredentials()/listMailboxesForReplySync()
 // (below) return them.
 function omitPassword(row: Mailbox): MailboxSafe {
@@ -16,6 +19,7 @@ function omitPassword(row: Mailbox): MailboxSafe {
   delete safe.encrypted_smtp_password;
   delete safe.encrypted_imap_password;
   delete safe.encrypted_google_refresh_token;
+  delete safe.encrypted_microsoft_refresh_token;
   return safe as MailboxSafe;
 }
 

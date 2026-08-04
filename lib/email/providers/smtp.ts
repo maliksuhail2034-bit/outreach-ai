@@ -3,6 +3,8 @@ import nodemailer from "nodemailer";
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { GoogleOAuthError, refreshGoogleAccessToken } from "@/lib/email/google-oauth";
 import { GMAIL_SMTP_HOST, GMAIL_SMTP_PORT } from "@/lib/email/google-constants";
+import { MicrosoftOAuthError, refreshMicrosoftAccessToken } from "@/lib/email/microsoft-oauth";
+import { OUTLOOK_SMTP_HOST, OUTLOOK_SMTP_PORT } from "@/lib/email/microsoft-constants";
 import { normalizeMessageId } from "@/lib/email/message-id";
 import type { Tables } from "@/types/database.types";
 import { EmailSendError, type EmailProvider, type OutboundEmailMessage, type SendResult } from "../provider";
@@ -58,11 +60,12 @@ function classifySmtpError(error: unknown): EmailSendError {
 }
 
 // Resolves the connection details nodemailer needs — real SMTP either way,
-// just a different auth strategy. A Gmail-connected mailbox (email_provider
-// = 'gmail', see the gmail_oauth migration) has no SMTP password to decrypt;
-// it refreshes its stored Google refresh token into a short-lived access
-// token instead, fresh for every send (never cached), the same "resolve
-// credentials on every use" pattern the password path already follows.
+// just a different auth strategy. A Gmail- or Outlook-connected mailbox
+// (email_provider = 'gmail'/'outlook', see the gmail_oauth/microsoft_oauth
+// migrations) has no SMTP password to decrypt; each refreshes its own
+// stored OAuth refresh token into a short-lived access token instead, fresh
+// for every send (never cached), the same "resolve credentials on every
+// use" pattern the password path already follows.
 async function resolveSmtpConnection(mailbox: Mailbox) {
   if (mailbox.email_provider === "gmail") {
     if (!mailbox.encrypted_google_refresh_token) {
@@ -86,6 +89,36 @@ async function resolveSmtpConnection(mailbox: Mailbox) {
     return {
       host: GMAIL_SMTP_HOST,
       port: GMAIL_SMTP_PORT,
+      secure: false,
+      requireTLS: true,
+      auth: { type: "OAuth2" as const, user: mailbox.email, accessToken },
+    };
+  }
+
+  // An Outlook-connected mailbox (email_provider = 'outlook', see the
+  // microsoft_oauth migration) follows the exact same shape as the Gmail
+  // branch above — smtp.office365.com accepts OAuth2/XOAUTH2 over the same
+  // real SMTP protocol, just a different token issuer.
+  if (mailbox.email_provider === "outlook") {
+    if (!mailbox.encrypted_microsoft_refresh_token) {
+      throw new EmailSendError("This mailbox's Microsoft connection is missing — reconnect it in Settings.", "failed");
+    }
+    const refreshToken = decryptSmtpPassword(mailbox.encrypted_microsoft_refresh_token);
+    let accessToken: string;
+    try {
+      accessToken = await refreshMicrosoftAccessToken(refreshToken);
+    } catch (error) {
+      // Same translation as the Gmail branch: invalid_grant (Microsoft
+      // revoked access) maps to "failed" the same way a real SMTP 535 auth
+      // rejection already would, not endlessly retried.
+      if (error instanceof MicrosoftOAuthError) {
+        throw new EmailSendError(error.message, error.outcome === "retry" ? "retry" : "failed");
+      }
+      throw error;
+    }
+    return {
+      host: OUTLOOK_SMTP_HOST,
+      port: OUTLOOK_SMTP_PORT,
       secure: false,
       requireTLS: true,
       auth: { type: "OAuth2" as const, user: mailbox.email, accessToken },

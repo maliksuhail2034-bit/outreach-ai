@@ -772,6 +772,7 @@ export type Database = {
           email_provider: string
           encrypted_google_refresh_token: string | null
           encrypted_imap_password: string | null
+          encrypted_microsoft_refresh_token: string | null
           encrypted_smtp_password: string | null
           hourly_limit: number
           id: string
@@ -800,6 +801,7 @@ export type Database = {
           email_provider?: string
           encrypted_google_refresh_token?: string | null
           encrypted_imap_password?: string | null
+          encrypted_microsoft_refresh_token?: string | null
           encrypted_smtp_password?: string | null
           hourly_limit?: number
           id?: string
@@ -828,6 +830,7 @@ export type Database = {
           email_provider?: string
           encrypted_google_refresh_token?: string | null
           encrypted_imap_password?: string | null
+          encrypted_microsoft_refresh_token?: string | null
           encrypted_smtp_password?: string | null
           hourly_limit?: number
           id?: string
@@ -1456,6 +1459,10 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      is_organization_member: {
+        Args: { p_organization_id: string }
+        Returns: boolean
       }
       record_send_failure: {
         Args: {

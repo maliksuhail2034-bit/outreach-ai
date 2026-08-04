@@ -35,6 +35,12 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
   // Gmail row's existing smtp/imap values through unchanged since this
   // component simply never renders a field for them in this mode.
   const isGmailEdit = mode === "edit" && mailbox.email_provider === "gmail";
+  // Same reasoning as isGmailEdit, for an Outlook-connected mailbox. Kept as
+  // a separate flag (not folded into isGmailEdit) so Gmail's own condition
+  // is untouched; isOAuthEdit below is the shared "hide manual fields" gate
+  // both flow into.
+  const isOutlookEdit = mode === "edit" && mailbox.email_provider === "outlook";
+  const isOAuthEdit = isGmailEdit || isOutlookEdit;
 
   const form = useForm<MailboxInput>({
     resolver: zodResolver(mailboxSchema),
@@ -122,7 +128,7 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          {isGmailEdit ? (
+          {isOAuthEdit ? (
             <FormItem>
               <FormLabel>Email</FormLabel>
               <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">{mailbox.email}</p>
@@ -157,14 +163,15 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
           />
         </div>
 
-        {isGmailEdit && (
+        {isOAuthEdit && (
           <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-            Connected via Google Workspace — sending and reply tracking use this Google account&apos;s own
-            credentials, refreshed automatically. Disconnect it from the mailbox list to remove access.
+            Connected via {isGmailEdit ? "Google Workspace" : "Microsoft 365"} — sending and reply tracking use this{" "}
+            {isGmailEdit ? "Google" : "Microsoft"} account&apos;s own credentials, refreshed automatically. Disconnect
+            it from the mailbox list to remove access.
           </p>
         )}
 
-        {!isGmailEdit && (
+        {!isOAuthEdit && (
           <>
             <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
               <FormField
@@ -369,7 +376,7 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
           )}
         />
 
-        {!isGmailEdit && (
+        {!isOAuthEdit && (
         <div className="space-y-4 rounded-lg border border-border p-4">
           <FormField
             control={form.control}

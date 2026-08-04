@@ -4,6 +4,8 @@ import { simpleParser } from "mailparser";
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { refreshGoogleAccessToken } from "@/lib/email/google-oauth";
 import { GMAIL_IMAP_HOST, GMAIL_IMAP_PORT } from "@/lib/email/google-constants";
+import { refreshMicrosoftAccessToken } from "@/lib/email/microsoft-oauth";
+import { OUTLOOK_IMAP_HOST, OUTLOOK_IMAP_PORT } from "@/lib/email/microsoft-constants";
 import { normalizeMessageId } from "@/lib/email/message-id";
 import type { Tables } from "@/types/database.types";
 import type { FetchResult, ReplyMessage, ReplyProvider, SyncCursor } from "../reply-provider";
@@ -23,12 +25,13 @@ function normalizeReferences(raw: string | string[] | undefined): string[] {
 // functions are generic AES-256-GCM string encryption despite the name,
 // nothing SMTP-specific inside.
 //
-// A Gmail-connected mailbox (reply_provider = 'gmail', see the gmail_oauth
-// migration) authenticates the same real IMAP connection with a fresh
-// OAuth2 access token instead of a password — see resolveImapConnection
-// below. runReplySyncWorker() already treats any thrown error as "skip this
-// mailbox for this run" (lib/email/reply-worker.ts), so a refresh failure
-// here needs no special classification, unlike the send path.
+// A Gmail- or Outlook-connected mailbox (reply_provider = 'gmail'/'outlook',
+// see the gmail_oauth/microsoft_oauth migrations) authenticates the same
+// real IMAP connection with a fresh OAuth2 access token instead of a
+// password — see resolveImapConnection below. runReplySyncWorker() already
+// treats any thrown error as "skip this mailbox for this run"
+// (lib/email/reply-worker.ts), so a refresh failure here needs no special
+// classification, unlike the send path.
 async function resolveImapConnection(mailbox: Mailbox) {
   if (mailbox.reply_provider === "gmail") {
     if (!mailbox.encrypted_google_refresh_token) {
@@ -37,6 +40,20 @@ async function resolveImapConnection(mailbox: Mailbox) {
     const refreshToken = decryptSmtpPassword(mailbox.encrypted_google_refresh_token);
     const accessToken = await refreshGoogleAccessToken(refreshToken);
     return { host: GMAIL_IMAP_HOST, port: GMAIL_IMAP_PORT, secure: true, auth: { user: mailbox.email, accessToken } };
+  }
+
+  if (mailbox.reply_provider === "outlook") {
+    if (!mailbox.encrypted_microsoft_refresh_token) {
+      throw new Error("This mailbox's Microsoft connection is missing — reconnect it in Settings.");
+    }
+    const refreshToken = decryptSmtpPassword(mailbox.encrypted_microsoft_refresh_token);
+    const accessToken = await refreshMicrosoftAccessToken(refreshToken);
+    return {
+      host: OUTLOOK_IMAP_HOST,
+      port: OUTLOOK_IMAP_PORT,
+      secure: true,
+      auth: { user: mailbox.email, accessToken },
+    };
   }
 
   const password = decryptSmtpPassword(mailbox.encrypted_imap_password ?? "");

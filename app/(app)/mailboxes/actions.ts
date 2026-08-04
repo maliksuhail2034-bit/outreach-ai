@@ -124,6 +124,27 @@ export async function disconnectGmailMailboxAction(id: string) {
   revalidatePath("/dashboard");
 }
 
+// Disconnects an Outlook-connected mailbox without deleting it — mirrors
+// disconnectGmailMailboxAction exactly, same reasoning throughout: clears
+// the stored refresh token (the only Microsoft credential this app
+// persists) and moves status to 'disconnected', which is on its own enough
+// to stop claim_due_sends()/listMailboxesForReplySync() from using it (both
+// already filter on status = 'active' — see the microsoft_oauth migration).
+// Deliberately does not call Microsoft's token-revocation endpoint in v1 —
+// same deferred-to-a-later-milestone reasoning as the Gmail disconnect.
+export async function disconnectOutlookMailboxAction(id: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await updateMailbox(supabase, user.id, id, {
+    encrypted_microsoft_refresh_token: null,
+    status: "disconnected",
+  });
+
+  revalidatePath("/mailboxes");
+  revalidatePath("/dashboard");
+}
+
 const TEST_CONNECTION_TIMEOUT_MS = 10_000;
 
 export interface TestImapConnectionInput {
@@ -180,6 +201,7 @@ export async function testImapConnectionAction(
     smtp_username: "",
     encrypted_smtp_password: "",
     encrypted_google_refresh_token: null,
+    encrypted_microsoft_refresh_token: null,
     daily_limit: 1,
     hourly_limit: 1,
     cooldown_minutes: 0,

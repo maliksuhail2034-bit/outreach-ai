@@ -7,7 +7,11 @@ import { BarChart3Icon, MailPlusIcon, PencilIcon, PlugZapIcon, Trash2Icon, Unplu
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
-import { deleteMailboxAction, disconnectGmailMailboxAction } from "@/app/(app)/mailboxes/actions";
+import {
+  deleteMailboxAction,
+  disconnectGmailMailboxAction,
+  disconnectOutlookMailboxAction,
+} from "@/app/(app)/mailboxes/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,6 +35,15 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+const PROVIDER_LABEL: Record<string, string> = {
+  gmail: "Gmail",
+  outlook: "Outlook",
+};
+
+function providerLabel(emailProvider: string) {
+  return PROVIDER_LABEL[emailProvider] ?? "SMTP";
 }
 
 export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; domains: Tables<"domains">[] }) {
@@ -69,18 +82,38 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
     });
   }
 
+  function handleDisconnectOutlook(mailboxId: string) {
+    setDisconnectingId(mailboxId);
+    startDisconnectTransition(async () => {
+      try {
+        await disconnectOutlookMailboxAction(mailboxId);
+        toast.success("Microsoft account disconnected.");
+      } catch {
+        toast.error("Couldn't disconnect this mailbox. Try again.");
+      } finally {
+        setDisconnectingId(null);
+      }
+    });
+  }
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-4">
         <div>
           <CardTitle>Connected mailboxes</CardTitle>
-          <CardDescription>SMTP and Gmail accounts you can send campaigns from.</CardDescription>
+          <CardDescription>SMTP, Gmail, and Microsoft 365/Outlook accounts you can send campaigns from.</CardDescription>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" asChild>
             <Link href="/api/oauth/google/start">
               <PlugZapIcon />
               Connect Google Workspace
+            </Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/api/oauth/microsoft/start">
+              <PlugZapIcon />
+              Connect Microsoft 365
             </Link>
           </Button>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -114,8 +147,8 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="truncate font-medium">{mailbox.display_name || mailbox.email}</p>
-                    <Badge variant={mailbox.email_provider === "gmail" ? "default" : "outline"}>
-                      {mailbox.email_provider === "gmail" ? "Gmail" : "SMTP"}
+                    <Badge variant={mailbox.email_provider === "smtp" ? "outline" : "default"}>
+                      {providerLabel(mailbox.email_provider)}
                     </Badge>
                     <Badge variant={STATUS_VARIANT[mailbox.status] ?? "outline"}>{statusLabel(mailbox.status)}</Badge>
                     <Badge variant={mailbox.imap_enabled ? "secondary" : "outline"}>
@@ -150,6 +183,17 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
                       aria-label={`Disconnect ${mailbox.email}`}
                       disabled={isDisconnecting && disconnectingId === mailbox.id}
                       onClick={() => handleDisconnectGmail(mailbox.id)}
+                    >
+                      <UnplugIcon className="size-4" />
+                    </Button>
+                  )}
+                  {mailbox.email_provider === "outlook" && mailbox.status !== "disconnected" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Disconnect ${mailbox.email}`}
+                      disabled={isDisconnecting && disconnectingId === mailbox.id}
+                      onClick={() => handleDisconnectOutlook(mailbox.id)}
                     >
                       <UnplugIcon className="size-4" />
                     </Button>

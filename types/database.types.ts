@@ -661,6 +661,11 @@ export type Database = {
           title: string | null
           updated_at: string
           user_id: string
+          verification_detail: Json | null
+          verification_locked_until: string | null
+          verification_risk_score: number | null
+          verification_status: string
+          verified_at: string | null
           website: string | null
         }
         Insert: {
@@ -680,6 +685,11 @@ export type Database = {
           title?: string | null
           updated_at?: string
           user_id: string
+          verification_detail?: Json | null
+          verification_locked_until?: string | null
+          verification_risk_score?: number | null
+          verification_status?: string
+          verified_at?: string | null
           website?: string | null
         }
         Update: {
@@ -699,6 +709,11 @@ export type Database = {
           title?: string | null
           updated_at?: string
           user_id?: string
+          verification_detail?: Json | null
+          verification_locked_until?: string | null
+          verification_risk_score?: number | null
+          verification_status?: string
+          verified_at?: string | null
           website?: string | null
         }
         Relationships: [
@@ -1241,6 +1256,44 @@ export type Database = {
         }
         Relationships: []
       }
+      verification_provider_keys: {
+        Row: {
+          created_at: string
+          encrypted_api_key: string
+          id: string
+          key_preview: string
+          organization_id: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_api_key: string
+          id?: string
+          key_preview: string
+          organization_id: string
+          provider: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_api_key?: string
+          id?: string
+          key_preview?: string
+          organization_id?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verification_provider_keys_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warmup_events: {
         Row: {
           created_at: string
@@ -1433,6 +1486,39 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "campaign_leads"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_due_verifications: {
+        Args: { p_limit?: number }
+        Returns: {
+          city: string | null
+          company: string | null
+          country: string | null
+          created_at: string
+          custom_fields: Json
+          email: string
+          first_name: string | null
+          id: string
+          last_name: string | null
+          linkedin: string | null
+          list_id: string | null
+          phone: string | null
+          status: string
+          title: string | null
+          updated_at: string
+          user_id: string
+          verification_detail: Json | null
+          verification_locked_until: string | null
+          verification_risk_score: number | null
+          verification_status: string
+          verified_at: string | null
+          website: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "leads"
           isOneToOne: false
           isSetofReturn: true
         }

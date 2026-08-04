@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { KeyRoundIcon, ShieldCheckIcon, WebhookIcon } from "lucide-react";
+import { BadgeCheckIcon, KeyRoundIcon, ShieldCheckIcon, WebhookIcon } from "lucide-react";
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -104,6 +104,25 @@ export default async function SettingsPage() {
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/settings/ai">View</Link>
+            </Button>
+          </CardHeader>
+        </Card>
+      </FadeIn>
+
+      <FadeIn delay={0.3}>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <BadgeCheckIcon className="size-4" />
+              </span>
+              <div>
+                <CardTitle>Verification</CardTitle>
+                <CardDescription>Connect your own MillionVerifier API key to verify lead emails.</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/settings/verification">View</Link>
             </Button>
           </CardHeader>
         </Card>

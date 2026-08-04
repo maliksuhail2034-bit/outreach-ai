@@ -3,6 +3,38 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-04 — Mailbox Validation & UX Complete (Commit: 1da3e26)
+
+- **SMTP connection testing added** — `verifySmtpConnection()`
+  (`lib/email/providers/smtp.ts`), `testSmtpConnectionAction`
+  (`app/(app)/mailboxes/actions.ts`), and a "Test connection" button next to
+  the SMTP password field in `mailbox-form.tsx`.
+- **SMTP validation now reaches feature parity with IMAP validation** — the
+  manual SMTP path previously had no live connection check, unlike the IMAP
+  path's existing `testImapConnectionAction`; both now offer the same
+  test-before-save experience.
+- **Uses nodemailer's `transporter.verify()`** — connection + EHLO/STARTTLS
+  + AUTH only, confirmed by tracing the nodemailer 9.0.3 source directly
+  (not just its docs): `MAIL FROM`/`RCPT TO`/`DATA` are issued from exactly
+  one method (`SMTPConnection.prototype.send`), which `verify()`'s call
+  chain (`connect` → `login` → `quit`) never calls. It cannot send an email
+  under any code path.
+- **Reuses the existing SMTP provider architecture** — `verifySmtpConnection`
+  calls the same `resolveSmtpConnection()` `send()` already uses, so it
+  exercises the same Gmail/Outlook/manual auth branches a real send would;
+  `send()` itself is unchanged. `getMailboxSmtpCredential`
+  (`lib/db/mailboxes.ts`) mirrors the existing `getMailboxImapCredential`
+  exactly.
+- **No database migrations.**
+- **No worker changes** — `send-worker.ts`/`reply-worker.ts` untouched.
+- **No provider interface changes** — `EmailProvider`/`ReplyProvider` and
+  both factories (`get-provider.ts`/`get-reply-provider.ts`) untouched.
+- **No analytics changes** — `lib/analytics/` untouched.
+- **All checks passed**: `npm run typecheck`, `npm run lint`, `npm run
+  build`, and the full test suite (433 tests, no regressions).
+
+Commit: `1da3e26`
+
 ## 2026-08-04 — Microsoft 365 / Outlook Integration Complete (Commit: 316856d)
 
 - **Microsoft OAuth implementation** — `lib/email/microsoft-oauth.ts`:

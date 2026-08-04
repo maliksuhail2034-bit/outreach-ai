@@ -2,24 +2,24 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `316856d`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `1da3e26`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Microsoft 365 / Outlook Integration
-(2026-08-04, commit `316856d`).
+**Last completed milestone:** Mailbox Validation & UX
+(2026-08-04, commit `1da3e26`).
 
 ## Integration status
 
 Completed
 - ✓ Gmail
 - ✓ Microsoft 365 / Outlook
+- ✓ Generic SMTP / IMAP
 
 Current
-- → Generic SMTP
+- → Email Verification Integration
 
 Planned
 - AI Providers
 - CRM Integrations
-- Email Verification
 - Lead Enrichment
 - Automation Platforms
 
@@ -142,13 +142,28 @@ Planned
   a real SMTP/IMAP send+reply-sync round trip) is still pending** — blocked
   on a real Azure app registration's `MICROSOFT_OAUTH_CLIENT_ID`/`SECRET`,
   the same gate Gmail had before its own production validation.
+- **Generic SMTP / IMAP Integration — COMPLETE (2026-08-04, see
+  CHANGELOG.md commit `1da3e26`).** Connecting any standard SMTP/IMAP
+  provider — Zoho, Hostinger, Namecheap, GoDaddy, Fastmail, cPanel mail,
+  Exchange SMTP, custom corporate servers — reuses the Gmail/Outlook
+  provider architecture: it's the same manual host/port/username/password
+  path `SmtpEmailProvider`/`ImapReplyChecker` have supported since before
+  either OAuth integration existed, not a new pipeline. The **Mailbox
+  Validation & UX** milestone closed the one remaining gap, SMTP connection
+  testing, bringing it to parity with IMAP's existing test button — see the
+  CHANGELOG entry above for details (`verifySmtpConnection()`, uses
+  nodemailer's `transporter.verify()`, connection/auth only, never sends a
+  message).
 
 ## Current milestone
 
-- **Generic SMTP Integration** — allow users to connect any SMTP/IMAP
-  provider, including Zoho, Hostinger, Namecheap, GoDaddy, Fastmail, cPanel
-  mail, Exchange SMTP, and custom corporate mail servers. Reuses the
-  Gmail/Outlook provider architecture. **Not started.**
+- **Email Verification Integration** — **not started.**
+  Goal: integrate a professional email verification provider so users can
+  validate leads before sending campaigns. Scope: verify individual email
+  addresses; bulk verification; disposable email detection; catch-all
+  detection; role account detection; invalid email detection; risk score;
+  store verification status on leads; show verification badges in the UI;
+  allow filtering by verification status.
 
 ## In progress / partially built
 

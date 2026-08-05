@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordJobRun } from "@/lib/db";
@@ -5,11 +6,22 @@ import type { Json } from "@/types/database.types";
 import { pingHeartbeat, type CronJobName } from "./heartbeat";
 import { captureError } from "./error-tracking";
 
+// Same constant-time comparison already used for the unsubscribe token
+// (lib/email/unsubscribe-token.ts) and OAuth state (app/api/oauth/*/callback/
+// route.ts's isValidState) — timingSafeEqual throws on mismatched lengths
+// rather than returning false, so length is checked first.
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
 
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+  const header = request.headers.get("authorization");
+  if (!header) return false;
+
+  const expected = Buffer.from(`Bearer ${secret}`);
+  const provided = Buffer.from(header);
+  if (expected.length !== provided.length) return false;
+
+  return timingSafeEqual(expected, provided);
 }
 
 // Shared shell for all five cron routes (app/api/cron/*/route.ts) — before

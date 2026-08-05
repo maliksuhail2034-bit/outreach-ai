@@ -17,6 +17,8 @@ import {
   getLead,
   getOrCreateDefaultSequence,
   getSendAttempt,
+  getSequence,
+  getSequenceStep,
   getSuppressedEmails,
   listCampaignLeads,
   listDomains,
@@ -78,6 +80,33 @@ async function loadSequenceSteps(supabase: Client, campaignId: string) {
   const sequences = await listSequences(supabase, campaignId);
   const sequence = sequences[0];
   return sequence ? listSequenceSteps(supabase, sequence.id) : Promise.resolve([]);
+}
+
+// Defense in depth alongside RLS (campaign_leads_update_own/_delete_own's
+// policy and check_campaign_lead_owner() both already re-derive ownership
+// from the row's real campaign_id — see
+// 20260728100070_campaign_leads.sql) — this is the app-level mirror of that
+// check, closing the gap where getCampaign(userId, campaignId) verifies the
+// caller owns *a* campaign but never that the mutated campaignLeadId
+// belongs to *that* campaign. campaign_leads has campaign_id directly, so
+// this is a plain equality check on a row already fetched, not another
+// query.
+function assertCampaignLeadInCampaign(campaignLead: Tables<"campaign_leads">, campaignId: string) {
+  if (campaignLead.campaign_id !== campaignId) {
+    throw new Error("This lead does not belong to this campaign.");
+  }
+}
+
+// Same defense-in-depth reasoning as assertCampaignLeadInCampaign, one hop
+// further: sequence_steps has no campaign_id column of its own, only
+// sequence_id, so closing this requires one extra lookup (the sequence's
+// own campaign_id) rather than a plain equality check on an already-fetched
+// row.
+async function assertSequenceInCampaign(supabase: Client, sequenceId: string, campaignId: string) {
+  const sequence = await getSequence(supabase, sequenceId);
+  if (sequence.campaign_id !== campaignId) {
+    throw new Error("This step does not belong to this campaign.");
+  }
 }
 
 // Validated draft -> active transition. Unlike the raw status field on
@@ -297,6 +326,8 @@ export async function updateCampaignLeadAction(
   const supabase = await createClient();
 
   await getCampaign(supabase, user.id, campaignId);
+  const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+  assertCampaignLeadInCampaign(campaignLead, campaignId);
 
   await updateCampaignLead(supabase, campaignLeadId, {
     mailbox_id: parsed.mailboxId ? parsed.mailboxId : null,
@@ -311,6 +342,8 @@ export async function removeCampaignLeadAction(campaignId: string, campaignLeadI
   const supabase = await createClient();
 
   await getCampaign(supabase, user.id, campaignId);
+  const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+  assertCampaignLeadInCampaign(campaignLead, campaignId);
 
   await removeCampaignLead(supabase, campaignLeadId);
 
@@ -370,6 +403,8 @@ export async function updateSequenceStepAction(campaignId: string, stepId: strin
   const supabase = await createClient();
 
   await getCampaign(supabase, user.id, campaignId);
+  const step = await getSequenceStep(supabase, stepId);
+  await assertSequenceInCampaign(supabase, step.sequence_id, campaignId);
 
   await updateSequenceStep(supabase, stepId, {
     day_delay: parsed.dayDelay,
@@ -385,6 +420,8 @@ export async function deleteSequenceStepAction(campaignId: string, stepId: strin
   const supabase = await createClient();
 
   await getCampaign(supabase, user.id, campaignId);
+  const step = await getSequenceStep(supabase, stepId);
+  await assertSequenceInCampaign(supabase, step.sequence_id, campaignId);
 
   await deleteSequenceStep(supabase, stepId);
 
@@ -401,6 +438,7 @@ export async function moveSequenceStepAction(
   const supabase = await createClient();
 
   await getCampaign(supabase, user.id, campaignId);
+  await assertSequenceInCampaign(supabase, sequenceId, campaignId);
 
   const steps = await listSequenceSteps(supabase, sequenceId);
   const index = steps.findIndex((step) => step.id === stepId);
@@ -431,6 +469,7 @@ export async function resolveSendAttemptAction(
   await getCampaign(supabase, user.id, campaignId);
 
   const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+  assertCampaignLeadInCampaign(campaignLead, campaignId);
   if (campaignLead.status !== "needs_review" && campaignLead.status !== "failed") {
     throw new Error("This lead isn't awaiting review.");
   }

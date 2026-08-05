@@ -79,4 +79,42 @@ describe("renderMergeTags", () => {
       expect.arrayContaining(["first_name", "last_name", "full_name", "email", "company", "job_title", "unsubscribe_link"]),
     );
   });
+
+  describe("escapeHtml option", () => {
+    const maliciousLead: MergeTagLead = {
+      ...lead,
+      company: `Acme & Co <img src=x onerror=alert(1)> "quoted" 'single'`,
+    };
+
+    it("does not escape by default (plain-text context, e.g. a subject line)", () => {
+      const result = renderMergeTags("At {{company}}", maliciousLead);
+      expect(result.text).toBe(`At Acme & Co <img src=x onerror=alert(1)> "quoted" 'single'`);
+    });
+
+    it("escapes HTML-special characters in a resolved value when escapeHtml is true", () => {
+      const result = renderMergeTags("At {{company}}", maliciousLead, { escapeHtml: true });
+      expect(result.text).toBe(
+        "At Acme &amp; Co &lt;img src=x onerror=alert(1)&gt; &quot;quoted&quot; &#39;single&#39;",
+      );
+    });
+
+    it("never escapes the surrounding template text, only the substituted value", () => {
+      const result = renderMergeTags("<p>Hi {{first_name}} & welcome</p>", lead, { escapeHtml: true });
+      expect(result.text).toBe("<p>Hi Jane & welcome</p>");
+    });
+
+    it("escapes an unsubscribe URL's query-string ampersands too", () => {
+      const withUnsubscribe: MergeTagLead = {
+        ...lead,
+        unsubscribeUrl: "https://app.example.com/unsubscribe/abc?sig=x&t=1",
+      };
+      const result = renderMergeTags("{{unsubscribe_link}}", withUnsubscribe, { escapeHtml: true });
+      expect(result.text).toBe("https://app.example.com/unsubscribe/abc?sig=x&amp;t=1");
+    });
+
+    it("leaves the fallback string for a missing tag unescaped either way", () => {
+      const result = renderMergeTags("{{not_a_real_tag}}", lead, { fallback: "<default>", escapeHtml: true });
+      expect(result.text).toBe("<default>");
+    });
+  });
 });

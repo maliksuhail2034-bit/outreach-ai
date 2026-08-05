@@ -184,7 +184,7 @@ async function processCampaignLead(
   };
 
   const subject = renderMergeTags(targetStep.subject ?? "", mergeTagLead).text;
-  let body = renderMergeTags(targetStep.body ?? "", mergeTagLead).text;
+  let body = renderMergeTags(targetStep.body ?? "", mergeTagLead, { escapeHtml: true }).text;
 
   // Every outgoing email needs a working unsubscribe mechanism (CAN-SPAM/
   // GDPR) regardless of whether the sequence step's own template remembered

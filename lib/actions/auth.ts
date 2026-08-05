@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -20,15 +19,6 @@ export type AuthActionState =
       success?: boolean;
     }
   | undefined;
-
-async function getOrigin() {
-  const headerList = await headers();
-  const origin = headerList.get("origin");
-  if (origin) return origin;
-  const host = headerList.get("host");
-  const proto = headerList.get("x-forwarded-proto") ?? "https";
-  return `${proto}://${host}`;
-}
 
 export async function signIn(_prevState: AuthActionState, formData: FormData): Promise<AuthActionState> {
   const parsed = signInSchema.safeParse({
@@ -62,14 +52,13 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
     return { fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
-  const origin = await getOrigin();
   const supabase = await createClient();
   const { error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
       data: { full_name: parsed.data.fullName },
-      emailRedirectTo: `${origin}/auth/confirm?next=/dashboard`,
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm?next=/dashboard`,
     },
   });
 
@@ -98,10 +87,9 @@ export async function forgotPassword(
     return { fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
-  const origin = await getOrigin();
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
-    redirectTo: `${origin}/auth/confirm?next=/reset-password`,
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm?next=/reset-password`,
   });
 
   // Always report success, even if the error is "user not found" — do not

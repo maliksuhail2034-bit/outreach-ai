@@ -64,6 +64,25 @@ function resolveTag(tag: string, lead: MergeTagLead): string | null | undefined 
   return undefined;
 }
 
+// Phase 3B Enterprise Readiness (security audit, item 2): lead data (company,
+// title, custom_fields) is free text with no HTML sanitization at the
+// validation boundary (lib/validations/leads.ts) — a crafted field value
+// interpolated unescaped into an outbound HTML email would be live markup in
+// a real message riding on the sending org's own domain. Only the
+// interpolated value gets escaped, never the surrounding template text, so
+// an org's own intentionally-authored HTML in their step body is untouched.
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+}
+
 export interface RenderMergeTagsResult {
   text: string;
   missingTags: string[];
@@ -74,12 +93,19 @@ export interface RenderMergeTagsResult {
 // `options.fallback` (default: empty string) and are reported in
 // missingTags so a caller can log the gap without this module touching any
 // storage itself.
+//
+// `escapeHtml` defaults to false — the same call renders both a sequence
+// step's subject (plain text, shown verbatim in a mail client's Subject
+// header — escaping it would literally show "&amp;" to the recipient) and
+// its body (rendered as HTML). Callers rendering into an HTML context must
+// opt in explicitly; see lib/email/send-worker.ts.
 export function renderMergeTags(
   text: string,
   lead: MergeTagLead,
-  options?: { fallback?: string },
+  options?: { fallback?: string; escapeHtml?: boolean },
 ): RenderMergeTagsResult {
   const fallback = options?.fallback ?? "";
+  const shouldEscape = options?.escapeHtml ?? false;
   const missingTags: string[] = [];
 
   const rendered = text.replace(MERGE_TAG_PATTERN, (_match, rawTag: string) => {
@@ -88,7 +114,7 @@ export function renderMergeTags(
       missingTags.push(rawTag);
       return fallback;
     }
-    return value;
+    return shouldEscape ? escapeHtml(value) : value;
   });
 
   return { text: rendered, missingTags };

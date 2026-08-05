@@ -28,22 +28,28 @@ async function resolveOrganizationId(supabase: Client, subscription: Stripe.Subs
 // handles upgrades, downgrades, renewals, and cancellations: there's
 // nothing "special" about any of them from this function's point of view,
 // they're all just "here is the subscription's current state, persist it").
+//
+// Returns the resolved organizationId (or null if it couldn't be resolved)
+// rather than void — app/api/webhooks/stripe/route.ts needs it to record a
+// billing_subscription_changed audit event after this returns, and for the
+// customer.subscription.* branch that id is only known inside this function
+// (resolveOrganizationId above), not the caller.
 export async function syncSubscriptionFromStripe(
   supabase: Client,
   subscription: Stripe.Subscription,
   knownOrganizationId?: string,
-): Promise<void> {
+): Promise<string | null> {
   const organizationId = knownOrganizationId ?? (await resolveOrganizationId(supabase, subscription));
   if (!organizationId) {
     console.error("[stripe] couldn't resolve an organization for subscription", subscription.id);
-    return;
+    return null;
   }
 
   const customerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
   const priceId = subscription.items.data[0]?.price.id;
   if (!priceId) {
     console.error("[stripe] subscription has no price on its first item", subscription.id);
-    return;
+    return null;
   }
 
   // current_period_end lives on the subscription item, not the
@@ -63,4 +69,6 @@ export async function syncSubscriptionFromStripe(
     current_period_end: periodEndSeconds ? new Date(periodEndSeconds * 1000).toISOString() : null,
     cancel_at_period_end: subscription.cancel_at_period_end,
   });
+
+  return organizationId;
 }

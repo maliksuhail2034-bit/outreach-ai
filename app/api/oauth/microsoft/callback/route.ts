@@ -2,7 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createMailbox, getMailboxByUserAndEmail, updateMailbox } from "@/lib/db";
+import { createMailbox, getMailboxByUserAndEmail, getUserOrganization, recordAuditEvent, updateMailbox } from "@/lib/db";
 import { assertWithinMailboxLimit } from "@/lib/billing/limits";
 import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { exchangeCodeForTokens, getMicrosoftUserInfo, MicrosoftOAuthError } from "@/lib/email/microsoft-oauth";
@@ -66,11 +66,12 @@ export async function GET(request: NextRequest) {
     const existing = await getMailboxByUserAndEmail(supabase, user.id, microsoftUser.email);
     const encryptedRefreshToken = encryptSmtpPassword(tokens.refreshToken);
 
+    let mailbox;
     if (existing) {
       // Reconnect: only touch the OAuth-specific fields and bring the
       // mailbox back to 'active' — daily/hourly limits, cooldown, domain,
       // and warmup settings the user already configured are left alone.
-      await updateMailbox(supabase, user.id, existing.id, {
+      mailbox = await updateMailbox(supabase, user.id, existing.id, {
         email_provider: "outlook",
         reply_provider: "outlook",
         imap_enabled: true,
@@ -79,7 +80,7 @@ export async function GET(request: NextRequest) {
       });
     } else {
       await assertWithinMailboxLimit(supabase, user.id, user.email);
-      await createMailbox(supabase, {
+      mailbox = await createMailbox(supabase, {
         user_id: user.id,
         domain_id: null,
         email: microsoftUser.email,
@@ -101,6 +102,16 @@ export async function GET(request: NextRequest) {
         status: "active",
       });
     }
+
+    const organization = await getUserOrganization(supabase, user);
+    await recordAuditEvent(supabase, {
+      organization_id: organization.id,
+      actor_user_id: user.id,
+      action: "mailbox_connected",
+      target_type: "mailbox",
+      target_id: mailbox.id,
+      metadata: { email: mailbox.email, provider: "outlook" },
+    });
   } catch (error) {
     const message =
       error instanceof MicrosoftOAuthError || error instanceof Error

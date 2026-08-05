@@ -3,7 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createMailbox, deleteMailbox, getMailboxImapCredential, getMailboxSmtpCredential, updateMailbox } from "@/lib/db";
+import {
+  createMailbox,
+  deleteMailbox,
+  getMailbox,
+  getMailboxImapCredential,
+  getMailboxSmtpCredential,
+  getUserOrganization,
+  recordAuditEvent,
+  updateMailbox,
+} from "@/lib/db";
 import { mailboxSchema, type MailboxInput } from "@/lib/validations/mailboxes";
 import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { ImapReplyChecker } from "@/lib/email/reply-providers/imap";
@@ -29,7 +38,7 @@ export async function createMailboxAction(input: MailboxInput) {
 
   await assertWithinMailboxLimit(supabase, user.id, user.email);
 
-  await createMailbox(supabase, {
+  const mailbox = await createMailbox(supabase, {
     user_id: user.id,
     domain_id: parsed.domainId ? parsed.domainId : null,
     email: parsed.email,
@@ -48,6 +57,16 @@ export async function createMailboxAction(input: MailboxInput) {
     imap_port: parsed.imapPort,
     imap_username: parsed.imapUsername ? parsed.imapUsername : null,
     ...(parsed.imapPassword ? { encrypted_imap_password: encryptSmtpPassword(parsed.imapPassword) } : {}),
+  });
+
+  const organization = await getUserOrganization(supabase, user);
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "mailbox_connected",
+    target_type: "mailbox",
+    target_id: mailbox.id,
+    metadata: { email: mailbox.email, provider: "smtp" },
   });
 
   revalidatePath("/mailboxes");
@@ -69,7 +88,7 @@ export async function updateMailboxAction(id: string, input: MailboxInput) {
     }
   }
 
-  await updateMailbox(supabase, user.id, id, {
+  const mailbox = await updateMailbox(supabase, user.id, id, {
     domain_id: parsed.domainId ? parsed.domainId : null,
     email: parsed.email,
     display_name: parsed.displayName ? parsed.displayName : null,
@@ -90,6 +109,26 @@ export async function updateMailboxAction(id: string, input: MailboxInput) {
     ...(parsed.imapPassword ? { encrypted_imap_password: encryptSmtpPassword(parsed.imapPassword) } : {}),
   });
 
+  // Only a credential change is audit-worthy here — every other field
+  // (display name, limits, domain) is routine config, not a security event.
+  if (parsed.smtpPassword || parsed.imapPassword) {
+    const organization = await getUserOrganization(supabase, user);
+    await recordAuditEvent(supabase, {
+      organization_id: organization.id,
+      actor_user_id: user.id,
+      action: "mailbox_credentials_updated",
+      target_type: "mailbox",
+      target_id: mailbox.id,
+      metadata: {
+        email: mailbox.email,
+        fields_changed: [
+          ...(parsed.smtpPassword ? ["smtp_password"] : []),
+          ...(parsed.imapPassword ? ["imap_password"] : []),
+        ],
+      },
+    });
+  }
+
   revalidatePath("/mailboxes");
   revalidatePath("/dashboard");
 }
@@ -98,7 +137,18 @@ export async function deleteMailboxAction(id: string) {
   const user = await requireUser();
   const supabase = await createClient();
 
+  const mailbox = await getMailbox(supabase, user.id, id);
   await deleteMailbox(supabase, user.id, id);
+
+  const organization = await getUserOrganization(supabase, user);
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "mailbox_deleted",
+    target_type: "mailbox",
+    target_id: id,
+    metadata: { email: mailbox.email },
+  });
 
   revalidatePath("/mailboxes");
   revalidatePath("/dashboard");
@@ -116,9 +166,19 @@ export async function disconnectGmailMailboxAction(id: string) {
   const user = await requireUser();
   const supabase = await createClient();
 
-  await updateMailbox(supabase, user.id, id, {
+  const mailbox = await updateMailbox(supabase, user.id, id, {
     encrypted_google_refresh_token: null,
     status: "disconnected",
+  });
+
+  const organization = await getUserOrganization(supabase, user);
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "mailbox_disconnected",
+    target_type: "mailbox",
+    target_id: mailbox.id,
+    metadata: { email: mailbox.email, provider: "gmail" },
   });
 
   revalidatePath("/mailboxes");
@@ -137,9 +197,19 @@ export async function disconnectOutlookMailboxAction(id: string) {
   const user = await requireUser();
   const supabase = await createClient();
 
-  await updateMailbox(supabase, user.id, id, {
+  const mailbox = await updateMailbox(supabase, user.id, id, {
     encrypted_microsoft_refresh_token: null,
     status: "disconnected",
+  });
+
+  const organization = await getUserOrganization(supabase, user);
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "mailbox_disconnected",
+    target_type: "mailbox",
+    target_id: mailbox.id,
+    metadata: { email: mailbox.email, provider: "outlook" },
   });
 
   revalidatePath("/mailboxes");

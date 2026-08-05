@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasStripeEventBeenProcessed, recordStripeEventProcessed } from "@/lib/db/billing";
+import { recordAuditEvent } from "@/lib/db";
 import { getStripeClient, verifyStripeWebhookSignature } from "@/lib/billing/stripe";
 import { syncSubscriptionFromStripe } from "@/lib/billing/sync-subscription";
 
@@ -56,7 +57,21 @@ export async function POST(request: Request) {
         const subscriptionId =
           typeof session.subscription === "string" ? session.subscription : session.subscription.id;
         const subscription = await getStripeClient().subscriptions.retrieve(subscriptionId);
-        await syncSubscriptionFromStripe(supabase, subscription, organizationId);
+        const syncedOrganizationId = await syncSubscriptionFromStripe(supabase, subscription, organizationId);
+
+        // actor_user_id is null — no interactive user in a webhook. Every
+        // customer.subscription.* branch below records the same event type
+        // for the same reason.
+        if (syncedOrganizationId) {
+          await recordAuditEvent(supabase, {
+            organization_id: syncedOrganizationId,
+            actor_user_id: null,
+            action: "billing_subscription_changed",
+            target_type: "subscription",
+            target_id: subscription.id,
+            metadata: { stripeEventType: event.type },
+          });
+        }
         break;
       }
 
@@ -67,7 +82,19 @@ export async function POST(request: Request) {
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
-        await syncSubscriptionFromStripe(supabase, event.data.object);
+        const subscription = event.data.object;
+        const syncedOrganizationId = await syncSubscriptionFromStripe(supabase, subscription);
+
+        if (syncedOrganizationId) {
+          await recordAuditEvent(supabase, {
+            organization_id: syncedOrganizationId,
+            actor_user_id: null,
+            action: "billing_subscription_changed",
+            target_type: "subscription",
+            target_id: subscription.id,
+            metadata: { stripeEventType: event.type },
+          });
+        }
         break;
       }
 

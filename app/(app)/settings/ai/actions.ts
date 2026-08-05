@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { deleteAiProviderKey, getUserOrganization, upsertAiProviderKey } from "@/lib/db";
+import { deleteAiProviderKey, getUserOrganization, recordAuditEvent, upsertAiProviderKey } from "@/lib/db";
 import { encryptAiProviderKey } from "@/lib/crypto/ai-provider-key-secret";
 import { connectAiProviderKeySchema, type ConnectAiProviderKeyInput } from "@/lib/validations/ai";
 
@@ -21,12 +21,21 @@ export async function connectAiProviderKeyAction(input: ConnectAiProviderKeyInpu
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  await upsertAiProviderKey(supabase, {
+  const keyRow = await upsertAiProviderKey(supabase, {
     organization_id: organization.id,
     provider: parsed.provider,
     encrypted_api_key: encryptAiProviderKey(parsed.apiKey),
     key_preview: `••••${parsed.apiKey.slice(-4)}`,
     model: parsed.model || null,
+  });
+
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "ai_key_connected",
+    target_type: "ai_provider_key",
+    target_id: keyRow.id,
+    metadata: { provider: parsed.provider, key_preview: keyRow.key_preview },
   });
 
   revalidatePath("/settings/ai");
@@ -38,6 +47,14 @@ export async function disconnectAiProviderKeyAction(id: string) {
   const organization = await getUserOrganization(supabase, user);
 
   await deleteAiProviderKey(supabase, organization.id, id);
+
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "ai_key_disconnected",
+    target_type: "ai_provider_key",
+    target_id: id,
+  });
 
   revalidatePath("/settings/ai");
 }

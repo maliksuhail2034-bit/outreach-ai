@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { deleteVerificationProviderKey, getUserOrganization, upsertVerificationProviderKey } from "@/lib/db";
+import { deleteVerificationProviderKey, getUserOrganization, recordAuditEvent, upsertVerificationProviderKey } from "@/lib/db";
 import { encryptVerificationProviderKey } from "@/lib/crypto/verification-provider-key-secret";
 import { connectVerificationProviderKeySchema, type ConnectVerificationProviderKeyInput } from "@/lib/validations/verification";
 
@@ -21,11 +21,20 @@ export async function connectVerificationProviderKeyAction(input: ConnectVerific
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  await upsertVerificationProviderKey(supabase, {
+  const keyRow = await upsertVerificationProviderKey(supabase, {
     organization_id: organization.id,
     provider: parsed.provider,
     encrypted_api_key: encryptVerificationProviderKey(parsed.apiKey),
     key_preview: `••••${parsed.apiKey.slice(-4)}`,
+  });
+
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "verification_key_connected",
+    target_type: "verification_provider_key",
+    target_id: keyRow.id,
+    metadata: { provider: parsed.provider, key_preview: keyRow.key_preview },
   });
 
   revalidatePath("/settings/verification");
@@ -37,6 +46,14 @@ export async function disconnectVerificationProviderKeyAction(id: string) {
   const organization = await getUserOrganization(supabase, user);
 
   await deleteVerificationProviderKey(supabase, organization.id, id);
+
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "verification_key_disconnected",
+    target_type: "verification_provider_key",
+    target_id: id,
+  });
 
   revalidatePath("/settings/verification");
 }

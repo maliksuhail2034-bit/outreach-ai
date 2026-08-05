@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { deleteIntegration, getIntegration, getUserOrganization, updateIntegration, upsertIntegration } from "@/lib/db";
+import {
+  deleteIntegration,
+  getIntegration,
+  getUserOrganization,
+  recordAuditEvent,
+  updateIntegration,
+  upsertIntegration,
+} from "@/lib/db";
 import { webhookIntegrationSchema, type WebhookIntegrationInput } from "@/lib/validations/integrations";
 import { buildOrganizationDigest } from "@/lib/integrations/digest";
 import { getIntegrationProvider } from "@/lib/integrations/get-provider";
@@ -20,11 +27,22 @@ export async function connectWebhookIntegrationAction(input: WebhookIntegrationI
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  await upsertIntegration(supabase, {
+  const integration = await upsertIntegration(supabase, {
     organization_id: organization.id,
     provider: "webhook",
     status: "enabled",
     config: { url: parsed.url },
+  });
+
+  // metadata deliberately omits the webhook URL itself — not a credential,
+  // but not something this log needs to surface either.
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "integration_connected",
+    target_type: "integration",
+    target_id: integration.id,
+    metadata: { provider: "webhook" },
   });
 
   revalidatePath("/settings/integrations");
@@ -45,7 +63,17 @@ export async function deleteIntegrationAction(id: string) {
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
+  const integration = await getIntegration(supabase, organization.id, id); // throws if not owned
   await deleteIntegration(supabase, organization.id, id);
+
+  await recordAuditEvent(supabase, {
+    organization_id: organization.id,
+    actor_user_id: user.id,
+    action: "integration_disconnected",
+    target_type: "integration",
+    target_id: id,
+    metadata: { provider: integration.provider },
+  });
 
   revalidatePath("/settings/integrations");
 }

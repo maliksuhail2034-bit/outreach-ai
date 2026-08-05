@@ -148,14 +148,14 @@ describe("syncSubscriptionFromStripe", () => {
     );
   });
 
-  it("does nothing and doesn't throw when no organization can be resolved at all", async () => {
+  it("does nothing, doesn't throw, and returns null when no organization can be resolved at all", async () => {
     const { client, chainablesByTable } = createMockClient({
       billing_customers: { data: null, error: null },
     });
 
     await expect(
       syncSubscriptionFromStripe(client, fakeSubscription({ metadata: {} })),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(chainablesByTable.subscriptions?.upsert).toBeUndefined();
   });
 

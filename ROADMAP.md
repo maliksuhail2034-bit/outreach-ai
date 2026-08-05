@@ -2,11 +2,12 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `feac349`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `22570d8`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Backend Performance (Track A) — Complete,
-migration applied (2026-08-05, commit `feac349`). UX & Reliability
-(Track B) is a separate, not-yet-started milestone — see Not started.
+**Last completed milestone:** UX & Reliability (Track B) — Complete
+(2026-08-05, commit `22570d8`). Both tracks of the performance/reliability
+initiative are now done — see Backend Performance (Track A) and UX &
+Reliability (Track B) under Done.
 
 ## Integration status
 
@@ -190,9 +191,8 @@ Planned
   validation — but this is not blocking other milestones from proceeding.
 - **Backend Performance (Track A) — COMPLETE (2026-08-05, commit
   `feac349`).** First of two independent tracks in a performance/reliability
-  initiative — see **UX & Reliability (Track B)** under Not started for the
-  second track; Track B is a distinct, not-yet-started milestone, not
-  incomplete carryover from this one. Four approved items, all complete:
+  initiative — see **UX & Reliability (Track B)** immediately below for the
+  second track, also complete. Four approved items, all complete:
   - **C1** — extracted `getUserOrganization()` (`lib/db/organizations.ts`),
     replacing nine separate inline/local reimplementations of "derive a
     default workspace name from the user's email, then
@@ -216,6 +216,41 @@ Planned
     (`lib/db/campaign-leads.ts`), three small already-indexed lookups
     (count, next-send, last-activity) per campaign, instead of fetching
     every `campaign_leads` row per campaign on every dashboard load.
+- **UX & Reliability (Track B) — COMPLETE (2026-08-05, commit
+  `22570d8`).** Second of two independent tracks in the same
+  performance/reliability initiative as Backend Performance (Track A,
+  above). Four approved items, all complete:
+  - **U2** — respect `prefers-reduced-motion`: a new `MotionProvider`
+    (`components/motion/motion-provider.tsx`), a thin wrapper around
+    framer-motion's `MotionConfig` mirroring the existing `ThemeProvider`
+    pattern, wired into `app/layout.tsx` with `reducedMotion="user"`. Applies
+    globally to every existing `motion.*` usage with no per-component
+    changes — transform-driven motion is suppressed when the OS preference
+    is set, while opacity fades still play.
+  - **U3** — nested error boundaries: extracted a shared `ErrorFallback`
+    (`components/ui/error-fallback.tsx`) used by both the existing root
+    `app/error.tsx` and a new nested `app/(app)/error.tsx` (an authenticated
+    -app-shell boundary, so a crash there no longer bubbles to the root
+    boundary shared with `(auth)`/marketing routes). A new
+    `WidgetErrorBoundary` (`components/ui/widget-error-boundary.tsx`, built
+    on Next's `unstable_catchError`) wraps the dashboard's six independent
+    widgets, so one widget failing no longer blanks the whole page.
+  - **U4** — reduced long stagger animations: `components/motion/fade-in.tsx`
+    now caps its `delay` prop at `0.3`. Some detail pages chain 15-20
+    sections at `+0.05s` increments — `/analytics` reached `1.3s` for its
+    last section — so below-the-fold content on those pages now appears
+    roughly a second sooner, with no change to any page's own delay values.
+  - **E4** — SMTP connection timeout improvements:
+    `lib/email/providers/smtp.ts`'s `resolveSmtpConnection`/
+    `verifySmtpConnection` previously passed no timeout options at all to
+    `nodemailer.createTransport()`, so a hung/unreachable mailbox could
+    block `send-worker.ts` for up to nodemailer's 10-minute default per
+    email. Both now apply explicit `connectionTimeout`/`greetingTimeout`
+    (10s) and `socketTimeout` (20s), and nodemailer's raw `ETIMEDOUT`
+    messages ("Greeting never received", etc.) are replaced with one clear,
+    user-facing message. The existing 10s `Promise.race` around the mailbox
+    form's "Test connection" button was left unchanged — this reinforces it
+    rather than replacing it.
 
 ## Current milestone
 
@@ -237,21 +272,6 @@ selected yet.
 
 ## Not started
 
-- **UX & Reliability (Track B) — NOT STARTED.** Second of two independent
-  tracks in the same performance/reliability initiative as Backend
-  Performance (Track A, Done); scoped and tracked separately, not
-  incomplete carryover from that track. Four items, none started:
-  - **U2** — respect `prefers-reduced-motion` (no reduced-motion handling
-    exists anywhere in `app/globals.css` or `components/motion/`).
-  - **U3** — nested error boundaries (only one `error.tsx` exists in the
-    entire `app/` tree, at the root; no per-route-group boundaries yet).
-  - **U4** — reduce long stagger animations (`components/motion/fade-in.tsx`
-    and its `delay` usage are unchanged from before Track A).
-  - **E4** — SMTP connection timeout improvements
-    (`lib/email/providers/smtp.ts`'s `resolveSmtpConnection`/
-    `verifySmtpConnection` still pass no `connectionTimeout`/
-    `socketTimeout`/`greetingTimeout` to `nodemailer.createTransport()` —
-    nodemailer's defaults, unchanged).
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

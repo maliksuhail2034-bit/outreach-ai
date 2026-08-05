@@ -3,6 +3,60 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — UX & Reliability (Track B) Complete (Commit: 22570d8)
+
+- **Second of two independent tracks in the same performance/reliability
+  initiative as Backend Performance (Track A, below) — four approved items,
+  all complete:**
+  - **U2** — new `MotionProvider` (`components/motion/motion-provider.tsx`),
+    a thin client wrapper around framer-motion's `MotionConfig` mirroring
+    the existing `ThemeProvider` pattern, wired into `app/layout.tsx` with
+    `reducedMotion="user"`. Applies to every existing `motion.*` usage
+    app-wide with no per-component changes — suppresses transform-driven
+    motion when the OS `prefers-reduced-motion` setting is on, while opacity
+    fades still play.
+  - **U3** — extracted a shared `ErrorFallback`
+    (`components/ui/error-fallback.tsx`) out of the existing root
+    `app/error.tsx` (no visual change) and reused it in a new nested
+    `app/(app)/error.tsx`, a route-segment boundary for the entire
+    authenticated app shell — a crash on any `(app)` page no longer bubbles
+    to the root boundary shared with `(auth)`/marketing routes. New
+    `WidgetErrorBoundary` (`components/ui/widget-error-boundary.tsx`, built
+    on Next's `unstable_catchError` component-level boundary API) wraps the
+    dashboard's six independent widgets (setup checklist, each stat card,
+    recent campaigns table, quick actions, tips, recent sending activity),
+    so one widget throwing no longer blanks the whole page.
+  - **U4** — `components/motion/fade-in.tsx` now caps its `delay` prop at
+    `0.3`. Some detail pages chain 15-20 sections at `+0.05s` increments —
+    `/analytics` reached `1.3s` for its last section, over a second before
+    below-the-fold content started appearing. The cap leaves the first ~6
+    staggered items unchanged and flattens the long tail, fixing all 26
+    `FadeIn` call sites from one place with no change to any page's own
+    delay values.
+  - **E4** — `lib/email/providers/smtp.ts`'s `resolveSmtpConnection`/
+    `verifySmtpConnection` previously passed no timeout options to
+    `nodemailer.createTransport()` at all, so a hung/unreachable mailbox
+    could block `send-worker.ts` for up to nodemailer's 10-minute default
+    per email — completely unbounded. Both now spread a shared
+    `SMTP_TIMEOUTS` (`connectionTimeout`/`greetingTimeout`: 10s,
+    `socketTimeout`: 20s) into their transport. Added
+    `friendlySmtpTimeoutMessage()`: nodemailer reports every timeout as
+    `code: "ETIMEDOUT"` with an internal string ("Greeting never received",
+    etc.); that's now replaced with "Couldn't reach the mail server in time.
+    Check the host and port, then try again." before it reaches
+    `EmailSendError` or the test-connection action. The existing 10s
+    `Promise.race` around the mailbox form's "Test connection" button
+    (`app/(app)/mailboxes/actions.ts`) was left unchanged — this reinforces
+    it, not a replacement.
+- All checks (typecheck, lint, build, full test suite — 441 tests) passed
+  before commit.
+- **Scope notes**: E4 was scoped to SMTP only, as approved — the same
+  no-timeout gap exists in `lib/email/reply-providers/imap.ts` and in the
+  Gmail/Outlook OAuth token-refresh `fetch` calls inside
+  `resolveSmtpConnection`, neither of which were touched. `WidgetErrorBoundary`
+  is applied to the dashboard only, as a first example — other multi-widget
+  pages (analytics, compare pages) are unchanged.
+
 ## 2026-08-05 — Backend Performance (Track A) Complete (Commit: feac349)
 
 - **First of two independent tracks in a performance/reliability

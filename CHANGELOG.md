@@ -3,6 +3,107 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — Phase 3B Part 2: Enterprise Readiness — Audit Logging, Complete (Commit: a709094)
+
+- **Third sub-phase of the Enterprise Readiness initiative**, implementing
+  Item 7 (audit log for sensitive operations) — the last of the audit's 7
+  approved Security findings, closing out the Security category entirely
+  (Parts 1 and 2 together cover all 7; only Item 1, rate limiting, from a
+  separate audit category, remains — see Phase 3B Part 3 note below).
+  **Implementation complete, database migration applied.** No external
+  account/credential dependency for this phase, so unlike Email
+  Verification/Outlook there's no separate production-validation gate
+  blocking usability — it's live and usable today. One thing genuinely still
+  open, stated plainly rather than glossed over: no real end-to-end
+  click-through in the running app (actually connecting a mailbox, an AI
+  key, etc., and confirming the resulting row) has been performed —
+  verification so far is direct DB-level (live queries against the linked
+  project, see below) plus the unit test suite, not the full app flow.
+  - **`audit_logs` table** — new migration
+    (`supabase/migrations/20260812100000_audit_logs.sql`), modeled on
+    `warmup_events` (`20260802100000_warmup.sql`): RLS enabled,
+    `select`+`insert` policies scoped to organization members, no
+    update/delete policy ("it's a log"). `actor_user_id` is nullable with
+    `on delete set null`, a deliberate deviation from this schema's usual
+    cascade-to-`auth.users` pattern — an audit log's entire purpose is to
+    survive the thing it's logging, whether that's the acting user's
+    account being deleted later or (for `billing_subscription_changed`)
+    there being no interactive user at all, since that event is written
+    from the Stripe webhook. `target_type`/`target_id` are a loosely-typed
+    reference, the same pattern `analytics_events.subject_type`/`subject_id`
+    already established, since the target lives in a different table per
+    action. `metadata` is documented (migration column comment) as
+    non-secret-only.
+  - **`recordAuditEvent()` — the single centralized writer**
+    (`lib/db/audit-log.ts`). Deliberately breaks this directory's otherwise
+    universal "throw on error" convention: every other `lib/db/*.ts`
+    function throws so a caller can react to a failure, but this one
+    swallows and `console.error`s its own instead — an audit-log write
+    failing must never be allowed to block the user action it's recording.
+    Baking best-effort into the one writer, rather than trusting 13 call
+    sites to each remember their own `.catch()`, is what actually makes
+    "best-effort" a guarantee instead of a convention that could silently
+    lapse at any one of them. 3 new unit tests, including one asserting a
+    failed insert resolves cleanly rather than throwing.
+  - **13 wired call sites**, the full set catalogued during Phase 3B
+    scoping — every credential/access/billing-relevant action in the
+    codebase, and nothing else (routine CRUD like campaigns/leads/sequence
+    steps was deliberately excluded as out of scope, see the scoping
+    discussion):
+    - `app/(app)/mailboxes/actions.ts`: `mailbox_connected`
+      (`createMailboxAction`), `mailbox_credentials_updated`
+      (`updateMailboxAction`, only when a password field was actually
+      submitted — not on every routine edit), `mailbox_deleted`,
+      `mailbox_disconnected` ×2 (Gmail/Outlook).
+    - `app/api/oauth/{google,microsoft}/callback/route.ts`:
+      `mailbox_connected` for OAuth-based connects (both new-connect and
+      reconnect branches).
+    - `app/(app)/settings/ai/actions.ts`,
+      `app/(app)/settings/verification/actions.ts`: `*_key_connected`/
+      `*_key_disconnected`.
+    - `app/(app)/settings/integrations/actions.ts`: `integration_connected`/
+      `integration_disconnected` (webhook URL itself deliberately omitted
+      from metadata — not a credential, but not something this log needs to
+      surface either).
+    - `app/api/webhooks/stripe/route.ts`: `billing_subscription_changed`,
+      both the `checkout.session.completed` and `customer.subscription.*`
+      branches, `actor_user_id: null` in both (no interactive user in a
+      webhook), `metadata.stripeEventType` recording which specific Stripe
+      event drove the change.
+  - **Scope correction made during implementation**:
+    `lib/billing/sync-subscription.ts`'s `syncSubscriptionFromStripe`
+    previously returned `void`. Scoping had assumed the webhook route
+    already had the resolved `organizationId` in scope at both call
+    sites — true for `checkout.session.completed`, false for
+    `customer.subscription.*`, where it was only resolved privately inside
+    the function. Rather than duplicate that resolution logic in the route,
+    the function now returns the id it resolved (or `null`), a minimal,
+    non-breaking signature change (existing tests only `await`ed the call,
+    never asserted on its return value) — one assertion updated
+    (`toBeUndefined()` → `toBeNull()`) to match the new, intentional return.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for this migration.
+  - **RLS confirmed enabled and enforcing, not just present in the migration
+    file** — verified with live queries against the linked project after
+    applying: the table is reachable via the service-role client; an
+    anon-key (unauthenticated) read returns an empty result, not an error,
+    consistent with the member-only select policy matching zero rows for a
+    request with no organization membership; an anon-key insert attempt was
+    rejected outright by Postgres itself — `"new row violates row-level
+    security policy for table \"audit_logs\""` — the most direct possible
+    confirmation that the insert policy is active and enforcing.
+  - All checks (typecheck, lint, build, full test suite — 464 tests) passed
+    before commit.
+- **Phase 3B Part 3 (Item 1, rate limiting) has NOT started.** Across
+  authentication, AI generation, verification, and campaign/send actions —
+  still needs a new migration and the Postgres-vs-third-party-service
+  architecture decision flagged during Phase 3B's original scoping.
+
+Commit: `a709094`
+
 ## 2026-08-05 — Phase 3B Part 1: Enterprise Readiness — Security, Implementation Complete (Commit: 53034ab)
 
 - **Second sub-phase of the Enterprise Readiness initiative** (see Phase 3A

@@ -2,13 +2,14 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `53034ab`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `a709094`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Phase 3B Part 1 — Enterprise Readiness: Security
-(implementation complete) — (2026-08-05, commit `53034ab`). Second sub-phase
-of the Enterprise Readiness initiative, covering 5 of the 7 approved Security
-audit findings — see Phase 3B Part 1 under Done for what shipped, and Notes
-for the two items still outstanding (audit log, rate limiting).
+**Last completed milestone:** Phase 3B Part 2 — Enterprise Readiness: Audit
+Logging — Complete (2026-08-05, commit `a709094`). Third sub-phase of the
+Enterprise Readiness initiative, closing the 7th and final approved Security
+finding (audit log for sensitive operations) — see Phase 3B Part 2 under Done
+for what shipped, and Notes for what's still outstanding (rate limiting, plus
+the audit's Reliability/Scalability/Production Readiness findings).
 
 ## Integration status
 
@@ -350,6 +351,70 @@ Planned
     (1) — both need a new migration, and rate limiting additionally needs an
     architecture decision (Postgres-backed vs. a third-party service) not
     yet made. Neither has been started.
+- **Phase 3B Part 2 — Enterprise Readiness: Audit Logging — COMPLETE
+  (2026-08-05, commit `a709094`).** Third sub-phase of the Enterprise
+  Readiness initiative, implementing Item 7 (audit log for sensitive
+  operations) — the last of the audit's 7 approved Security findings.
+  **Implementation complete, database migration applied.** No external
+  account/credential dependency, so — unlike Email Verification/Outlook —
+  there is no separate production-validation gate blocking this from being
+  usable; it's ready today. The one open item, noted honestly rather than
+  glossed over: no real end-to-end click-through in the running app (e.g.
+  actually connecting a mailbox and confirming the resulting row) has been
+  performed yet — verification so far is direct DB-level (live queries
+  against the linked project) and the unit test suite, not the full app
+  flow. Not a blocker, just not yet exercised.
+  - **`audit_logs` table** — new migration
+    (`supabase/migrations/20260812100000_audit_logs.sql`), modeled on
+    `warmup_events`: RLS enabled, `select`+`insert` policies for
+    organization members, no update/delete ("it's a log"). `actor_user_id`
+    is nullable with `on delete set null` (not the usual cascade to
+    `auth.users`) — an audit log must survive both the acting user's account
+    being deleted later and system-initiated events with no interactive
+    user at all (the Stripe webhook). `target_type`/`target_id` are a
+    loosely-typed reference, same pattern as `analytics_events`.
+  - **`recordAuditEvent()` — the single centralized writer**
+    (`lib/db/audit-log.ts`). Deliberately breaks this directory's usual
+    "throw on error" convention: it swallows and logs its own failures
+    instead, so every call site can `await` it with no `.catch()` of its
+    own — best-effort logging is guaranteed by this one function, not by
+    13 individual call sites remembering to wrap it correctly.
+  - **13 wired call sites**, covering every credential/access/billing-
+    relevant action identified during scoping: mailbox connect (manual +
+    both OAuth callbacks), credentials-updated (only when a password field
+    actually changed), delete, and disconnect (Gmail/Outlook) in
+    `app/(app)/mailboxes/actions.ts` and the two OAuth callback routes; AI
+    and verification provider key connect/disconnect
+    (`settings/ai/actions.ts`, `settings/verification/actions.ts`); webhook
+    integration connect/disconnect (`settings/integrations/actions.ts`);
+    and billing subscription changes, both webhook branches
+    (`app/api/webhooks/stripe/route.ts`, `actor_user_id` null — no
+    interactive user in a webhook). `metadata` never contains a secret —
+    only already-safe-to-display identifiers (email, provider name, masked
+    `key_preview`, which fields changed).
+  - **Scope correction made during implementation**:
+    `lib/billing/sync-subscription.ts` previously returned `void`; changed
+    to return the resolved `organizationId` (or `null`), since the webhook
+    route needs it to log the `customer.subscription.*` branch's audit
+    event and that id was only resolved privately inside the function
+    before, not actually in the route's own scope as originally assumed
+    during scoping.
+  - **Migration applied and confirmed in sync**: applied to the linked
+    development/staging Supabase project (`wxhulmbbobkfvtreaspo`) via
+    `supabase db push`, confirmed by a follow-up `--dry-run` reporting the
+    remote database up to date with no pending migrations
+    (`supabase migration list` also shows `local == remote` for this
+    migration). Live-queried directly against the project after applying:
+    the table is reachable via the service-role client; an anon-key read
+    returns an empty result (not an error) consistent with the member-only
+    select policy; an anon-key insert attempt was rejected outright by
+    Postgres with "new row violates row-level security policy for table
+    audit_logs" — direct confirmation RLS is enabled and its policies are
+    enforcing, not just present in the migration file.
+  - **Explicitly not started: Phase 3B Part 3 (Item 1, rate limiting)** —
+    across authentication, AI generation, verification, and campaign/send
+    actions. Still needs a new migration and the Postgres-vs-third-party
+    architecture decision flagged during Phase 3B's original scoping.
 
 ## Current milestone
 
@@ -371,14 +436,13 @@ selected yet.
 
 ## Not started
 
-- **Enterprise Readiness, Phase 3B Part 2 and beyond** — Phase 3B Part 1 (see
-  Done) closed 5 of the audit's 7 Security findings. Still not started:
-  **Item 7, audit log** for sensitive operations (design was scoped, not yet
-  implemented — needs a new migration) and **Item 1, rate limiting** across
-  auth/AI generation/verification/campaign actions (needs a new migration
-  *and* an architecture decision — Postgres-backed vs. a third-party service
-  — not yet made). The audit's Reliability, Scalability, and Production
-  Readiness findings (a separate set from Security) also remain entirely
+- **Enterprise Readiness, Phase 3B Part 3 and beyond** — Phase 3B Parts 1 and
+  2 (see Done) close all 7 of the audit's approved Security findings. Still
+  not started: **Phase 3B Part 3, Item 1 (rate limiting)** across
+  auth/AI generation/verification/campaign actions — needs a new migration
+  *and* an architecture decision (Postgres-backed vs. a third-party service)
+  not yet made. The audit's Reliability, Scalability, and Production
+  Readiness findings (separate sets from Security) also remain entirely
   unstarted.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,

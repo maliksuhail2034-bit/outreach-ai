@@ -4,8 +4,9 @@ This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
 as of commit `feac349`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Performance — Phase 1 (query optimization) —
-Complete, migration applied (2026-08-05, commit `feac349`).
+**Last completed milestone:** Backend Performance (Track A) — Complete,
+migration applied (2026-08-05, commit `feac349`). UX & Reliability
+(Track B) is a separate, not-yet-started milestone — see Not started.
 
 ## Integration status
 
@@ -187,31 +188,34 @@ Planned
   end to end) is deferred until a real verification provider account is
   available — the same gate Gmail/Outlook had before their own production
   validation — but this is not blocking other milestones from proceeding.
-- **Performance — Phase 1 (query optimization) — COMPLETE (2026-08-05,
-  commit `feac349`).** First pass of a performance audit across auth,
-  organization resolution, the dashboard, and email event queries: (1)
-  `getUser()` (`lib/supabase/auth.ts`) wrapped in React's `cache()` so every
-  Server Component/Function in a request shares one
-  `supabase.auth.getUser()` round trip instead of each repeating it; (2) a
-  new `getUserOrganization()` helper (`lib/db/organizations.ts`) replaces
-  nine separate inline/local reimplementations of "derive a default
-  workspace name from the user's email, then
-  `getOrCreateOrganizationForUser`" across analytics, billing, campaigns,
-  mailboxes, settings, and warmup routes with one shared call; (3) P8 — the
-  dashboard's "Recent campaigns" widget now calls a new
-  `getCampaignLeadActivitySummary()` (`lib/db/campaign-leads.ts`), three
-  small already-indexed lookups (count, next-send, last-activity) per
-  campaign, instead of fetching every `campaign_leads` row per campaign on
-  every dashboard load; (4) P4 — a new migration
-  (`supabase/migrations/20260810100000_email_events_composite_indexes.sql`)
-  adds `(campaign_id, created_at desc)` and `(mailbox_id, created_at desc)`
-  composite indexes to `email_events`, so `listEmailEvents` can walk an
-  index straight to its `order by created_at desc limit` instead of sorting
-  the full matched set, matching the shape `analytics_events` already had.
-  **Migration applied**: confirmed live on the linked development/staging
-  Supabase project (`wxhulmbbobkfvtreaspo`) via `supabase db push` — verified
-  with a follow-up `--dry-run` reporting the remote database up to date with
-  no pending migrations.
+- **Backend Performance (Track A) — COMPLETE (2026-08-05, commit
+  `feac349`).** First of two independent tracks in a performance/reliability
+  initiative — see **UX & Reliability (Track B)** under Not started for the
+  second track; Track B is a distinct, not-yet-started milestone, not
+  incomplete carryover from this one. Four approved items, all complete:
+  - **C1** — extracted `getUserOrganization()` (`lib/db/organizations.ts`),
+    replacing nine separate inline/local reimplementations of "derive a
+    default workspace name from the user's email, then
+    `getOrCreateOrganizationForUser`" across analytics, billing, campaigns,
+    mailboxes, settings, and warmup routes with one shared call.
+  - **P2** — request-level `getUser()` caching (`lib/supabase/auth.ts`),
+    wrapped in React's `cache()` so every Server Component/Function in a
+    request shares one `supabase.auth.getUser()` round trip instead of each
+    repeating it.
+  - **P4** — composite indexes for `email_events`
+    (`supabase/migrations/20260810100000_email_events_composite_indexes.sql`):
+    `(campaign_id, created_at desc)` and `(mailbox_id, created_at desc)`, so
+    `listEmailEvents` can walk an index straight to its `order by created_at
+    desc limit` instead of sorting the full matched set, matching the shape
+    `analytics_events` already had. **Migration applied**: confirmed live on
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, verified with a follow-up `--dry-run` reporting
+    the remote database up to date with no pending migrations.
+  - **P8** — removed the dashboard's N+1 query: the "Recent campaigns"
+    widget now calls `getCampaignLeadActivitySummary()`
+    (`lib/db/campaign-leads.ts`), three small already-indexed lookups
+    (count, next-send, last-activity) per campaign, instead of fetching
+    every `campaign_leads` row per campaign on every dashboard load.
 
 ## Current milestone
 
@@ -233,6 +237,21 @@ selected yet.
 
 ## Not started
 
+- **UX & Reliability (Track B) — NOT STARTED.** Second of two independent
+  tracks in the same performance/reliability initiative as Backend
+  Performance (Track A, Done); scoped and tracked separately, not
+  incomplete carryover from that track. Four items, none started:
+  - **U2** — respect `prefers-reduced-motion` (no reduced-motion handling
+    exists anywhere in `app/globals.css` or `components/motion/`).
+  - **U3** — nested error boundaries (only one `error.tsx` exists in the
+    entire `app/` tree, at the root; no per-route-group boundaries yet).
+  - **U4** — reduce long stagger animations (`components/motion/fade-in.tsx`
+    and its `delay` usage are unchanged from before Track A).
+  - **E4** — SMTP connection timeout improvements
+    (`lib/email/providers/smtp.ts`'s `resolveSmtpConnection`/
+    `verifySmtpConnection` still pass no `connectionTimeout`/
+    `socketTimeout`/`greetingTimeout` to `nodemailer.createTransport()` —
+    nodemailer's defaults, unchanged).
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

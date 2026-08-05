@@ -3,25 +3,22 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
-## 2026-08-05 — Performance Phase 1 Complete (Commit: feac349)
+## 2026-08-05 — Backend Performance (Track A) Complete (Commit: feac349)
 
-- **First pass of a performance audit, four items:**
-  - `getUser()` (`lib/supabase/auth.ts`) wrapped in React's `cache()` — every
-    Server Component/Function in a single request now shares one
-    `supabase.auth.getUser()` round trip instead of each repeating it.
-  - New `getUserOrganization()` helper (`lib/db/organizations.ts`), wrapping
-    `getOrCreateOrganizationForUser()`. Replaces nine separate inline/local
-    reimplementations of "derive a default workspace name from the user's
-    email, then resolve the organization" across `analytics/`, `billing/`,
-    `campaigns/`, `mailboxes/`, `settings/{ai,deliverability,integrations,
-    verification}/`, and `warmup/` routes with one shared call — 20 route
-    files touched, no behavior change.
-  - **P8** — the dashboard's "Recent campaigns" widget now calls a new
-    `getCampaignLeadActivitySummary()` (`lib/db/campaign-leads.ts`): a count
-    plus two extremal timestamps per campaign via three small,
-    already-indexed (`campaign_id`) lookups run in parallel, instead of
-    `listCampaignLeads` fetching every enrolled lead row per campaign on
-    every dashboard load.
+- **First of two independent tracks in a performance/reliability
+  initiative — four approved items, all complete:**
+  - **C1** — new `getUserOrganization()` helper (`lib/db/organizations.ts`),
+    wrapping `getOrCreateOrganizationForUser()`. Replaces nine separate
+    inline/local reimplementations of "derive a default workspace name from
+    the user's email, then resolve the organization" across `analytics/`,
+    `billing/`, `campaigns/`, `mailboxes/`,
+    `settings/{ai,deliverability,integrations,verification}/`, and
+    `warmup/` routes with one shared call — 20 route files touched, no
+    behavior change.
+  - **P2** — `getUser()` (`lib/supabase/auth.ts`) wrapped in React's
+    `cache()` — every Server Component/Function in a single request now
+    shares one `supabase.auth.getUser()` round trip instead of each
+    repeating it.
   - **P4** — new migration
     `supabase/migrations/20260810100000_email_events_composite_indexes.sql`
     adds `email_events_campaign_id_created_at_idx` and
@@ -31,12 +28,24 @@ the git commit history. Dates reflect the commit date.
     created_at desc limit` instead of sorting the full matched set —
     bringing `email_events` in line with the composite shape
     `analytics_events` already had.
+  - **P8** — the dashboard's "Recent campaigns" widget now calls a new
+    `getCampaignLeadActivitySummary()` (`lib/db/campaign-leads.ts`): a count
+    plus two extremal timestamps per campaign via three small,
+    already-indexed (`campaign_id`) lookups run in parallel, instead of
+    `listCampaignLeads` fetching every enrolled lead row per campaign on
+    every dashboard load.
 - **Migration applied to the linked development/staging Supabase project**
   (`wxhulmbbobkfvtreaspo`) via `supabase db push`, confirmed by a follow-up
   `supabase db push --dry-run` reporting the remote database up to date
   with no pending migrations.
 - All checks (typecheck, lint, build, full test suite — 441 tests) passed
   before commit.
+- **Reclassified 2026-08-05**: this work was originally documented as
+  "Performance Phase 1." The approved scope also included four UX &
+  Reliability items (U2, U3, U4, E4) that have no code behind them yet —
+  those are split out as a separate, not-yet-started **UX & Reliability
+  (Track B)** milestone (see ROADMAP.md), not incomplete work from this
+  track. No code changed as part of this reclassification.
 
 ## 2026-08-05 — Email Verification: paused pending a real provider account
 

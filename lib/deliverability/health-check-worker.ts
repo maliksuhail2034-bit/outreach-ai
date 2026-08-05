@@ -10,6 +10,7 @@ import { calculateMailboxHealthScore } from "./scoring";
 import { STAGE_TO_DELIVERABILITY_STATUS } from "./warmup-status";
 import type { WarmupStage } from "@/lib/warmup/types";
 import type { WarmupStatus } from "./types";
+import { captureError } from "@/lib/monitoring/error-tracking";
 
 export interface DeliverabilityHealthCheckSummary {
   checked: number;
@@ -46,6 +47,7 @@ export async function runDeliverabilityHealthCheckWorker(): Promise<Deliverabili
       summary.failed += 1;
       const message = error instanceof Error ? error.message : "Unknown error.";
       console.error("[deliverability-health-check-worker]", { mailboxId: mailbox.id, error: message });
+      await captureError({ job: "deliverability-health-check", message, context: { mailboxId: mailbox.id } });
     }
   }
 

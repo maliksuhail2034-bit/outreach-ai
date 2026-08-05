@@ -15,6 +15,7 @@ import {
 } from "@/lib/db";
 import { getReplyProvider } from "./get-reply-provider";
 import type { ReplyMessage } from "./reply-provider";
+import { captureError } from "@/lib/monitoring/error-tracking";
 
 // Lead-level status is only ever advanced to 'replied' from these two
 // states — never overwrites a human's own 'qualified'/'unqualified' call.
@@ -59,10 +60,14 @@ export async function runReplySyncWorker(): Promise<ReplySyncSummary> {
     let result;
     try {
       result = await getReplyProvider(mailbox).fetchNewMessages();
-    } catch {
+    } catch (error) {
       // One mailbox's IMAP failure (auth, network, throttling) must not
-      // stop the others in this run. Alerting/surfacing is a Phase 3
-      // concern (see the plan's risks section) — not built here.
+      // stop the others in this run — now logged (Phase 3 Enterprise
+      // Readiness audit, P0) so a persistently failing mailbox is visible
+      // instead of silently never syncing replies again.
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      console.error("[reply-worker]", { mailboxId: mailbox.id, error: message });
+      await captureError({ job: "sync-replies", message, context: { mailboxId: mailbox.id } });
       continue;
     }
 

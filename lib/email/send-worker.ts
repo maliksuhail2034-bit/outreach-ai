@@ -21,6 +21,7 @@ import { EmailSendError } from "./provider";
 import { renderMergeTags, type MergeTagLead } from "./merge-tags";
 import { computeNextSchedule, computeRetryDelay } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
+import { captureError } from "@/lib/monitoring/error-tracking";
 
 const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
@@ -256,6 +257,20 @@ async function processCampaignLead(
       attemptCount: claimedAttempt.attempt_count,
       error: message,
     });
+
+    // Only "failed" (terminal — either an unretryable provider response, or
+    // a "retry" that exhausted MAX_SEND_ATTEMPTS) is forwarded here. "retry"
+    // is expected and self-heals on the next cron tick, and "bounced" is
+    // normal business data already visible via deliverability/analytics —
+    // forwarding every one of those to an external destination would make
+    // the webhook too noisy to be useful for what actually needs attention.
+    if (outcome === "failed") {
+      await captureError({
+        job: "send-emails",
+        message,
+        context: { campaignLeadId: campaignLead.id, sequenceStepId: targetStep.id, attemptCount: claimedAttempt.attempt_count },
+      });
+    }
 
     await recordSendFailure(supabase, {
       sendAttemptId: claimedAttempt.id,

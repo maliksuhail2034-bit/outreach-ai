@@ -4,6 +4,7 @@ import { getOrganization, listEnabledIntegrations, recordIntegrationDeliveryResu
 import type { Tables } from "@/types/database.types";
 import { buildOrganizationDigest } from "./digest";
 import { getIntegrationProvider } from "./get-provider";
+import { captureError } from "@/lib/monitoring/error-tracking";
 
 export interface IntegrationsDigestSummary {
   checked: number;
@@ -35,6 +36,7 @@ export async function runIntegrationsDigestWorker(): Promise<IntegrationsDigestS
       summary.failed += 1;
       const message = error instanceof Error ? error.message : "Unknown error.";
       console.error("[integrations-digest-worker]", { integrationId: integration.id, error: message });
+      await captureError({ job: "integrations-digest", message, context: { integrationId: integration.id } });
       // Best-effort — a failure to record the failure must not crash the
       // loop or mask the original error above.
       await recordIntegrationDeliveryResult(supabase, integration.id, { status: "failed", error: message }).catch(

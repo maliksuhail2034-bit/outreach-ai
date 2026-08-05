@@ -10,6 +10,7 @@ import {
 import { decryptVerificationProviderKey } from "@/lib/crypto/verification-provider-key-secret";
 import { getVerificationProvider } from "./get-provider";
 import { VerificationError } from "./provider";
+import { captureError } from "@/lib/monitoring/error-tracking";
 
 const DEFAULT_CLAIM_LIMIT = 25;
 
@@ -34,8 +35,24 @@ export async function runVerificationWorker(limit = DEFAULT_CLAIM_LIMIT): Promis
   const summary: VerificationWorkerSummary = { claimed: claimed.length, verified: 0, failed: 0 };
 
   for (const lead of claimed) {
-    const outcome = await processLead(supabase, lead);
-    summary[outcome] += 1;
+    try {
+      const outcome = await processLead(supabase, lead);
+      summary[outcome] += 1;
+    } catch (error) {
+      // Unexpected failure outside processLead's own provider-call try/catch
+      // (e.g. a DB error resolving the organization/key row or persisting
+      // the result) — isolated here so one bad lead can't abort the rest of
+      // this run's claimed batch, matching every other worker's per-item
+      // isolation (send-worker.ts, digest-worker.ts,
+      // health-check-worker.ts). The lead stays 'pending' with its claim
+      // lock, so claim_due_verifications() naturally reclaims and retries it
+      // once verification_locked_until expires — no separate recovery path
+      // needed.
+      summary.failed += 1;
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      console.error("[verification-worker]", { leadId: lead.id, error: message });
+      await captureError({ job: "verify-leads", message, context: { leadId: lead.id } });
+    }
   }
 
   return summary;

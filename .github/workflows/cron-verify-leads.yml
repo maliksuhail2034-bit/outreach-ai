@@ -1,0 +1,15 @@
+name: Cron - verify leads
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /api/cron/verify-leads
+        run: |
+          curl -f -sS -X POST "${{ secrets.APP_URL }}/api/cron/verify-leads" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

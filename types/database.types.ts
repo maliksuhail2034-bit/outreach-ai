@@ -616,6 +616,39 @@ export type Database = {
           },
         ]
       }
+      job_runs: {
+        Row: {
+          created_at: string
+          duration_ms: number
+          error: string | null
+          id: string
+          job: string
+          started_at: string
+          status: string
+          summary: Json
+        }
+        Insert: {
+          created_at?: string
+          duration_ms: number
+          error?: string | null
+          id?: string
+          job: string
+          started_at: string
+          status: string
+          summary?: Json
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number
+          error?: string | null
+          id?: string
+          job?: string
+          started_at?: string
+          status?: string
+          summary?: Json
+        }
+        Relationships: []
+      }
       lead_lists: {
         Row: {
           created_at: string

@@ -9,7 +9,7 @@ import {
   getDomain,
   getMailbox,
   getMailboxHealth,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   getWarmupProfileByMailbox,
   insertDomainDnsCheck,
   updateDomain,
@@ -103,8 +103,7 @@ export async function recalculateMailboxHealthAction(mailboxId: string) {
   await getMailbox(supabase, user.id, mailboxId); // throws if not owned
   const existing = await getMailboxHealth(supabase, user.id, mailboxId);
 
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
   const warmupProfile = await getWarmupProfileByMailbox(supabase, organization.id, mailboxId);
 
   const warmupStatus = warmupProfile

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getOrCreateOrganizationForUser } from "@/lib/db";
+import { getUserOrganization } from "@/lib/db";
 import { generateRecommendation } from "@/lib/ai/recommendations";
 import type { AiProviderName } from "@/lib/ai/get-provider";
 import { generateRecommendationSchema } from "@/lib/validations/ai";
@@ -19,8 +19,7 @@ export async function generateDomainRecommendationAction(domainId: string, provi
   const parsed = generateRecommendationSchema.parse({ entityType: "domain", entityId: domainId, provider });
   const user = await requireUser();
   const supabase = await createClient();
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const recommendation = await generateRecommendation(supabase, user.id, organization.id, user.id, {
     entityType: "domain",

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   listDomainDnsChecks,
   listDomains,
   listMailboxHealth,
@@ -25,8 +25,7 @@ export default async function DeliverabilityPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const [domains, dnsChecks, mailboxes, mailboxHealth, warmupProfiles] = await Promise.all([
     listDomains(supabase, user.id),

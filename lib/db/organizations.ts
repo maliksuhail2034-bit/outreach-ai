@@ -1,3 +1,4 @@
+import type { User } from "@supabase/supabase-js";
 import type { Tables, TablesInsert } from "@/types/database.types";
 import type { Client } from "./shared";
 import { unwrap } from "./shared";
@@ -45,4 +46,17 @@ export async function getOrCreateOrganizationForUser(
   const organization = await createOrganization(supabase, { owner_user_id: userId, name: defaultName });
   await addOrganizationMember(supabase, { organization_id: organization.id, user_id: userId });
   return organization;
+}
+
+// Shared org-resolution helper for every Server Function/Server Component
+// that needs "the current user's organization" — derives the same default
+// workspace name (email local-part + "'s workspace") every caller used to
+// derive independently. Wraps getOrCreateOrganizationForUser above; see it
+// for the actual lazy-provisioning logic. Takes only id/email (not the full
+// Supabase User) so callers that only have those two fields on hand — e.g.
+// lib/billing/limits.ts, which takes userId/userEmail rather than a User
+// object — can use it too without constructing a fake User.
+export function getUserOrganization(supabase: Client, user: Pick<User, "id" | "email">) {
+  const namePrefix = user.email?.split("@")[0]?.trim();
+  return getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
 }

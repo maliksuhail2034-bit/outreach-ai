@@ -5,7 +5,7 @@ import { ArrowLeftRightIcon, EyeIcon, MailCheckIcon, MailWarningIcon, MessageCir
 import type { Tables } from "@/types/database.types";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getCampaign, getOrCreateOrganizationForUser, listCampaigns } from "@/lib/db";
+import { getCampaign, getUserOrganization, listCampaigns } from "@/lib/db";
 import { compareCampaignMetrics } from "@/lib/analytics/campaign-metrics";
 import { loadCampaignAnalyticsSnapshot } from "@/lib/campaigns/campaign-analytics";
 import { campaignCompareQuerySchema } from "@/lib/validations/campaigns";
@@ -112,8 +112,7 @@ export default async function CampaignComparePage({
     );
   }
 
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   let campaignA: Tables<"campaigns">;
   let campaignB: Tables<"campaigns">;

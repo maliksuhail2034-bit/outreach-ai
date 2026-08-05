@@ -15,9 +15,9 @@ import {
   countLeads,
   countMailboxes,
   countSendAttemptsByStatus,
+  getCampaignLeadActivitySummary,
   getProfile,
   getSettings,
-  listCampaignLeads,
   listCampaigns,
   listSendAttempts,
 } from "@/lib/db";
@@ -73,22 +73,21 @@ export default async function DashboardPage() {
     (campaign) => campaign.status === "active" || campaign.status === "completed",
   );
 
-  // Recent Campaigns table needs per-campaign lead counts/schedule state,
-  // which listCampaignLeads (existing) already returns — reused here rather
-  // than a new aggregate query, since only the top N campaigns are shown.
+  // Recent Campaigns table needs a lead count plus two extremal timestamps
+  // per campaign, not every enrolled lead row — getCampaignLeadActivitySummary
+  // (Performance audit's P8) derives them via three small, already-indexed
+  // lookups instead of fetching every campaign_leads row per campaign here.
   const recentCampaignRows: RecentCampaignRow[] = await Promise.all(
     campaignList.slice(0, RECENT_CAMPAIGNS_LIMIT).map(async (campaign) => {
-      const leadRows = (await listCampaignLeads(supabase, campaign.id)) ?? [];
-      const nextSendCandidates = leadRows
-        .map((row) => row.next_send_at)
-        .filter((value): value is string => value !== null)
-        .sort();
-      const lastActivityCandidates = [campaign.updated_at, ...leadRows.map((row) => row.updated_at)].sort();
+      const summary = await getCampaignLeadActivitySummary(supabase, campaign.id);
+      const lastActivityCandidates = [campaign.updated_at, summary.lastActivityAt].filter(
+        (value): value is string => value !== null,
+      ).sort();
 
       return {
         campaign,
-        leadsCount: leadRows.length,
-        nextSendAt: nextSendCandidates[0] ?? null,
+        leadsCount: summary.leadsCount,
+        nextSendAt: summary.nextSendAt,
         lastActivity: lastActivityCandidates[lastActivityCandidates.length - 1],
       };
     }),

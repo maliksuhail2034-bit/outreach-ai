@@ -22,7 +22,7 @@ import {
   getLatestRecommendation,
   getMailbox,
   getMailboxHealth,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   getWarmupProfileByMailbox,
   listAiProviderKeys,
   listAnalyticsEvents,
@@ -125,8 +125,7 @@ export default async function MailboxAnalyticsPage({
     notFound();
   }
 
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const query = await searchParams;
   const parsedQuery = dateRangeQuerySchema.safeParse({ preset: query.range ?? "7d", start: query.start, end: query.end });

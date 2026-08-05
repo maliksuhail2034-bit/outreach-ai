@@ -5,7 +5,7 @@ import { ArrowLeftRightIcon } from "lucide-react";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { MailboxSafe } from "@/lib/db";
-import { getMailbox, getOrCreateOrganizationForUser, listMailboxes } from "@/lib/db";
+import { getMailbox, getUserOrganization, listMailboxes } from "@/lib/db";
 import { compareMailboxMetrics } from "@/lib/analytics/mailbox-metrics";
 import { loadMailboxAnalyticsSnapshot } from "@/lib/mailboxes/mailbox-analytics";
 import { mailboxCompareQuerySchema } from "@/lib/validations/mailboxes";
@@ -112,8 +112,7 @@ export default async function MailboxComparePage({
     );
   }
 
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   let mailboxA: MailboxSafe;
   let mailboxB: MailboxSafe;

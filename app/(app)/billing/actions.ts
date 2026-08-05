@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getBillingCustomer, getOrCreateOrganizationForUser } from "@/lib/db";
+import { getBillingCustomer, getUserOrganization } from "@/lib/db";
 import { getPriceId } from "@/lib/billing/plans";
 import { getStripeClient } from "@/lib/billing/stripe";
 import { checkoutSchema, type CheckoutInput } from "@/lib/validations/billing";
@@ -21,11 +21,6 @@ function getAppUrl(): string {
   return appUrl.replace(/\/$/, "");
 }
 
-function resolveOrganizationName(userEmail: string | undefined) {
-  const prefix = userEmail?.split("@")[0]?.trim();
-  return `${prefix || "My"}'s workspace`;
-}
-
 // Sends the user to Stripe Checkout for a subscription. Reuses the org's
 // existing Stripe Customer if the webhook has already recorded one (so
 // repeat checkouts, e.g. after a cancellation, don't create a fresh
@@ -38,7 +33,7 @@ export async function createCheckoutSessionAction(input: CheckoutInput) {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, resolveOrganizationName(user.email));
+  const organization = await getUserOrganization(supabase, user);
 
   const priceId = getPriceId(parsed.planId, parsed.interval);
   if (!priceId) {
@@ -74,7 +69,7 @@ export async function createPortalSessionAction() {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, resolveOrganizationName(user.email));
+  const organization = await getUserOrganization(supabase, user);
 
   const customer = await getBillingCustomer(supabase, organization.id);
   if (!customer) {

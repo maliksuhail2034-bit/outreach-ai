@@ -1,10 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { User } from "@supabase/supabase-js";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Client } from "@/lib/db";
 import {
   createLead,
   createLeadList,
@@ -13,7 +11,7 @@ import {
   deleteLeadList,
   deleteLeads,
   getLead,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   queueAllLeadsForVerification,
   queueLeadsForVerification,
   updateLead,
@@ -23,15 +21,6 @@ import { leadListSchema, type LeadListInput } from "@/lib/validations/lead-lists
 import { leadSchema, type LeadInput } from "@/lib/validations/leads";
 import { assertWithinLeadLimit } from "@/lib/billing/limits";
 import { verifyLead } from "@/lib/verification/verify";
-
-// Same resolution as app/(app)/settings/ai/actions.ts's getUserOrganization
-// — leads stays user_id-scoped (see CLAUDE.md/leads migration), but the
-// connected verification provider key is organization-scoped like
-// ai_provider_keys, so verifying a lead needs both ids.
-async function getUserOrganization(supabase: Client, user: User) {
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  return getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
-}
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form (react-hook-

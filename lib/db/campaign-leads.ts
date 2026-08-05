@@ -21,6 +21,52 @@ export async function listCampaignLeads(supabase: Client, campaignId: string, op
   return data;
 }
 
+export interface CampaignLeadActivitySummary {
+  leadsCount: number;
+  nextSendAt: string | null;
+  lastActivityAt: string | null;
+}
+
+// Dashboard "Recent campaigns" widget needs a count plus two extremal
+// timestamps per campaign, not every enrolled lead row — three small,
+// already-indexed (campaign_id) lookups instead of pulling the full
+// campaign_leads result set into memory just to derive them (see the
+// Performance audit's P8: this used to be `listCampaignLeads` fetching every
+// row, per campaign, on every dashboard load).
+export async function getCampaignLeadActivitySummary(
+  supabase: Client,
+  campaignId: string,
+): Promise<CampaignLeadActivitySummary> {
+  const [countResult, nextSendResult, lastActivityResult] = await Promise.all([
+    supabase.from("campaign_leads").select("*", { count: "exact", head: true }).eq("campaign_id", campaignId),
+    supabase
+      .from("campaign_leads")
+      .select("next_send_at")
+      .eq("campaign_id", campaignId)
+      .not("next_send_at", "is", null)
+      .order("next_send_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("campaign_leads")
+      .select("updated_at")
+      .eq("campaign_id", campaignId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (countResult.error) throw countResult.error;
+  if (nextSendResult.error) throw nextSendResult.error;
+  if (lastActivityResult.error) throw lastActivityResult.error;
+
+  return {
+    leadsCount: countResult.count ?? 0,
+    nextSendAt: nextSendResult.data?.next_send_at ?? null,
+    lastActivityAt: lastActivityResult.data?.updated_at ?? null,
+  };
+}
+
 export async function getCampaignLead(supabase: Client, id: string) {
   const result = await supabase.from("campaign_leads").select("*").eq("id", id).single();
   return unwrap<Tables<"campaign_leads">>(result);

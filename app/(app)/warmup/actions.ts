@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   createWarmupProfile,
   getMailbox,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   getWarmupProfileByMailbox,
   insertWarmupEvent,
   updateWarmupProfile,
@@ -19,11 +19,6 @@ import type { WarmupProfileStatus, WarmupStage } from "@/lib/warmup/types";
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form already did.
 
-function resolveOrganizationName(userEmail: string | undefined) {
-  const prefix = userEmail?.split("@")[0]?.trim();
-  return `${prefix || "My"}'s workspace`;
-}
-
 const DEFAULT_TARGET_DAILY_VOLUME = 30;
 const DEFAULT_RAMP_UP_PERCENT = 20;
 
@@ -32,7 +27,7 @@ async function requireOwnedMailboxProfile(mailboxId: string) {
   const supabase = await createClient();
 
   await getMailbox(supabase, user.id, mailboxId); // throws if not owned
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, resolveOrganizationName(user.email));
+  const organization = await getUserOrganization(supabase, user);
   const profile = await getWarmupProfileByMailbox(supabase, organization.id, mailboxId);
 
   return { supabase, organizationId: organization.id, profile };

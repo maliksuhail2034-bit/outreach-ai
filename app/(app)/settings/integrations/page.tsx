@@ -1,6 +1,6 @@
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getOrCreateOrganizationForUser, listIntegrations } from "@/lib/db";
+import { getUserOrganization, listIntegrations } from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
 import { IntegrationsPanel } from "@/components/settings/integrations-panel";
 
@@ -11,8 +11,7 @@ export default async function IntegrationsPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const integrations = await listIntegrations(supabase, organization.id);
 

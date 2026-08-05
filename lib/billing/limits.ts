@@ -1,5 +1,5 @@
 import type { Client } from "@/lib/db/shared";
-import { countCampaigns, countLeads, countMailboxes, getOrCreateOrganizationForUser, listCampaigns } from "@/lib/db";
+import { countCampaigns, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
 import { getPlanForOrganization } from "./resolve-plan";
 import { UNLIMITED } from "./plans";
 
@@ -19,8 +19,7 @@ export class PlanLimitError extends Error {}
 // getOrCreateDefaultSequence does for a campaign, so this never fails for
 // a user who simply hasn't been resolved to an org yet.
 async function resolveOrganizationId(supabase: Client, userId: string, userEmail: string | null | undefined) {
-  const namePrefix = userEmail?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, userId, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, { id: userId, email: userEmail ?? undefined });
   return organization.id;
 }
 

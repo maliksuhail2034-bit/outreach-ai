@@ -6,7 +6,7 @@ import {
   countCampaigns,
   countLeads,
   countMailboxes,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   getSubscription,
   listCampaigns,
 } from "@/lib/db";
@@ -43,8 +43,7 @@ export default async function BillingPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const [plan, subscription, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
     getPlanForOrganization(supabase, organization.id),

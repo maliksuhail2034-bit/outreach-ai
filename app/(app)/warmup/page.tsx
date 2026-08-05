@@ -1,6 +1,6 @@
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getOrCreateOrganizationForUser, listMailboxes, listWarmupProfiles } from "@/lib/db";
+import { getUserOrganization, listMailboxes, listWarmupProfiles } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { FadeIn } from "@/components/motion/fade-in";
 import { WarmupDashboard } from "@/components/warmup/warmup-dashboard";
@@ -12,8 +12,7 @@ export default async function WarmupPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const [mailboxes, profiles] = await Promise.all([
     listMailboxes(supabase, user.id),

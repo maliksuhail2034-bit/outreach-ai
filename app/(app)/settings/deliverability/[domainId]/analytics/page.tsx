@@ -4,7 +4,7 @@ import { InboxIcon, MessageCircleReplyIcon, SendIcon, MailCheckIcon, MailWarning
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getLatestRecommendation, getOrCreateOrganizationForUser, listAiProviderKeys } from "@/lib/db";
+import { getLatestRecommendation, getUserOrganization, listAiProviderKeys } from "@/lib/db";
 import type { AiProviderName } from "@/lib/ai/get-provider";
 import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
@@ -59,8 +59,7 @@ export default async function DomainAnalyticsPage({
   }
   const { domain, domainMailboxes, events, overview, healthScore } = snapshot;
 
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
   const [aiProviderKeys, latestRecommendation] = await Promise.all([
     listAiProviderKeys(supabase, organization.id),
     getLatestRecommendation(supabase, organization.id, "domain", domainId),

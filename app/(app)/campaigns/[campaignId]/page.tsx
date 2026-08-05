@@ -15,7 +15,7 @@ import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCampaign,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   listAnalyticsEvents,
   listCampaignLeads,
   listDomains,
@@ -79,8 +79,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     notFound();
   }
 
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   const [campaignLeads, leads, leadLists, mailboxes, sequences, templates, suppressions, domains, emailEvents, analyticsEvents] =
     await Promise.all([

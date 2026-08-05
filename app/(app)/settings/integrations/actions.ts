@@ -3,20 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Client } from "@/lib/db";
-import { deleteIntegration, getIntegration, getOrCreateOrganizationForUser, updateIntegration, upsertIntegration } from "@/lib/db";
+import { deleteIntegration, getIntegration, getUserOrganization, updateIntegration, upsertIntegration } from "@/lib/db";
 import { webhookIntegrationSchema, type WebhookIntegrationInput } from "@/lib/validations/integrations";
 import { buildOrganizationDigest } from "@/lib/integrations/digest";
 import { getIntegrationProvider } from "@/lib/integrations/get-provider";
-import type { User } from "@supabase/supabase-js";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form already did.
-
-async function getUserOrganization(supabase: Client, user: User) {
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  return getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
-}
 
 // Upserted on (organization_id, provider) — connecting an already-connected
 // webhook replaces its URL and re-enables it rather than requiring a

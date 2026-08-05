@@ -17,7 +17,7 @@ import {
   countEmailEventsByType,
   countSendAttemptsByStatus,
   getLatestRecommendation,
-  getOrCreateOrganizationForUser,
+  getUserOrganization,
   listAiProviderKeys,
   listAnalyticsEvents,
   listCampaignLeads,
@@ -293,8 +293,7 @@ export default async function AnalyticsPage({
   // until a producer (a future sending-worker/reply-worker/warmup
   // integration) starts recording events — it never fabricates numbers to
   // look populated.
-  const namePrefix = user.email?.split("@")[0]?.trim();
-  const organization = await getOrCreateOrganizationForUser(supabase, user.id, `${namePrefix || "My"}'s workspace`);
+  const organization = await getUserOrganization(supabase, user);
 
   // --- Organization rollup (below) -----------------------------------------
   // All-time totals across every campaign, mailbox, and domain — the last

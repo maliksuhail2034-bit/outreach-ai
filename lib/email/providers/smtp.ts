@@ -30,6 +30,33 @@ function formatAddress(address: { name?: string; email: string }): string {
 const BOUNCE_RESPONSE_CODES = new Set([550, 551, 553, 554]);
 const BOUNCE_TEXT_PATTERN = /user unknown|mailbox (not found|unavailable)|no such user|recipient (rejected|not found)/i;
 
+// Nodemailer's own defaults are generous (2min connect / 30s greeting /
+// 10min socket) — fine in isolation, but a single unreachable/hung mailbox
+// would otherwise block send-worker.ts for minutes per email with no upper
+// bound, and leave the mailbox form's "Test connection" button spinning far
+// past its own 10s Promise.race (see TEST_CONNECTION_TIMEOUT_MS in
+// app/(app)/mailboxes/actions.ts). Bounding all three here, at the one spot
+// both send() and verifySmtpConnection() build their transport, keeps both
+// paths predictable without touching either caller (E4).
+const SMTP_TIMEOUTS = {
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
+};
+
+// Nodemailer surfaces every connect/greeting/socket timeout as `code:
+// "ETIMEDOUT"` with an internal message ("Connection timeout" / "Greeting
+// never received" / "Timeout") that means nothing to an end user — replace
+// it with one clear message before it reaches classifySmtpError below or
+// verifySmtpConnection()'s plain throw.
+function friendlySmtpTimeoutMessage(error: unknown): string | null {
+  const err = error as { code?: string };
+  if (err?.code === "ETIMEDOUT") {
+    return "Couldn't reach the mail server in time. Check the host and port, then try again.";
+  }
+  return null;
+}
+
 // Classifies a thrown nodemailer/SMTP error into retry / bounced / failed —
 // see EmailSendError in ../provider.ts for what each means. Connection-level
 // failures and SMTP 4xx are transient ("retry"); SMTP 5xx splits into a
@@ -38,7 +65,7 @@ const BOUNCE_TEXT_PATTERN = /user unknown|mailbox (not found|unavailable)|no suc
 // than silently treating it as terminal.
 function classifySmtpError(error: unknown): EmailSendError {
   const err = error as { responseCode?: number; code?: string; message?: string; response?: string };
-  const message = err.message ?? "SMTP send failed.";
+  const message = friendlySmtpTimeoutMessage(error) ?? err.message ?? "SMTP send failed.";
 
   const transientCodes = new Set(["ECONNECTION", "ETIMEDOUT", "ECONNREFUSED", "ESOCKET", "EDNS", "ETLS"]);
   if (err.code && transientCodes.has(err.code)) {
@@ -143,7 +170,7 @@ export class SmtpEmailProvider implements EmailProvider {
 
   async send(message: OutboundEmailMessage): Promise<SendResult> {
     const connection = await resolveSmtpConnection(this.mailbox);
-    const transporter = nodemailer.createTransport(connection);
+    const transporter = nodemailer.createTransport({ ...connection, ...SMTP_TIMEOUTS });
 
     try {
       const info = await transporter.sendMail({
@@ -172,6 +199,12 @@ export class SmtpEmailProvider implements EmailProvider {
 // Gmail/Outlook/manual auth branches a real send would.
 export async function verifySmtpConnection(mailbox: Mailbox): Promise<void> {
   const connection = await resolveSmtpConnection(mailbox);
-  const transporter = nodemailer.createTransport(connection);
-  await transporter.verify();
+  const transporter = nodemailer.createTransport({ ...connection, ...SMTP_TIMEOUTS });
+  try {
+    await transporter.verify();
+  } catch (error) {
+    const friendlyMessage = friendlySmtpTimeoutMessage(error);
+    if (friendlyMessage) throw new Error(friendlyMessage);
+    throw error;
+  }
 }

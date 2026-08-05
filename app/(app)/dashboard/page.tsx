@@ -31,6 +31,7 @@ import { QuickActions } from "@/components/dashboard/quick-actions";
 import { RecentCampaignsTable, type RecentCampaignRow } from "@/components/dashboard/recent-campaigns-table";
 import { RecentSendingActivity } from "@/components/dashboard/recent-sending-activity";
 import { DashboardTips } from "@/components/dashboard/dashboard-tips";
+import { WidgetErrorBoundary } from "@/components/ui/widget-error-boundary";
 
 const RECENT_CAMPAIGNS_LIMIT = 5;
 const RECENT_ACTIVITY_LIMIT = 8;
@@ -168,35 +169,47 @@ export default async function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <FadeIn delay={0.05}>
-            <SetupChecklist items={checklistItems} />
+            <WidgetErrorBoundary label="Setup checklist">
+              <SetupChecklist items={checklistItems} />
+            </WidgetErrorBoundary>
           </FadeIn>
 
           <div className="@container">
             <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
               {stats.map((stat, index) => (
                 <FadeIn key={stat.title} delay={0.1 + index * 0.05}>
-                  <StatCard {...stat} />
+                  <WidgetErrorBoundary label={stat.title}>
+                    <StatCard {...stat} />
+                  </WidgetErrorBoundary>
                 </FadeIn>
               ))}
             </div>
           </div>
 
           <FadeIn delay={0.4}>
-            <RecentCampaignsTable rows={recentCampaignRows} />
+            <WidgetErrorBoundary label="Recent campaigns">
+              <RecentCampaignsTable rows={recentCampaignRows} />
+            </WidgetErrorBoundary>
           </FadeIn>
 
           <FadeIn delay={0.45} className="space-y-3">
             <h2 className="font-semibold tracking-tight">Quick actions</h2>
-            <QuickActions />
+            <WidgetErrorBoundary label="Quick actions">
+              <QuickActions />
+            </WidgetErrorBoundary>
           </FadeIn>
 
           <FadeIn delay={0.5}>
-            <DashboardTips />
+            <WidgetErrorBoundary label="Tips">
+              <DashboardTips />
+            </WidgetErrorBoundary>
           </FadeIn>
         </div>
 
         <FadeIn delay={0.15} className="lg:col-span-1">
-          <RecentSendingActivity attempts={recentAttempts ?? []} />
+          <WidgetErrorBoundary label="Recent sending activity">
+            <RecentSendingActivity attempts={recentAttempts ?? []} />
+          </WidgetErrorBoundary>
         </FadeIn>
       </div>
     </div>

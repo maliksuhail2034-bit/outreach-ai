@@ -3,6 +3,63 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — Phase 3A: Enterprise Readiness — Operations & Monitoring Complete (Commit: 283851e)
+
+- **Closes the Enterprise Readiness audit's top finding** — three of five
+  cron jobs (`verify-leads`, `deliverability-health-check`,
+  `integrations-digest`) had no scheduler wired up anywhere in the repo, and
+  none of the five had anything watching them once running. First sub-phase
+  of the Enterprise Readiness initiative; implements only the audit's
+  Operations & Monitoring items. Five approved items, all complete:
+  - **Cron scheduling** — added `.github/workflows/cron-verify-leads.yml`
+    (*/10), `cron-deliverability-health-check.yml` (hourly), and
+    `cron-integrations-digest.yml` (daily 08:00 UTC), joining the two
+    workflows that already existed for `send-emails`/`sync-replies`. All
+    five cron routes now have a confirmed in-repo scheduler.
+  - **Heartbeat / dead-man's-switch** — new `lib/monitoring/heartbeat.ts`'s
+    `pingHeartbeat()`, Healthchecks.io-compatible (a bare URL pings success,
+    `<url>/fail` pings failure), opt-in per job via a `CRON_HEARTBEAT_URL_*`
+    env var, no-op until configured — this is what actually detects "the
+    scheduler stopped calling this route at all," which `job_runs` alone
+    cannot.
+  - **Centralized monitoring abstraction** — new
+    `lib/monitoring/run-cron-job.ts` consolidates the auth-check/timing/
+    logging shell every cron route previously duplicated five times over,
+    now also persisting to `job_runs`, pinging the heartbeat, and forwarding
+    to error tracking from one place; new `lib/monitoring/error-tracking.ts`'s
+    `captureError()` forwards unexpected failures (every cron route's
+    top-level catch, plus each worker's existing per-item failure catch in
+    `reply-worker.ts`/`bulk-worker.ts`/`health-check-worker.ts`/
+    `digest-worker.ts`/`send-worker.ts`) to an optional
+    `ERROR_TRACKING_WEBHOOK_URL`, mirroring `WebhookIntegrationProvider`'s
+    shape. Worker orchestration itself stays fully decoupled — this only
+    wraps route-level plumbing, the same non-coupling `reply-worker.ts`'s
+    route already called out.
+  - **`/api/health`** — new unauthenticated Route Handler for external
+    uptime monitoring, confirms database connectivity, returns 503 on
+    failure.
+  - **`job_runs` infrastructure** — new table (migration
+    `20260811100000_job_runs.sql`), modeled on `stripe_webhook_events`: RLS
+    enabled with zero policies (service-role only, no organization
+    dimension — a cron run isn't org-owned data), persisting every cron
+    invocation's outcome/duration/summary so a stuck or silently-failing job
+    is queryable instead of living only in platform logs. **Migration
+    applied**: confirmed live on the linked development/staging Supabase
+    project (`wxhulmbbobkfvtreaspo`) via `supabase db push`, verified with a
+    follow-up `--dry-run` reporting the remote database up to date with no
+    pending migrations.
+- All checks (typecheck, lint, build, full test suite — 456 tests) passed
+  before commit.
+- **Scope notes**: `captureError` is wired into every worker's existing
+  "unexpected per-item failure" catch, but deliberately not into
+  `send-worker.ts`'s expected `needs_review`/`skipped`/`retry`/`bounced`
+  business-outcome branches (already recorded in `campaign_leads.status`,
+  not incidents needing an alert) — only its terminal `"failed"` outcome
+  forwards. Phase 3B (Reliability, Security, Scalability, Production
+  Readiness findings from the same audit) not started.
+
+Commit: `283851e`
+
 ## 2026-08-05 — UX & Reliability (Track B) Complete (Commit: 22570d8)
 
 - **Second of two independent tracks in the same performance/reliability

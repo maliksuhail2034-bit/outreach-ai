@@ -2,12 +2,13 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `22570d8`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `283851e`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** UX & Reliability (Track B) — Complete
-(2026-08-05, commit `22570d8`). Both tracks of the performance/reliability
-initiative are now done — see Backend Performance (Track A) and UX &
-Reliability (Track B) under Done.
+**Last completed milestone:** Phase 3A — Enterprise Readiness: Operations &
+Monitoring — Complete (2026-08-05, commit `283851e`). First sub-phase of the
+Enterprise Readiness initiative (a full-codebase audit covering monitoring,
+reliability, security, scalability, and production readiness) — see Phase 3A
+under Done for what shipped, and Notes for the remaining audit backlog.
 
 ## Integration status
 
@@ -251,6 +252,50 @@ Planned
     user-facing message. The existing 10s `Promise.race` around the mailbox
     form's "Test connection" button was left unchanged — this reinforces it
     rather than replacing it.
+- **Phase 3A — Enterprise Readiness: Operations & Monitoring — COMPLETE
+  (2026-08-05, commit `283851e`).** First sub-phase of the Enterprise
+  Readiness initiative — a full-codebase audit covering monitoring,
+  reliability, security, scalability, and production readiness produced a
+  prioritized roadmap; this sub-phase implements only the audit's
+  Operations & Monitoring items (its Critical finding was that three of
+  five cron jobs had no confirmed scheduler, and nothing was watching any
+  of them once running). Five approved items, all complete:
+  - **Cron scheduling** — added `.github/workflows/cron-verify-leads.yml`
+    (*/10), `cron-deliverability-health-check.yml` (hourly), and
+    `cron-integrations-digest.yml` (daily 08:00 UTC), joining the two
+    workflows that already existed for `send-emails`/`sync-replies`. All
+    five cron routes (`app/api/cron/*/route.ts`) now have a confirmed
+    in-repo scheduler.
+  - **Heartbeat / dead-man's-switch** — `lib/monitoring/heartbeat.ts`'s
+    `pingHeartbeat()`, Healthchecks.io-compatible (a bare URL pings success,
+    `<url>/fail` pings failure), opt-in per job via a `CRON_HEARTBEAT_URL_*`
+    env var, no-op until configured — this is what actually detects "the
+    scheduler stopped calling this route at all," which `job_runs` alone
+    cannot.
+  - **Centralized monitoring abstraction** — `lib/monitoring/run-cron-job.ts`
+    consolidates the auth-check/timing/logging shell every cron route
+    previously duplicated five times over, now also persisting to
+    `job_runs`, pinging the heartbeat, and forwarding to error tracking from
+    one place; `lib/monitoring/error-tracking.ts`'s `captureError()`
+    forwards unexpected failures (every cron route's top-level catch, plus
+    each worker's existing per-item failure catch) to an optional
+    `ERROR_TRACKING_WEBHOOK_URL`, mirroring `WebhookIntegrationProvider`'s
+    shape. Worker orchestration itself stays fully decoupled — this only
+    wraps route-level plumbing, the same non-coupling `reply-worker.ts`'s
+    route already called out.
+  - **`/api/health`** — new unauthenticated Route Handler for external
+    uptime monitoring, confirms database connectivity, returns 503 on
+    failure.
+  - **`job_runs` infrastructure** — new table
+    (`supabase/migrations/20260811100000_job_runs.sql`), modeled on
+    `stripe_webhook_events`: RLS enabled with zero policies (service-role
+    only, no organization dimension — a cron run isn't org-owned data),
+    persisting every cron invocation's outcome/duration/summary so a stuck
+    or silently-failing job is queryable instead of living only in platform
+    logs. **Migration applied**: confirmed live on the linked
+    development/staging Supabase project (`wxhulmbbobkfvtreaspo`) via
+    `supabase db push`, verified with a follow-up `--dry-run` reporting the
+    remote database up to date with no pending migrations.
 
 ## Current milestone
 
@@ -272,6 +317,12 @@ selected yet.
 
 ## Not started
 
+- **Enterprise Readiness, Phase 3B and beyond** — the audit that produced
+  Phase 3A (Operations & Monitoring, see Done) also identified Reliability,
+  Security, Scalability, and Production Readiness findings across
+  Critical/High/Medium/Low severity, none of which are implemented yet.
+  Phase 3A closed only the audit's Operations & Monitoring items; the next
+  sub-phase has not been selected.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

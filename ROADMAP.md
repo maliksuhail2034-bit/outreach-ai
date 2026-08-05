@@ -2,14 +2,27 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `a709094`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `b6dbaea`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Phase 3B Part 2 — Enterprise Readiness: Audit
-Logging — Complete (2026-08-05, commit `a709094`). Third sub-phase of the
-Enterprise Readiness initiative, closing the 7th and final approved Security
-finding (audit log for sensitive operations) — see Phase 3B Part 2 under Done
-for what shipped, and Notes for what's still outstanding (rate limiting, plus
-the audit's Reliability/Scalability/Production Readiness findings).
+**Last completed milestone:** Phase 3B Part 3 — Enterprise Readiness: Rate
+Limiting — Complete (2026-08-05, commit `b6dbaea`). Fourth and final
+sub-phase of the Enterprise Readiness Security track — see Phase 3B Part 3
+under Done for what shipped, and the status summary immediately below for
+where the wider initiative stands.
+
+**Enterprise Readiness initiative status:**
+- ✅ Phase 3A — Operations & Monitoring — Complete
+- ✅ Phase 3B Part 1 — Security: core fixes (constant-time comparison,
+  host-header trust, ownership validation, merge-tag escaping, security
+  headers) — Complete
+- ✅ Phase 3B Part 2 — Security: audit logging — Complete
+- ✅ Phase 3B Part 3 — Security: rate limiting — Complete
+- **The Enterprise Readiness Security track is now complete** — all 7
+  approved Security findings from the original audit are implemented and
+  their migrations applied.
+- **Remaining**: the Reliability and Scalability tracks from the same
+  original audit are the next work — neither has started, and neither has
+  been broken into sub-phases yet (see Not started).
 
 ## Integration status
 
@@ -415,6 +428,79 @@ Planned
     across authentication, AI generation, verification, and campaign/send
     actions. Still needs a new migration and the Postgres-vs-third-party
     architecture decision flagged during Phase 3B's original scoping.
+- **Phase 3B Part 3 — Enterprise Readiness: Rate Limiting — COMPLETE
+  (2026-08-05, commit `b6dbaea`).** Fourth sub-phase of the Enterprise
+  Readiness initiative, implementing Item 1 (rate limiting) — the last of
+  the audit's 7 approved Security findings, closing the entire Security
+  track. **Implementation complete, database migration applied.**
+  - **`rate_limit_events` table** — new migration
+    (`supabase/migrations/20260813100000_rate_limit_events.sql`), append-
+    only (mirrors `claim_due_sends()`'s own reasoning: a windowed
+    `count(*)` rather than a running counter table, to avoid the write-
+    amplification/drift-recovery problem a counter would add for no
+    benefit at this scale). RLS enabled with zero policies — same
+    "nothing but the service role ever needs to touch this table" carve-
+    out as `stripe_webhook_events`/`job_runs`, since rate-limit bookkeeping
+    must be writable from pre-authentication contexts (login/signup have
+    no session yet) and isn't organization-owned data a user should read.
+  - **`record_rate_limit_attempt()` RPC** — atomic check-and-record in one
+    statement, advisory-lock-guarded (keyed by `hashtext(scope || identity)`,
+    auto-released at transaction end) to close the race a plain
+    count-then-insert would have under concurrent requests from the same
+    caller. Returns both `allowed` and a computed `retry_after_seconds`
+    (from the oldest attempt in the window, not just the static window
+    length).
+  - **Provider-agnostic architecture** (`lib/rate-limit/`) — a
+    `RateLimiter` interface + `PostgresRateLimiter` as its only
+    implementation + `getRateLimiter()` factory, mirroring
+    `EmailProvider`/`IntegrationProvider` exactly. Every call site imports
+    only `checkRateLimit()`/`RateLimitError` — no Postgres-specific
+    knowledge anywhere outside `lib/rate-limit/`, so a future distributed
+    limiter (e.g. Upstash Redis) is a change to the factory alone.
+  - **Centralized configuration** (`lib/rate-limit/config.ts`) — one
+    scope -> `{windowSeconds, maxAttempts, failClosed}` map. `failClosed`
+    is a per-scope policy, not a blanket choice: the three unauthenticated
+    auth scopes (sign-in, sign-up, forgot-password) fail closed on an
+    infrastructure error in the check itself (an outage there must not
+    become an open brute-force window); every authenticated scope fails
+    open (a transient hiccup must not lock a paying customer out of their
+    own campaign — RLS and billing limits remain the real security
+    boundary on those paths). `forgot-password` is dual-keyed by IP *and*
+    email, since IP-only doesn't stop a distributed attacker rotating IPs
+    to email-bomb one victim.
+  - **19 protected call sites**, the full catalog approved during scoping:
+    `lib/actions/auth.ts` (4, IP-based), 4 AI-recommendation actions, both
+    mailbox test-connection actions, the integration test-digest action,
+    4 campaign actions, 3 lead-verification actions, and CSV import (11,
+    all organization-based). Each matches its own call site's existing
+    error-surfacing convention (a thrown `Error`, a returned
+    `{ok, error}`, or a returned `{error, ...}` state shape) rather than
+    forcing one pattern app-wide.
+  - **`RateLimitError` never leaks implementation details** — a fixed,
+    generic message ("Too many attempts. Try again in ~.") regardless of
+    scope, count, or identity, plus a typed `retryAfterSeconds` field.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote`.
+  - **RPC validated live, not just read from the migration file**: called
+    `record_rate_limit_attempt()` twice with `max_attempts: 1` against the
+    linked project — first call returned `{allowed: true}` and recorded
+    the attempt, second call on the same scope/identity returned
+    `{allowed: false, retry_after_seconds: 60}` — the windowed count, the
+    block, and the computed retry-after all behave exactly as designed.
+  - **RLS confirmed enabled and enforcing**: an anon-key direct insert and
+    an anon-key call to the RPC itself were both rejected by Postgres with
+    `"new row violates row-level security policy for table
+    \"rate_limit_events\""` — the RPC-call rejection additionally confirms
+    the function runs as invoker, not security-definer, so it can't be
+    used as a backdoor around the table's own RLS.
+  - **Enterprise Readiness Security track is now fully complete** — all 7
+    approved Security findings from the original audit (Phases 3B Parts
+    1-3) are implemented and their migrations applied. Remaining from the
+    original audit: the Reliability and Scalability tracks, neither
+    started, neither yet broken into sub-phases.
 
 ## Current milestone
 
@@ -436,14 +522,13 @@ selected yet.
 
 ## Not started
 
-- **Enterprise Readiness, Phase 3B Part 3 and beyond** — Phase 3B Parts 1 and
-  2 (see Done) close all 7 of the audit's approved Security findings. Still
-  not started: **Phase 3B Part 3, Item 1 (rate limiting)** across
-  auth/AI generation/verification/campaign actions — needs a new migration
-  *and* an architecture decision (Postgres-backed vs. a third-party service)
-  not yet made. The audit's Reliability, Scalability, and Production
-  Readiness findings (separate sets from Security) also remain entirely
-  unstarted.
+- **Enterprise Readiness — Reliability and Scalability tracks** — the
+  Security track (Phases 3A, 3B Parts 1-3, see Done) is complete: all 7
+  approved Security findings from the original audit are implemented. The
+  same audit's Reliability and Scalability findings (separate categories
+  from Security) remain entirely unstarted and haven't yet been broken
+  into sub-phases the way Security was. Production Readiness findings from
+  the same audit are also still unstarted.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

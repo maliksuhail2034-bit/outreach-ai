@@ -3,6 +3,138 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — Phase 3B Part 3: Enterprise Readiness — Rate Limiting, Complete (Commit: b6dbaea)
+
+- **Fourth and final sub-phase of the Enterprise Readiness Security track**,
+  implementing Item 1 (rate limiting) — the last of the audit's 7 approved
+  Security findings. **This closes the Security track entirely**: Phases
+  3A, 3B Part 1, 3B Part 2, and 3B Part 3 together cover the full approved
+  scope. **Implementation complete, database migration applied.**
+  - **`rate_limit_events` table** — new migration
+    (`supabase/migrations/20260813100000_rate_limit_events.sql`), append-
+    only (mirrors `claim_due_sends()`'s own reasoning
+    (`20260730100020_claim_due_sends.sql`): daily send limits are computed
+    with a windowed `count(*)` rather than a running counter, explicitly to
+    avoid write amplification and a drift-recovery problem for no benefit
+    at this scale — the same logic applies to rate limiting). RLS enabled
+    with zero policies, the same carve-out as `stripe_webhook_events`/
+    `job_runs` — rate-limit bookkeeping must be writable from
+    pre-authentication contexts (login/signup have no session yet, so no
+    organization to scope a member-based policy to even if one existed)
+    and isn't organization-owned data a user should ever read directly.
+  - **`record_rate_limit_attempt()` RPC** — atomic check-and-record in a
+    single statement, guarded by `pg_advisory_xact_lock(hashtext(scope ||
+    ':' || identity))` (auto-released at transaction end) to close the
+    race a plain "select count, then insert" would have under concurrent
+    requests from the same caller. Returns `(allowed boolean,
+    retry_after_seconds integer)` — the retry value is computed from the
+    oldest attempt still inside the window, not just the static window
+    length.
+  - **Provider-agnostic architecture** (`lib/rate-limit/`) — a
+    `RateLimiter` interface (`provider.ts`) + `PostgresRateLimiter` as its
+    only implementation (`providers/postgres.ts`) + `getRateLimiter()` as
+    the one factory seam (`get-provider.ts`), mirroring
+    `lib/email/provider.ts`'s `EmailProvider` split and
+    `lib/integrations/provider.ts`'s `IntegrationProvider` split exactly.
+    No call site anywhere references Postgres, the RPC name, or the table
+    — every one of the 19 protected actions imports only
+    `checkRateLimit()`/`RateLimitError` from `check-rate-limit.ts`, so
+    swapping in a distributed limiter later (Upstash Redis or similar)
+    means changing `get-provider.ts` alone.
+  - **Centralized configuration** (`lib/rate-limit/config.ts`) — one
+    `RateLimitScope` union and one `windowSeconds`/`maxAttempts`/
+    `failClosed` map per scope, so retuning a limit later means editing
+    this one file, not hunting through every action that uses it.
+    `failClosed` is a deliberate per-scope policy: `auth:sign_in`,
+    `auth:sign_up`, `auth:forgot_password_ip`, `auth:forgot_password_email`,
+    and `auth:reset_password` fail closed on an infrastructure error in
+    the check itself (an outage on the least-protected surface in the app
+    must not become an open brute-force window); every authenticated scope
+    (`ai:generate`, `verification:*`, `mailbox:test_connection`,
+    `integration:test_digest`, `campaign:*`, `leads:import`) fails open (a
+    transient hiccup must never lock a paying customer out of their own
+    campaign — RLS and `lib/billing/limits.ts`'s resource quotas remain
+    the real security/fairness boundary on those paths; rate limiting
+    there is abuse mitigation, not a hard gate). `forgot_password` is
+    dual-keyed (both `_ip` and `_email` scopes checked) specifically
+    because IP-only keying doesn't stop a distributed attacker rotating
+    IPs from email-bombing one victim's inbox with reset emails.
+  - **`lib/rate-limit/get-client-ip.ts`** — best-effort client IP via
+    `headers().get("x-forwarded-for")` for the three unauthenticated auth
+    scopes (reintroducing the `next/headers` usage Phase 3B Part 1 removed
+    from `lib/actions/auth.ts` for a different purpose — `getOrigin()` —
+    now used here instead). Falls back to a shared `"unknown"` bucket only
+    relevant to local/direct testing; Vercel always sets the header in
+    production.
+  - **19 wired call sites**, the full catalog approved during scoping:
+    - `lib/actions/auth.ts` — `signIn`, `signUp`, `forgotPassword` (dual-
+      keyed), `resetPassword` (keyed by `user.id`, since it requires an
+      already-established recovery session).
+    - 4 AI-recommendation actions (`app/(app)/analytics/actions.ts`,
+      `campaigns/[campaignId]/analytics/actions.ts`,
+      `mailboxes/[mailboxId]/analytics/actions.ts`,
+      `settings/deliverability/[domainId]/analytics/actions.ts`) —
+      `ai:generate`, keyed by organization.
+    - `app/(app)/leads/actions.ts` — `verifyLeadAction`
+      (`verification:verify_single`), `queueLeadsVerificationAction`/
+      `queueAllLeadsVerificationAction` (`verification:queue`, both newly
+      resolving an organization for this purpose).
+    - `app/(app)/mailboxes/actions.ts` — `testImapConnectionAction`/
+      `testSmtpConnectionAction` (`mailbox:test_connection`) — both make a
+      live outbound connection to a user-supplied `host:port`, an
+      SSRF-adjacent primitive identified during scoping.
+    - `app/(app)/settings/integrations/actions.ts` — `sendTestDigestAction`
+      (`integration:test_digest`) — same SSRF-adjacent shape, a live
+      outbound POST to a user-configured URL.
+    - `app/(app)/campaigns/[campaignId]/actions.ts` —
+      `launchCampaignAction` (`campaign:launch`), `enrollLeadAction`/
+      `enrollLeadListAction` (`campaign:enroll`),
+      `resolveSendAttemptAction` (`campaign:resolve_send_attempt`) — all
+      newly resolving an organization purely for rate-limit identity
+      (campaigns themselves stay `user_id`-scoped, unchanged).
+    - `app/(app)/leads/import-actions.ts` — `importLeadsAction`
+      (`leads:import`).
+    Each call site matches its own existing error-surfacing convention —
+    a thrown `Error` (the AI actions, `sendTestDigestAction`, the campaign
+    actions), a returned `{ok, error}` (both test-connection actions), or
+    a returned `{error, ...}` state shape (`lib/actions/auth.ts`,
+    `importLeadsAction`) — rather than forcing one pattern everywhere.
+  - **`RateLimitError`** — a fixed, generic message ("Too many attempts.
+    Try again in ~.") that never mentions the scope, the count, or the
+    identity, regardless of which of the 19 call sites throws it. A typed
+    `retryAfterSeconds` field is exposed alongside the message so a future
+    Route Handler could also set a real `Retry-After` HTTP header.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for this migration.
+  - **RPC validated with live calls against the linked project, not just
+    read from the migration file**: `record_rate_limit_attempt()` called
+    twice with `max_attempts: 1` on the same scope/identity — first call
+    returned `{allowed: true, retry_after_seconds: 0}` and recorded the
+    attempt; second call returned `{allowed: false, retry_after_seconds:
+    60}`, matching the configured window exactly.
+  - **RLS confirmed enabled and enforcing, not just present in the
+    migration file**: an anon-key direct `insert` and an anon-key call to
+    the RPC itself were both rejected by Postgres with `"new row violates
+    row-level security policy for table \"rate_limit_events\""`. The
+    RPC-call rejection is a stronger signal than the direct-insert
+    rejection alone — it confirms `record_rate_limit_attempt()` runs as
+    invoker (the default), not `security definer`, so it cannot be used as
+    a backdoor around the table's own RLS.
+  - All checks (typecheck, lint, build, full test suite — 475 tests)
+    passed before commit.
+- **Enterprise Readiness Security track is now complete.** All 7 approved
+  Security findings from the original audit are implemented, and every
+  migration each phase introduced is applied and confirmed in sync.
+  **Remaining from the original audit: the Reliability and Scalability
+  tracks** — neither has started, and neither has been broken into
+  sub-phases the way Security was across Phases 3A/3B. Production
+  Readiness findings from the same audit also remain unstarted.
+
+Commit: `b6dbaea`
+
 ## 2026-08-05 — Phase 3B Part 2: Enterprise Readiness — Audit Logging, Complete (Commit: a709094)
 
 - **Third sub-phase of the Enterprise Readiness initiative**, implementing

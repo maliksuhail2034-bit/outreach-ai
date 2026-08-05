@@ -2,11 +2,10 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `da9bf94`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `feac349`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Email Verification Integration (BYOK) —
-Implementation Complete, Production Validation Pending
-(2026-08-09, commit `da9bf94`).
+**Last completed milestone:** Performance — Phase 1 (query optimization) —
+Complete, migration applied (2026-08-05, commit `feac349`).
 
 ## Integration status
 
@@ -188,6 +187,31 @@ Planned
   end to end) is deferred until a real verification provider account is
   available — the same gate Gmail/Outlook had before their own production
   validation — but this is not blocking other milestones from proceeding.
+- **Performance — Phase 1 (query optimization) — COMPLETE (2026-08-05,
+  commit `feac349`).** First pass of a performance audit across auth,
+  organization resolution, the dashboard, and email event queries: (1)
+  `getUser()` (`lib/supabase/auth.ts`) wrapped in React's `cache()` so every
+  Server Component/Function in a request shares one
+  `supabase.auth.getUser()` round trip instead of each repeating it; (2) a
+  new `getUserOrganization()` helper (`lib/db/organizations.ts`) replaces
+  nine separate inline/local reimplementations of "derive a default
+  workspace name from the user's email, then
+  `getOrCreateOrganizationForUser`" across analytics, billing, campaigns,
+  mailboxes, settings, and warmup routes with one shared call; (3) P8 — the
+  dashboard's "Recent campaigns" widget now calls a new
+  `getCampaignLeadActivitySummary()` (`lib/db/campaign-leads.ts`), three
+  small already-indexed lookups (count, next-send, last-activity) per
+  campaign, instead of fetching every `campaign_leads` row per campaign on
+  every dashboard load; (4) P4 — a new migration
+  (`supabase/migrations/20260810100000_email_events_composite_indexes.sql`)
+  adds `(campaign_id, created_at desc)` and `(mailbox_id, created_at desc)`
+  composite indexes to `email_events`, so `listEmailEvents` can walk an
+  index straight to its `order by created_at desc limit` instead of sorting
+  the full matched set, matching the shape `analytics_events` already had.
+  **Migration applied**: confirmed live on the linked development/staging
+  Supabase project (`wxhulmbbobkfvtreaspo`) via `supabase db push` — verified
+  with a follow-up `--dry-run` reporting the remote database up to date with
+  no pending migrations.
 
 ## Current milestone
 

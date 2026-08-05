@@ -20,6 +20,7 @@ import {
   getSequence,
   getSequenceStep,
   getSuppressedEmails,
+  getUserOrganization,
   listCampaignLeads,
   listDomains,
   listLeads,
@@ -37,6 +38,7 @@ import { computeNextSchedule } from "@/lib/email/scheduling";
 import { checkCampaignReadiness, resolveLeadMailboxId } from "@/lib/campaigns/readiness";
 import { campaignLeadSchema, type CampaignLeadInput } from "@/lib/validations/campaign-leads";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
+import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them. campaign_leads has no user_id column — ownership flows through
@@ -123,6 +125,9 @@ export async function launchCampaignAction(campaignId: string) {
   if (campaign.status !== "draft") {
     throw new Error("This campaign has already been launched.");
   }
+
+  const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("campaign:launch", organization.id);
 
   const steps = await loadSequenceSteps(supabase, campaignId);
   const leads = await listCampaignLeads(supabase, campaignId);
@@ -251,6 +256,8 @@ export async function enrollLeadAction(
   const supabase = await createClient();
 
   const campaign = await getCampaign(supabase, user.id, campaignId);
+  const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("campaign:enroll", organization.id);
 
   if (!confirmSuppressed) {
     const lead = await getLead(supabase, user.id, leadId);
@@ -285,6 +292,8 @@ export async function enrollLeadListAction(
   const supabase = await createClient();
 
   const campaign = await getCampaign(supabase, user.id, campaignId);
+  const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("campaign:enroll", organization.id);
   const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
 
   const leads = await listLeads(supabase, user.id, { listId, limit: 10000 });
@@ -467,6 +476,8 @@ export async function resolveSendAttemptAction(
   const supabase = await createClient();
 
   await getCampaign(supabase, user.id, campaignId);
+  const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("campaign:resolve_send_attempt", organization.id);
 
   const campaignLead = await getCampaignLead(supabase, campaignLeadId);
   assertCampaignLeadInCampaign(campaignLead, campaignId);

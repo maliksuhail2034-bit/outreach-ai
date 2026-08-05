@@ -18,6 +18,7 @@ import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { ImapReplyChecker } from "@/lib/email/reply-providers/imap";
 import { verifySmtpConnection } from "@/lib/email/providers/smtp";
 import { assertWithinMailboxLimit } from "@/lib/billing/limits";
+import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import type { Tables } from "@/types/database.types";
 
 // Server Functions are reachable directly via POST regardless of which UI
@@ -238,6 +239,13 @@ export async function testImapConnectionAction(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
   const supabase = await createClient();
+  const organization = await getUserOrganization(supabase, user);
+  try {
+    await checkRateLimit("mailbox:test_connection", organization.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { ok: false, error: error.message };
+    throw error;
+  }
 
   const host = input.imapHost.trim();
   const username = input.imapUsername.trim();
@@ -322,6 +330,13 @@ export async function testSmtpConnectionAction(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
   const supabase = await createClient();
+  const organization = await getUserOrganization(supabase, user);
+  try {
+    await checkRateLimit("mailbox:test_connection", organization.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { ok: false, error: error.message };
+    throw error;
+  }
 
   const host = input.smtpHost.trim();
   const username = input.smtpUsername.trim();

@@ -8,6 +8,8 @@ import {
   signInSchema,
   signUpSchema,
 } from "@/lib/validations/auth";
+import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
+import { getClientIp } from "@/lib/rate-limit/get-client-ip";
 
 // Server Functions are reachable directly via POST, not just through this
 // app's forms — every one of these re-validates input itself rather than
@@ -30,6 +32,13 @@ export async function signIn(_prevState: AuthActionState, formData: FormData): P
     return { fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
+  try {
+    await checkRateLimit("auth:sign_in", await getClientIp());
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.message };
+    throw error;
+  }
+
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
 
@@ -50,6 +59,13 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
 
   if (!parsed.success) {
     return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  try {
+    await checkRateLimit("auth:sign_up", await getClientIp());
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.message };
+    throw error;
   }
 
   const supabase = await createClient();
@@ -85,6 +101,16 @@ export async function forgotPassword(
 
   if (!parsed.success) {
     return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  try {
+    // Dual-keyed: per-IP alone doesn't stop a distributed attacker rotating
+    // IPs from email-bombing one victim's inbox with reset emails.
+    await checkRateLimit("auth:forgot_password_ip", await getClientIp());
+    await checkRateLimit("auth:forgot_password_email", parsed.data.email.toLowerCase());
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.message };
+    throw error;
   }
 
   const supabase = await createClient();
@@ -125,6 +151,13 @@ export async function resetPassword(
 
   if (!user) {
     return { error: "This password reset link is invalid or has expired. Request a new one." };
+  }
+
+  try {
+    await checkRateLimit("auth:reset_password", user.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.message };
+    throw error;
   }
 
   const { error } = await supabase.auth.updateUser({ password: parsed.data.password });

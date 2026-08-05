@@ -7,6 +7,7 @@ import { getUserOrganization } from "@/lib/db";
 import { generateRecommendation } from "@/lib/ai/recommendations";
 import type { AiProviderName } from "@/lib/ai/get-provider";
 import { generateRecommendationSchema } from "@/lib/validations/ai";
+import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client component only
@@ -20,6 +21,7 @@ export async function generateDomainRecommendationAction(domainId: string, provi
   const user = await requireUser();
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("ai:generate", organization.id);
 
   const recommendation = await generateRecommendation(supabase, user.id, organization.id, user.id, {
     entityType: "domain",

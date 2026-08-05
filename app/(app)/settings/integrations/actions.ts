@@ -14,6 +14,7 @@ import {
 import { webhookIntegrationSchema, type WebhookIntegrationInput } from "@/lib/validations/integrations";
 import { buildOrganizationDigest } from "@/lib/integrations/digest";
 import { getIntegrationProvider } from "@/lib/integrations/get-provider";
+import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form already did.
@@ -86,6 +87,7 @@ export async function sendTestDigestAction(id: string) {
   const user = await requireUser();
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("integration:test_digest", organization.id);
 
   const integration = await getIntegration(supabase, organization.id, id); // throws if not owned
   const payload = await buildOrganizationDigest(supabase, organization);

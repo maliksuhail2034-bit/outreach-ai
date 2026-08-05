@@ -21,6 +21,7 @@ import { leadListSchema, type LeadListInput } from "@/lib/validations/lead-lists
 import { leadSchema, type LeadInput } from "@/lib/validations/leads";
 import { assertWithinLeadLimit } from "@/lib/billing/limits";
 import { verifyLead } from "@/lib/verification/verify";
+import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form (react-hook-
@@ -142,6 +143,7 @@ export async function verifyLeadAction(id: string) {
   const user = await requireUser();
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("verification:verify_single", organization.id);
 
   const lead = await getLead(supabase, user.id, id);
   await verifyLead(supabase, user.id, organization.id, id, lead.email, "millionverifier");
@@ -157,6 +159,8 @@ export async function verifyLeadAction(id: string) {
 export async function queueLeadsVerificationAction(ids: string[]) {
   const user = await requireUser();
   const supabase = await createClient();
+  const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("verification:queue", organization.id);
 
   await queueLeadsForVerification(supabase, user.id, ids);
 
@@ -166,6 +170,8 @@ export async function queueLeadsVerificationAction(ids: string[]) {
 export async function queueAllLeadsVerificationAction() {
   const user = await requireUser();
   const supabase = await createClient();
+  const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("verification:queue", organization.id);
 
   await queueAllLeadsForVerification(supabase, user.id);
 

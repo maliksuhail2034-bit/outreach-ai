@@ -1034,6 +1034,27 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limit_events: {
+        Row: {
+          created_at: string
+          id: string
+          identity: string
+          scope: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          identity: string
+          scope: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          identity?: string
+          scope?: string
+        }
+        Relationships: []
+      }
       send_attempts: {
         Row: {
           attempt_count: number
@@ -1623,6 +1644,10 @@ export type Database = {
       is_organization_member: {
         Args: { p_organization_id: string }
         Returns: boolean
+      }
+      record_rate_limit_attempt: {
+        Args: { p_identity: string; p_max_attempts: number; p_scope: string; p_window_seconds: number }
+        Returns: { allowed: boolean; retry_after_seconds: number }[]
       }
       record_send_failure: {
         Args: {

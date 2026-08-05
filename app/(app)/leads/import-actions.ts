@@ -4,9 +4,10 @@ import Papa from "papaparse";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createLead } from "@/lib/db";
+import { createLead, getUserOrganization } from "@/lib/db";
 import { leadCsvRowSchema } from "@/lib/validations/leads";
 import { getRemainingLeadQuota } from "@/lib/billing/limits";
+import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -74,6 +75,13 @@ export async function importLeadsAction(
 
   const user = await requireUser();
   const supabase = await createClient();
+  const organization = await getUserOrganization(supabase, user);
+  try {
+    await checkRateLimit("leads:import", organization.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { ...empty, error: error.message };
+    throw error;
+  }
 
   const text = await file.text();
   const { data: rows } = Papa.parse<Record<string, string>>(text, {

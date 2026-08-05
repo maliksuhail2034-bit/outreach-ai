@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — Email Verification: paused pending a real provider account
+
+- **Status set to Implementation Complete, Production Validation Pending.**
+  The BYOK architecture, encrypted key storage, provider abstraction
+  (`lib/verification/provider.ts`, `get-provider.ts`), UI
+  (`/settings/verification`, lead table badges/filter), worker
+  (`lib/verification/bulk-worker.ts`), and queue
+  (`claim_due_verifications()`, `app/api/cron/verify-leads`) are all
+  complete and unchanged — reviewed against this pause and confirmed
+  provider-agnostic: no BYOK assumptions are hardcoded into the engine, and
+  a future `verification_mode` (BYOK vs. platform-managed) can be added at
+  the key-lookup step alone with no change to workers, queues, the provider
+  interface, or lead verification logic. No platform-credit fields or code
+  were added.
+- **Not blocking the roadmap** — work on other milestones proceeds; live
+  production validation (real MillionVerifier or other provider key,
+  connected via Settings -> Verification) resumes whenever a real account
+  is available.
+
 ## 2026-08-09 — Email Verification Integration Complete (Commit: da9bf94)
 
 - **BYOK email verification via MillionVerifier** — `/settings/verification`

@@ -3,6 +3,94 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-05 — Phase 3B Part 1: Enterprise Readiness — Security, Implementation Complete (Commit: 53034ab)
+
+- **Second sub-phase of the Enterprise Readiness initiative** (see Phase 3A
+  below for the first). Covers 5 of the audit's 7 approved Security
+  findings. **No external account/credential dependency for any item in this
+  phase** — unlike Email Verification or Outlook, there is no separate
+  "production validation pending" gate here; every change is self-contained
+  and already covered by the existing test suite (typecheck/lint/build/full
+  suite — 461 tests — all passed before commit). **No database migrations.**
+  Five items, all complete:
+  - **Constant-time CRON secret comparison** — `isAuthorized()`
+    (`lib/monitoring/run-cron-job.ts`) compared the bearer token with plain
+    `===`, inconsistent with the rest of the codebase. Now `Buffer.from()` +
+    a length check (`timingSafeEqual` throws on mismatched lengths) +
+    `timingSafeEqual`, matching `lib/email/unsubscribe-token.ts` and the
+    OAuth callbacks' `isValidState` exactly. Phase 3A's centralization of
+    all five cron routes into one auth-check function meant this fix
+    touched a single function instead of five separate route files.
+  - **Host-header trust fix** — `lib/actions/auth.ts`'s `getOrigin()` built
+    `signUp`/`forgotPassword` redirect URLs (`emailRedirectTo`/`redirectTo`)
+    from the request's `origin`/`host` headers. Removed entirely; both now
+    use `NEXT_PUBLIC_APP_URL` directly, matching how
+    `lib/email/unsubscribe-token.ts` already avoided header-derived URLs for
+    the same reason.
+  - **Ownership validation for campaign-lead/sequence-step mutations** —
+    `app/(app)/campaigns/[campaignId]/actions.ts` verified the caller owned
+    *a* campaign (`getCampaign(user.id, campaignId)`) but never that the
+    mutated `campaignLeadId`/`stepId` actually belonged to *that* campaign
+    before touching it. RLS (`campaign_leads_update_own`/`_delete_own`,
+    `check_campaign_lead_owner()`) already prevented real exploitation, so
+    this is a defense-in-depth fix closing the app-level gap in front of it.
+    New `assertCampaignLeadInCampaign` (equality check on an already-fetched
+    row) and `assertSequenceInCampaign` (one extra lookup, since
+    `sequence_steps` has no `campaign_id` column of its own) helpers, wired
+    into `updateCampaignLeadAction`, `removeCampaignLeadAction`,
+    `resolveSendAttemptAction`, `updateSequenceStepAction`,
+    `deleteSequenceStepAction`, and `moveSequenceStepAction`. **Scope
+    correction made during implementation**: the originally-scoped fix
+    (changing `updateCampaignLead`/`removeCampaignLead`/`getCampaignLead`
+    signatures in `lib/db/campaign-leads.ts`) would have rippled into
+    `lib/email/send-worker.ts` and `lib/email/reply-worker.ts`, which call
+    those same functions with their own already-trusted `campaignId` and
+    were never part of the vulnerable surface — the check was added at the
+    Server Function layer instead, so `lib/db/*.ts` and both workers are
+    completely untouched.
+  - **Merge-tag HTML escaping** — `lib/email/merge-tags.ts`'s
+    `renderMergeTags` substituted lead data (company, title,
+    `custom_fields.*` — free text with no HTML sanitization at the
+    validation boundary) into outbound email HTML with zero escaping. Added
+    an opt-in `escapeHtml` option, applied only to the substituted value,
+    never the surrounding template (so an org's own intentional HTML in
+    their step body is untouched). `lib/email/send-worker.ts`'s body call
+    site (`html: body`) now passes `{ escapeHtml: true }`; the subject call
+    site deliberately does not — escaping there would render literal
+    `&amp;` in a mail client's Subject header instead of an actual
+    ampersand. 5 new tests in `lib/email/merge-tags.test.ts`, including one
+    proving the subject path stays unescaped.
+  - **Security response headers** — `next.config.ts` was untouched
+    `create-next-app` boilerplate. Added a `headers()` function setting
+    `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+    `Referrer-Policy: strict-origin-when-cross-origin`, and
+    `Strict-Transport-Security` on every response. Content-Security-Policy
+    deliberately excluded from this phase — this app redirects through
+    three third-party origins (Stripe Checkout/Portal, Google OAuth,
+    Microsoft OAuth) plus `next/image` optimization, and writing a CSP
+    without first cataloguing every one of those is the easiest way to
+    silently break billing or a mailbox connect flow; scoped as its own
+    follow-up.
+  - **Session-refresh proxy — re-verified, not changed.** The original
+    audit's "no `middleware.ts` in the repo" finding was a false positive:
+    Next.js 16 renamed the `middleware.ts` file convention to `proxy.ts`
+    (different file/export name, same mechanism — see
+    `node_modules/next/dist/docs/.../proxy.md`), and the audit searched for
+    the old filename. `proxy.ts` (project root) has correctly refreshed the
+    Supabase session cookie on every matched request since the very first
+    Phase 2 commit (`25d2f2a`, 2026-07-29) — confirmed by inspection this
+    phase, no code change needed.
+- **Deliberately not included in this phase**: **Item 7 (audit log design
+  for sensitive operations)** and **Item 1 (rate limiting** across
+  authentication, AI generation, verification, and campaign/send actions**)**
+  — both require a new migration, and item 1 additionally requires an
+  architecture decision (a Postgres-backed limiter, reusing the
+  `claim_due_sends()`-style atomic-RPC pattern, vs. a third-party service
+  like Upstash Redis) that has not been made yet. Neither has been started;
+  both are scoped as separate future sub-tasks.
+
+Commit: `53034ab`
+
 ## 2026-08-05 — Phase 3A: Enterprise Readiness — Operations & Monitoring Complete (Commit: 283851e)
 
 - **Closes the Enterprise Readiness audit's top finding** — three of five

@@ -2,13 +2,13 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `283851e`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `53034ab`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Phase 3A — Enterprise Readiness: Operations &
-Monitoring — Complete (2026-08-05, commit `283851e`). First sub-phase of the
-Enterprise Readiness initiative (a full-codebase audit covering monitoring,
-reliability, security, scalability, and production readiness) — see Phase 3A
-under Done for what shipped, and Notes for the remaining audit backlog.
+**Last completed milestone:** Phase 3B Part 1 — Enterprise Readiness: Security
+(implementation complete) — (2026-08-05, commit `53034ab`). Second sub-phase
+of the Enterprise Readiness initiative, covering 5 of the 7 approved Security
+audit findings — see Phase 3B Part 1 under Done for what shipped, and Notes
+for the two items still outstanding (audit log, rate limiting).
 
 ## Integration status
 
@@ -296,6 +296,60 @@ Planned
     development/staging Supabase project (`wxhulmbbobkfvtreaspo`) via
     `supabase db push`, verified with a follow-up `--dry-run` reporting the
     remote database up to date with no pending migrations.
+- **Phase 3B Part 1 — Enterprise Readiness: Security — IMPLEMENTATION
+  COMPLETE (2026-08-05, commit `53034ab`).** Second sub-phase of the
+  Enterprise Readiness initiative (see Phase 3A above for the first). Covers
+  5 of the audit's 7 approved Security findings — no external
+  account/credential dependency exists for any of them, so unlike Email
+  Verification/Outlook there is no separate "production validation pending"
+  gate; each is a self-contained code change already covered by the existing
+  test suite. No database migrations. Five items, all complete:
+  - **Constant-time CRON secret comparison** — `isAuthorized()`
+    (`lib/monitoring/run-cron-job.ts`) compared the bearer token with plain
+    `===`; now uses `Buffer.from()` + a length check + `timingSafeEqual`,
+    matching the pattern already established by
+    `lib/email/unsubscribe-token.ts` and the OAuth callbacks' `isValidState`.
+    Phase 3A's centralization of all five cron routes into one auth check
+    meant this touched a single function instead of five.
+  - **Host-header redirect fix** — `lib/actions/auth.ts`'s `getOrigin()`
+    built `signUp`/`forgotPassword` redirect URLs from request headers;
+    removed entirely in favor of the fixed `NEXT_PUBLIC_APP_URL`, matching
+    how `lib/email/unsubscribe-token.ts` already avoided header-derived URLs
+    for the same reason.
+  - **Ownership validation for campaign-lead/sequence-step mutations** —
+    `app/(app)/campaigns/[campaignId]/actions.ts` verified the caller owned
+    *a* campaign but never that the mutated `campaignLeadId`/step belonged to
+    *that* campaign before touching it (RLS already prevented real
+    exploitation; this closes the app-level gap in front of it). New
+    `assertCampaignLeadInCampaign`/`assertSequenceInCampaign` helpers, wired
+    into all six affected actions. `lib/db/*.ts` and the send/reply workers
+    are untouched — the scoped fix (changing shared DB function signatures)
+    would have rippled into both workers, which were never part of the
+    vulnerable surface, so the check was added at the Server Function layer
+    instead.
+  - **Merge-tag HTML escaping** — `lib/email/merge-tags.ts`'s
+    `renderMergeTags` gained an opt-in `escapeHtml` option, applied only to
+    substituted lead-data values, never the surrounding template.
+    `lib/email/send-worker.ts`'s body call site now passes it; the subject
+    call site deliberately doesn't (escaping there would show literal
+    `&amp;` in a mail client's Subject header instead of an ampersand).
+  - **Security response headers** — `next.config.ts` now sets
+    `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and
+    `Strict-Transport-Security` on every response. No
+    Content-Security-Policy yet — deliberately deferred until this app's
+    third-party redirect origins (Stripe Checkout/Portal, Google OAuth,
+    Microsoft OAuth) are catalogued, so a too-strict policy doesn't silently
+    break one of them.
+  - **Session-refresh proxy — verified, not changed.** The audit's original
+    "no middleware.ts" finding was a false positive: Next.js 16 renamed
+    `middleware.ts` to `proxy.ts` (different file/export name, same
+    mechanism), and `proxy.ts` has correctly implemented session-cookie
+    refresh since the very first Phase 2 commit (`25d2f2a`). Re-confirmed
+    working during this phase; no code changed.
+  - **Not included in this phase**: Audit log design (7) and rate limiting
+    (1) — both need a new migration, and rate limiting additionally needs an
+    architecture decision (Postgres-backed vs. a third-party service) not
+    yet made. Neither has been started.
 
 ## Current milestone
 
@@ -317,12 +371,15 @@ selected yet.
 
 ## Not started
 
-- **Enterprise Readiness, Phase 3B and beyond** — the audit that produced
-  Phase 3A (Operations & Monitoring, see Done) also identified Reliability,
-  Security, Scalability, and Production Readiness findings across
-  Critical/High/Medium/Low severity, none of which are implemented yet.
-  Phase 3A closed only the audit's Operations & Monitoring items; the next
-  sub-phase has not been selected.
+- **Enterprise Readiness, Phase 3B Part 2 and beyond** — Phase 3B Part 1 (see
+  Done) closed 5 of the audit's 7 Security findings. Still not started:
+  **Item 7, audit log** for sensitive operations (design was scoped, not yet
+  implemented — needs a new migration) and **Item 1, rate limiting** across
+  auth/AI generation/verification/campaign actions (needs a new migration
+  *and* an architecture decision — Postgres-backed vs. a third-party service
+  — not yet made). The audit's Reliability, Scalability, and Production
+  Readiness findings (a separate set from Security) also remain entirely
+  unstarted.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

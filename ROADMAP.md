@@ -5,11 +5,12 @@ Status is derived from the current codebase (`app/`, `lib/`, `supabase/migration
 as of commit `94c3418`. See `CHANGELOG.md` for the commit-by-commit history.
 
 **Last completed milestone:** Enterprise Readiness — Scalability Track,
-Phase D (Incremental Cutover) — Complete (2026-08-06, commits `ceaa989`
-through `94c3418`, six commits). Fourth of five phases (A Foundation /
-B Infrastructure / C Shadow Validation / D Incremental Cutover / E Cleanup)
-— see Scalability Track under Done for the full item-by-item breakdown, and
-the status summary immediately below for where the wider initiative stands.
+Phase E (Cleanup) — Complete (2026-08-06, commit `c7f7755`). Fifth and
+final of five phases (A Foundation / B Infrastructure / C Shadow
+Validation / D Incremental Cutover / E Cleanup) — the Scalability Track is
+now fully complete. See Scalability Track under Done for the full
+item-by-item breakdown, and the status summary immediately below for where
+the wider Enterprise Readiness initiative stands.
 
 **Enterprise Readiness initiative status:**
 - ✅ Phase 3A — Operations & Monitoring — Complete
@@ -53,9 +54,20 @@ the status summary immediately below for where the wider initiative stands.
   and send-worker concurrency is raised from 1 to 5. All six commits
   (`ceaa989`, `0e8494c`, `d80ccd2`, `57fedd7`, `6f851aa`, `94c3418`) are
   published on `origin/main`. See Scalability Track under Done.
-- **Remaining**: Scalability Track Phase E (Cleanup) is not started — it is
-  the next milestone. Production Readiness findings from the same original
-  audit also remain unstarted (see Not started).
+- ✅ Scalability Track — Phase E (Cleanup) — Complete (commit `c7f7755`).
+  Fifth and final phase: removed the one genuinely superseded pre-cutover
+  code path Phase D left behind (`lib/analytics/domain-metrics.ts` and its
+  test, confirmed zero real importers) and updated the stale comments that
+  pointed at it. `DomainAnalyticsSnapshot.events` was inspected but
+  deliberately not removed — it is still consumed by the Deliverability
+  Analytics page's Trends section, so it was not superseded/dead code and
+  removing it would have changed live production UI behavior, outside
+  Phase E's cleanup-only scope; tracked instead as a Production Readiness
+  item (see Not started). **The Enterprise Readiness Scalability Track is
+  now fully complete** — all five phases (A through E) done.
+- **Remaining**: Production Readiness findings from the original audit
+  remain unstarted — now the only open item in the Enterprise Readiness
+  initiative (see Not started).
 
 ## Integration status
 
@@ -947,14 +959,64 @@ Planned
     B/C baseline) to 523 tests (70 files) over the course of the six
     steps, all passing at each step and confirmed once more in a final
     full run at the end of the phase.
-  - **Next milestone: Phase E (Cleanup)** — not started.
+  - **Next milestone: Phase E (Cleanup)** — complete, see below. Phase E
+    was the final phase of the Scalability Track.
+- **Enterprise Readiness — Scalability Track, Phase E (Cleanup) — COMPLETE
+  (2026-08-06, commit `c7f7755`).** Fifth and final of five approved
+  phases. Objective: remove the pre-cutover code paths Phase D's real
+  production cutover left behind, without touching any production
+  behavior, analytics output, or the already-cut-over read paths
+  themselves. **Implementation complete, published, no migration
+  created.**
+  - **Zero-import verification, re-run immediately before deleting**:
+    `lib/analytics/domain-metrics.ts` (`summarizeDomainMetrics`) had
+    exactly one importer — its own test file — confirmed by a full-repo
+    grep before any file was touched.
+  - **Deleted** — `lib/analytics/domain-metrics.ts` and
+    `lib/analytics/domain-metrics.test.ts`. This was the only item in
+    Phase D's original "superseded pre-cutover code paths" description
+    that turned out to be genuinely dead code.
+  - **`DomainAnalyticsSnapshot.events` — inspected, not removed.** The
+    approved order also called for removing this field, but inspection
+    found its own doc-comment's claim ("confirmed unused by every real
+    caller") was inaccurate:
+    `app/(app)/settings/deliverability/[domainId]/analytics/page.tsx`
+    still consumes it to drive the Trends / Forecast / AI Insights
+    section. It has been unconditionally `[]` since Phase D's domain
+    cutover, so that section has been rendering an empty dataset since
+    — a real gap, not dead code, so removing it was out of scope for a
+    cleanup-only phase. Deferred to Production Readiness (see Not
+    started) rather than silently expanding Phase E's scope or breaking
+    the page's typecheck.
+  - **5 stale comments updated** — `lib/analytics/organization-rollup.ts`,
+    `lib/deliverability/domain-analytics.ts`,
+    `lib/deliverability/scoring.ts`, `lib/db/email-events.ts`, and
+    `app/(app)/settings/deliverability/compare/page.tsx` each had a
+    comment pointing at `lib/analytics/domain-metrics.ts`'s file path;
+    updated to point at its replacement
+    (`lib/deliverability/domain-analytics.ts`) or state the fact
+    directly, with no logic change.
+  - **Explicitly confirmed unchanged**: send-worker, retention worker,
+    rollup worker, pagination, CSV import, the available-leads query, and
+    every analytics output — this phase touched only the two deleted
+    files and five comments.
+  - All checks (typecheck, lint, build, full test suite — 520 tests, 69
+    files) passed before commit. No migration created or applied.
+  - **Enterprise Readiness Scalability Track is now fully complete** —
+    all five phases (A Foundation, B Infrastructure, C Shadow Validation,
+    D Incremental Cutover, E Cleanup) done.
+  - **Next milestone: Production Readiness** — not started. The
+    Deliverability Trends Rollup Migration item discovered during this
+    phase's Exit Review is its first tracked item (see Not started).
 
 ## Current milestone
 
-Enterprise Readiness — Scalability Track, Phase E (Cleanup) — not yet
-started. Phase D (Incremental Cutover) is complete; Phase E is the next
-milestone once selected. Production Readiness findings from the original
-audit also remain unstarted.
+Enterprise Readiness — Production Readiness — not yet started. The
+Scalability Track (Phases A through E) is now fully complete; Production
+Readiness is the only remaining milestone in the Enterprise Readiness
+initiative. Its first tracked item, the Deliverability Trends Rollup
+Migration (discovered during the Scalability Phase E Exit Review), is
+recorded under Not started below.
 
 ## In progress / partially built
 
@@ -971,16 +1033,6 @@ audit also remain unstarted.
 
 ## Not started
 
-- **Enterprise Readiness — Scalability track, Phase E** — the Security
-  track (Phases 3A, 3B Parts 1-3) and the Reliability track (see Done) are
-  both complete, and Scalability Track Phases A (Foundation), B
-  (Infrastructure), C (Shadow Validation), and D (Incremental Cutover) are
-  also complete (see Done) — every approved item has been built, validated
-  against real numbers, and cut over to real production behavior. Phase E
-  (Cleanup) — removing the superseded pre-cutover code paths Phase D left
-  in place — remains not started, and was explicitly confirmed out of
-  scope for Phase D. Production Readiness findings from the same original
-  audit are also still unstarted.
 - **Production Readiness — Deliverability Trends Rollup Migration — NOT
   STARTED (discovered during the Scalability Phase E Exit Review).** The
   Deliverability Analytics page

@@ -3,6 +3,66 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-06 — Enterprise Readiness — Production Readiness — Deliverability Trends Rollup Migration, Complete (Commit: 7dca187)
+
+- **First Production Readiness item, discovered during the Scalability
+  Track Phase E Exit Review and shipped as its own scoped, reviewed
+  change** rather than folded into Phase E's cleanup-only scope. **Scope**:
+  replace `DomainAnalyticsSnapshot.events` — permanently empty since the
+  Scalability Phase D rollup cutover, so the Deliverability Analytics
+  page's Trends / Forecast / AI Insights section was silently operating on
+  an empty dataset — with real domain-scoped `analytics_daily_rollups`
+  data. **Implementation complete, published, no migration created.**
+  - **Files modified**: `lib/deliverability/domain-analytics.ts` and
+    `app/(app)/settings/deliverability/[domainId]/analytics/page.tsx`,
+    plus a new `lib/deliverability/domain-analytics.test.ts` — the first
+    unit test coverage this file has had. No other analytics builder,
+    worker, or route was touched.
+  - **Implementation summary**: `loadDomainAnalyticsSnapshot` gained an
+    optional `trendsRange` parameter and now fetches `subject_type='domain'`
+    rows from `analytics_daily_rollups` — already written nightly by the
+    existing rollup worker (`lib/analytics/rollup-worker.ts`'s
+    `upsertDomainRollups`, live since the Scalability Track) — in place of
+    the old `events: Tables<"email_events">[]` field. Domain Comparison's
+    call site is unaffected, since it doesn't pass a range. The Trends
+    section's day-bucketing was rewritten to read pre-aggregated rollup
+    rows via a new page-local helper mirroring
+    `lib/analytics/aggregations.ts`'s `bucketByDayInRange` loop exactly
+    (same UTC cursor iteration, same zero-fill, same ordering), preserving
+    the existing `DailyCount[]` output contract — forecasting,
+    comparisons, insights, and every UI component downstream needed no
+    changes.
+  - **Verification summary**: new unit tests in `domain-analytics.test.ts`
+    cover the new `dailyRollups` fetch (scoped correctly when a trends
+    range is given, omitted when not, passed through to `listDailyRollups`
+    unmodified). Read-only live verification against the linked
+    development/staging project (`wxhulmbbobkfvtreaspo`) confirmed the
+    Postgres session timezone is UTC, `rollup_date` serializes as a plain
+    `YYYY-MM-DD` string matching the bucketing helper's lookup key
+    exactly, the live column types match what the code assumes, and the
+    new `subject_type='domain'` query executes cleanly against the real
+    schema. Zero-fill and current-partial-day handling were demonstrated
+    against the project's real rollup dates. All checks (typecheck, lint,
+    build, full test suite — 525 tests, 70 files) passed before commit.
+  - **Accepted limitation**: no write-based end-to-end validation of an
+    actual domain rendering real Trends data was performed — the linked
+    development/staging project has zero domains and zero mailboxes with
+    `domain_id` set, so there is no representative domain to click
+    through. Every underlying mechanism was instead verified live via the
+    shared table/query/column types and real sibling rollup rows.
+  - **Unchanged systems**: send-worker, retention worker, rollup worker,
+    pagination, CSV import, the available-leads query, every other
+    analytics builder (mailbox, campaign, organization), and Domain
+    Comparison's page.
+  - **No migration required or created** — `analytics_daily_rollups` and
+    its `subject_type='domain'` write path already existed from the
+    Scalability Track.
+  - **Production behavior impact**: the Deliverability Analytics page's
+    Trends/Forecast/AI Insights section now reflects real domain sending
+    activity instead of an always-empty dataset — a real, user-visible
+    change (previously all-zero charts/forecast/insights on this one
+    page), scoped to reads only, with no writes or schema changes.
+
 ## 2026-08-06 — Enterprise Readiness — Scalability Track, Phase D (Incremental Cutover), Complete (Commits: ceaa989, 0e8494c, d80ccd2, 57fedd7, 6f851aa, 94c3418)
 
 - **Fourth of five approved phases for the Scalability Track.** Objective:

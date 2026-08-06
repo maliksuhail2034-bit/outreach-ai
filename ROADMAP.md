@@ -63,11 +63,17 @@ the wider Enterprise Readiness initiative stands.
   Analytics page's Trends section, so it was not superseded/dead code and
   removing it would have changed live production UI behavior, outside
   Phase E's cleanup-only scope; tracked instead as a Production Readiness
-  item (see Not started). **The Enterprise Readiness Scalability Track is
-  now fully complete** — all five phases (A through E) done.
-- **Remaining**: Production Readiness findings from the original audit
-  remain unstarted — now the only open item in the Enterprise Readiness
-  initiative (see Not started).
+  item, now complete (see Done). **The Enterprise Readiness Scalability
+  Track is now fully complete** — all five phases (A through E) done.
+- ✅ Production Readiness — Deliverability Trends Rollup Migration —
+  Complete (commit `7dca187`). The item Phase E's Exit Review discovered
+  and deferred, now shipped: the Deliverability Analytics page's Trends
+  section is rewired from the always-empty
+  `DomainAnalyticsSnapshot.events` to real domain-scoped
+  `analytics_daily_rollups` data. See Production Readiness under Done.
+- **Remaining**: no further Production Readiness items are currently
+  itemized. Additional findings from the original audit may still surface
+  and would be tracked here once scoped.
 
 ## Integration status
 
@@ -1005,18 +1011,84 @@ Planned
   - **Enterprise Readiness Scalability Track is now fully complete** —
     all five phases (A Foundation, B Infrastructure, C Shadow Validation,
     D Incremental Cutover, E Cleanup) done.
-  - **Next milestone: Production Readiness** — not started. The
+  - **Next milestone: Production Readiness** — in progress. The
     Deliverability Trends Rollup Migration item discovered during this
-    phase's Exit Review is its first tracked item (see Not started).
+    phase's Exit Review is its first tracked item, now complete — see
+    below.
+- **Enterprise Readiness — Production Readiness — Deliverability Trends
+  Rollup Migration — COMPLETE (2026-08-06, commit `7dca187`).** First
+  tracked item under Production Readiness, the milestone that followed
+  Scalability Track completion (discovered during the Scalability Phase E
+  Exit Review — see Scalability Track, Phase E above). Objective: replace
+  `DomainAnalyticsSnapshot.events` (permanently empty since the
+  Scalability Phase D rollup cutover) with real data, so the
+  Deliverability Analytics page's Trends / Forecast / AI Insights section
+  stops operating on an empty dataset. **Implementation complete,
+  published, no migration created.**
+  - **Migration**: `lib/deliverability/domain-analytics.ts`'s
+    `loadDomainAnalyticsSnapshot` gained an optional `trendsRange`
+    parameter and now fetches domain-scoped (`subject_type='domain'`)
+    rows from `analytics_daily_rollups` — already written nightly by the
+    existing rollup worker — replacing the old
+    `events: Tables<"email_events">[]` field. Domain Comparison's call
+    site is unaffected, since it doesn't pass a range.
+  - **Preserved output contract**: the Trends section's day-bucketing was
+    rewritten to read pre-aggregated rollup rows via a new page-local
+    helper that mirrors `lib/analytics/aggregations.ts`'s
+    `bucketByDayInRange` loop exactly (same UTC cursor iteration, same
+    zero-fill, same ordering) — its output is still the same
+    `DailyCount[]` shape, so forecasting, comparisons, insights, and
+    every UI component downstream (`TrendCard`, `DailyBarChart`,
+    `StatCard`, `InsightsCard`) needed no changes.
+  - **Parity verification**: the new bucketing helper's loop is a
+    structural mirror of `bucketByDayInRange`, which already has 3 passing
+    tests covering exactly this loop shape (zero-fill, ordering, inverted
+    -range short-circuit) in `lib/analytics/aggregations.test.ts`. New
+    unit tests were added in `lib/deliverability/domain-analytics.test.ts`
+    (the first test coverage this file has ever had) covering the new
+    `dailyRollups` fetch: scoped correctly when a trends range is given,
+    omitted when not (matching Domain Comparison's usage), and passed
+    through to `listDailyRollups` unmodified — confirming no clamping of
+    the current/partial day happens in this function.
+  - **Live schema verification against the linked development/staging
+    project** (`wxhulmbbobkfvtreaspo`), read-only, no writes: confirmed
+    the Postgres session timezone is UTC (closing the audit's flagged
+    timezone-alignment risk), confirmed `rollup_date` comes back as a
+    plain `YYYY-MM-DD` string matching the bucketing helper's lookup key
+    exactly, confirmed `analytics_daily_rollups`' live column types match
+    what the code assumes, and confirmed the new `subject_type='domain'`
+    query shape executes cleanly against the real schema. Zero-fill and
+    current-partial-day handling were demonstrated using the project's
+    real rollup dates (most recent row `2026-08-04`, live `current_date`
+    `2026-08-06`): walking a realistic 7-day range through the bucketing
+    logic correctly zero-fills every day with no activity, including
+    today.
+  - **Accepted, documented limitation**: no write-based end-to-end
+    validation of an actual domain rendering real Trends data was
+    performed, because the linked development/staging project has zero
+    rows in `domains` and zero mailboxes with `domain_id` set — there is
+    no representative domain to click through. Every mechanical piece the
+    domain path depends on (the shared `analytics_daily_rollups` table,
+    the shared `listDailyRollups()` query function, the exact column
+    types, real sibling rows of the identical shape) was verified live
+    instead. Creating test data to close this gap would be a write action
+    outside a read-only validation pass and was not authorized.
+  - **No migration required or created** — `analytics_daily_rollups` and
+    its `subject_type='domain'` write path already existed, built and
+    tested in earlier Scalability Track phases.
+  - All checks (typecheck, lint, build, full test suite — 525 tests, 70
+    files) passed before commit.
 
 ## Current milestone
 
-Enterprise Readiness — Production Readiness — not yet started. The
-Scalability Track (Phases A through E) is now fully complete; Production
-Readiness is the only remaining milestone in the Enterprise Readiness
-initiative. Its first tracked item, the Deliverability Trends Rollup
-Migration (discovered during the Scalability Phase E Exit Review), is
-recorded under Not started below.
+Enterprise Readiness — Production Readiness — in progress. The
+Scalability Track (Phases A through E) is fully complete; Production
+Readiness is the only tracked milestone remaining in the Enterprise
+Readiness initiative. Its first tracked item, the Deliverability Trends
+Rollup Migration (discovered during the Scalability Phase E Exit Review),
+is now complete (see Done) — commit `7dca187`. No further Production
+Readiness items are currently itemized; additional findings from the
+original audit may still surface.
 
 ## In progress / partially built
 
@@ -1033,24 +1105,6 @@ recorded under Not started below.
 
 ## Not started
 
-- **Production Readiness — Deliverability Trends Rollup Migration — NOT
-  STARTED (discovered during the Scalability Phase E Exit Review).** The
-  Deliverability Analytics page
-  (`app/(app)/settings/deliverability/[domainId]/analytics/page.tsx`) still
-  consumes `DomainAnalyticsSnapshot.events`. After the Phase D rollup
-  cutover, this field is no longer populated, so the Trends / Forecast / AI
-  Insights section on that page is effectively operating on an empty
-  dataset. The `analytics_daily_rollups` infrastructure already exists and
-  is populated.
-  - **Required work**: rewire the Deliverability Analytics page to use
-    domain-scoped `analytics_daily_rollups`; preserve the existing
-    user-visible metrics; verify parity with the intended trends output;
-    after successful validation, remove `DomainAnalyticsSnapshot.events` and
-    its remaining compatibility code.
-  - **Reason for deferral**: this changes live production UI behavior and
-    exceeds the approved scope of Scalability Phase E, which was limited to
-    cleanup only — a newly discovered follow-up item, not unfinished Phase E
-    work.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

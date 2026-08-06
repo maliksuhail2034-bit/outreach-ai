@@ -12,7 +12,7 @@ export type MailboxSafe = Omit<
 >;
 
 // Strips all four encrypted credentials before a row can reach any
-// user-facing code path. Only getMailboxCredentials()/listMailboxesForReplySync()
+// user-facing code path. Only getMailboxCredentials()/claimMailboxesForReplySync()
 // (below) return them.
 function omitPassword(row: Mailbox): MailboxSafe {
   const safe: Partial<Mailbox> = { ...row };
@@ -134,15 +134,27 @@ export async function getMailboxSmtpCredential(supabase: Client, userId: string,
 
 // Full rows (including encrypted_imap_password), across every user, for the
 // reply-sync worker to iterate. Scoped to mailboxes that are both actively
-// sending (status='active') and have reply tracking configured.
-export async function listMailboxesForReplySync(supabase: Client): Promise<Mailbox[]> {
-  const { data, error } = await supabase
-    .from("mailboxes")
-    .select("*")
-    .eq("status", "active")
-    .eq("imap_enabled", true);
+// sending (status='active') and have reply tracking configured. Atomic claim
+// via claim_mailboxes_for_reply_sync() (`for update skip locked`, mirrors
+// claim_due_sends()/claim_due_verifications()) — a slow run still in flight
+// when the next scheduled sync-replies invocation fires can no longer
+// process the same mailbox's inbox twice concurrently. Reliability Track
+// item 6.
+export async function claimMailboxesForReplySync(supabase: Client): Promise<Mailbox[]> {
+  const { data, error } = await supabase.rpc("claim_mailboxes_for_reply_sync");
   if (error) throw error;
   return data;
+}
+
+// Releases a mailbox's reply-sync claim lease early instead of waiting out
+// the full 10-minute window — called on both success (updateMailboxSyncCursor)
+// and failure (runReplySyncWorker's per-mailbox catch) so a mailbox is never
+// locked out longer than one run, matching send_attempts' "always clear the
+// lock, rely on the next scheduled run rather than the lease itself for
+// pacing" convention.
+export async function releaseMailboxReplySyncLock(supabase: Client, id: string) {
+  const { error } = await supabase.from("mailboxes").update({ reply_sync_locked_until: null }).eq("id", id);
+  if (error) throw error;
 }
 
 // Admin-context, across every user — the set the automated deliverability
@@ -155,9 +167,10 @@ export async function listActiveMailboxesForHealthCheck(supabase: Client): Promi
   return (data ?? []).map(omitPassword);
 }
 
-// Advances a mailbox's IMAP sync cursor. Never touches any other column —
-// deliberately narrower than the general-purpose updateMailbox(), which is
-// userId-scoped and not meant for admin-context worker use.
+// Advances a mailbox's IMAP sync cursor and releases its reply-sync claim
+// lease in the same write. Never touches any other column — deliberately
+// narrower than the general-purpose updateMailbox(), which is userId-scoped
+// and not meant for admin-context worker use.
 export async function updateMailboxSyncCursor(
   supabase: Client,
   id: string,
@@ -165,7 +178,7 @@ export async function updateMailboxSyncCursor(
 ) {
   const { error } = await supabase
     .from("mailboxes")
-    .update({ imap_uid_validity: cursor.uidValidity, imap_last_uid: cursor.lastUid })
+    .update({ imap_uid_validity: cursor.uidValidity, imap_last_uid: cursor.lastUid, reply_sync_locked_until: null })
     .eq("id", id);
   if (error) throw error;
 }

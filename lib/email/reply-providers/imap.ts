@@ -12,6 +12,31 @@ import type { FetchResult, ReplyMessage, ReplyProvider, SyncCursor } from "../re
 
 type Mailbox = Tables<"mailboxes">;
 
+// ImapFlow's own defaults are generous (90s connect / 16s greeting / 5min
+// socket) — fine in isolation, but a single unreachable/hung mailbox would
+// otherwise block reply-worker.ts's sequential per-mailbox loop for minutes
+// with no upper bound, the same problem SMTP had before E4
+// (lib/email/providers/smtp.ts's SMTP_TIMEOUTS). Mirrors those values here.
+const IMAP_TIMEOUTS = {
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
+};
+
+// ImapFlow surfaces every connect/greeting/socket timeout with an internal
+// `code` ("CONNECT_TIMEOUT" / "GREETING_TIMEOUT" / "ETIMEOUT") and a message
+// that means nothing to an end user — replace it with one clear message,
+// mirroring smtp.ts's friendlySmtpTimeoutMessage.
+const IMAP_TIMEOUT_CODES = new Set(["CONNECT_TIMEOUT", "GREETING_TIMEOUT", "ETIMEOUT", "UPGRADE_TIMEOUT"]);
+
+function friendlyImapTimeoutMessage(error: unknown): string | null {
+  const err = error as { code?: string };
+  if (err?.code && IMAP_TIMEOUT_CODES.has(err.code)) {
+    return "Couldn't reach the mail server in time. Check the host and port, then try again.";
+  }
+  return null;
+}
+
 function normalizeReferences(raw: string | string[] | undefined): string[] {
   if (!raw) return [];
   const list = Array.isArray(raw) ? raw : raw.split(/\s+/);
@@ -71,11 +96,15 @@ export class ImapReplyChecker implements ReplyProvider {
   async fetchNewMessages(): Promise<FetchResult> {
     const connection = await resolveImapConnection(this.mailbox);
 
-    const client = new ImapFlow({ ...connection, logger: false });
+    const client = new ImapFlow({ ...connection, ...IMAP_TIMEOUTS, logger: false });
 
-    await client.connect();
     try {
+      await client.connect();
       return await this.syncInbox(client);
+    } catch (error) {
+      const friendlyMessage = friendlyImapTimeoutMessage(error);
+      if (friendlyMessage) throw new Error(friendlyMessage);
+      throw error;
     } finally {
       await client.logout().catch(() => undefined);
     }

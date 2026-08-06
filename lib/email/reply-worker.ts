@@ -2,13 +2,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
+  claimMailboxesForReplySync,
   getCampaignLeadByCampaignAndLead,
   getEmailEventByProviderMessageId,
   getLeadById,
   listActiveCampaignLeadsForMailbox,
   listLeadIdsByEmail,
-  listMailboxesForReplySync,
   recordEmailEvent,
+  releaseMailboxReplySyncLock,
   updateCampaignLead,
   updateLead,
   updateMailboxSyncCursor,
@@ -52,7 +53,11 @@ export async function runReplySyncWorker(): Promise<ReplySyncSummary> {
     alreadyRecorded: 0,
   };
 
-  const mailboxes = await listMailboxesForReplySync(supabase);
+  // Atomic claim (see claim_mailboxes_for_reply_sync()) instead of a plain
+  // select — a slow previous run still holding a mailbox's lease is skipped
+  // rather than double-processed by an overlapping invocation. Reliability
+  // Track item 6.
+  const mailboxes = await claimMailboxesForReplySync(supabase);
 
   for (const mailbox of mailboxes) {
     summary.mailboxesChecked += 1;
@@ -68,6 +73,11 @@ export async function runReplySyncWorker(): Promise<ReplySyncSummary> {
       const message = error instanceof Error ? error.message : "Unknown error.";
       console.error("[reply-worker]", { mailboxId: mailbox.id, error: message });
       await captureError({ job: "sync-replies", message, context: { mailboxId: mailbox.id } });
+      // Release the claim rather than leaving it locked for the full lease —
+      // the next scheduled run is this pipeline's only retry mechanism, so
+      // holding the lock any longer would just delay that retry with no
+      // benefit.
+      await releaseMailboxReplySyncLock(supabase, mailbox.id).catch(() => undefined);
       continue;
     }
 

@@ -14,7 +14,13 @@ export function getStripeClient(): Stripe {
     throw new Error("STRIPE_SECRET_KEY is not set. Add it to .env.local — see .env.example.");
   }
 
-  cachedClient = new Stripe(secretKey);
+  // maxNetworkRetries: the SDK's own default is 0 — a transient network
+  // blip during a webhook/checkout-session call otherwise isn't retried at
+  // all. 2 is Stripe's own documented recommendation; the SDK only retries
+  // requests it can prove are safe to retry (idempotent GETs, and POSTs sent
+  // with an idempotency key), so this can't cause a duplicate charge/side
+  // effect. Reliability Track item 5.
+  cachedClient = new Stripe(secretKey, { maxNetworkRetries: 2 });
   return cachedClient;
 }
 

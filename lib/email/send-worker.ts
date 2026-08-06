@@ -27,6 +27,18 @@ const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
 const DEFAULT_CLAIM_LIMIT = 25;
 
+// Wall-clock budget for one runSendWorker() invocation, checked only between
+// claimed leads — never mid-send. A batch of DEFAULT_CLAIM_LIMIT slow/timing
+// -out sends (each bounded by SMTP_TIMEOUTS, up to ~30s) could otherwise run
+// the whole cron invocation well past its ~5 minute trigger cadence with no
+// upper bound. Reliability Track item 2. Deliberately does not touch
+// claim_due_sends()/send_attempts/the retry ladder: a lead left unprocessed
+// when the budget is hit simply stays claimed until its existing
+// locked_until lease expires, then is reclaimed by the next cron tick like
+// any other in-flight claim — the same self-heal every other early-return
+// path in this file already relies on.
+const INVOCATION_TIME_BUDGET_MS = 4 * 60_000;
+
 // Caps send_attempts.attempt_count — once a retryable failure's attempt
 // count reaches this, it's no longer reclaimed automatically; the next
 // failure is recorded as terminal ('failed') instead of 'retry'. No separate
@@ -52,11 +64,20 @@ type ProcessOutcome = "sent" | "failed" | "needsReview" | "skipped";
 // duplicate-send-prevention logic of its own.
 export async function runSendWorker(limit = DEFAULT_CLAIM_LIMIT): Promise<SendWorkerSummary> {
   const supabase = createAdminClient();
+  const startedAt = Date.now();
 
   const claimed = await claimDueSends(supabase, limit);
   const summary: SendWorkerSummary = { claimed: claimed.length, sent: 0, failed: 0, needsReview: 0, skipped: 0 };
 
   for (const campaignLead of claimed) {
+    if (Date.now() - startedAt >= INVOCATION_TIME_BUDGET_MS) {
+      console.log("[send-worker] time budget reached, stopping early", {
+        processed: summary.sent + summary.failed + summary.needsReview + summary.skipped,
+        claimed: claimed.length,
+      });
+      break;
+    }
+
     const outcome = await processCampaignLead(supabase, campaignLead);
     summary[outcome] += 1;
   }

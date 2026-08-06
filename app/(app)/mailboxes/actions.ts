@@ -158,7 +158,7 @@ export async function deleteMailboxAction(id: string) {
 // Disconnects a Gmail-connected mailbox without deleting it: clears the
 // stored refresh token (the only Google credential this app persists) and
 // moves status to 'disconnected', which is on its own enough to stop
-// claim_due_sends()/listMailboxesForReplySync() from using it (both already
+// claim_due_sends()/claimMailboxesForReplySync() from using it (both already
 // filter on status = 'active' — see the gmail_oauth migration). Deliberately
 // does not call Google's token-revocation endpoint in v1 — that's planned
 // for a later security/compliance milestone; local credential removal is
@@ -190,7 +190,7 @@ export async function disconnectGmailMailboxAction(id: string) {
 // disconnectGmailMailboxAction exactly, same reasoning throughout: clears
 // the stored refresh token (the only Microsoft credential this app
 // persists) and moves status to 'disconnected', which is on its own enough
-// to stop claim_due_sends()/listMailboxesForReplySync() from using it (both
+// to stop claim_due_sends()/claimMailboxesForReplySync() from using it (both
 // already filter on status = 'active' — see the microsoft_oauth migration).
 // Deliberately does not call Microsoft's token-revocation endpoint in v1 —
 // same deferred-to-a-later-milestone reasoning as the Gmail disconnect.
@@ -296,6 +296,7 @@ export async function testImapConnectionAction(
     encrypted_imap_password: encryptedPassword,
     imap_uid_validity: null,
     imap_last_uid: null,
+    reply_sync_locked_until: null,
   };
 
   try {
@@ -388,6 +389,7 @@ export async function testSmtpConnectionAction(
     encrypted_imap_password: null,
     imap_uid_validity: null,
     imap_last_uid: null,
+    reply_sync_locked_until: null,
   };
 
   try {

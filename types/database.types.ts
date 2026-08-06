@@ -872,6 +872,7 @@ export type Database = {
           imap_uid_validity: number | null
           imap_username: string | null
           reply_provider: string
+          reply_sync_locked_until: string | null
           smtp_host: string
           smtp_port: number
           smtp_username: string
@@ -901,6 +902,7 @@ export type Database = {
           imap_uid_validity?: number | null
           imap_username?: string | null
           reply_provider?: string
+          reply_sync_locked_until?: string | null
           smtp_host: string
           smtp_port?: number
           smtp_username: string
@@ -930,6 +932,7 @@ export type Database = {
           imap_uid_validity?: number | null
           imap_username?: string | null
           reply_provider?: string
+          reply_sync_locked_until?: string | null
           smtp_host?: string
           smtp_port?: number
           smtp_username?: string
@@ -1614,6 +1617,45 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "leads"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_mailboxes_for_reply_sync: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          cooldown_minutes: number
+          created_at: string
+          daily_limit: number
+          display_name: string | null
+          domain_id: string | null
+          email: string
+          email_provider: string
+          encrypted_google_refresh_token: string | null
+          encrypted_imap_password: string | null
+          encrypted_microsoft_refresh_token: string | null
+          encrypted_smtp_password: string | null
+          hourly_limit: number
+          id: string
+          imap_enabled: boolean
+          imap_host: string | null
+          imap_last_uid: number | null
+          imap_port: number
+          imap_uid_validity: number | null
+          imap_username: string | null
+          reply_provider: string
+          reply_sync_locked_until: string | null
+          smtp_host: string
+          smtp_port: number
+          smtp_username: string
+          status: string
+          updated_at: string
+          user_id: string
+          warmup_enabled: boolean
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "mailboxes"
           isOneToOne: false
           isSetofReturn: true
         }

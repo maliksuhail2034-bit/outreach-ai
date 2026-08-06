@@ -5,6 +5,7 @@ import {
   claimDueVerifications,
   getOrganizationMembership,
   getVerificationProviderKeyByProvider,
+  queueLeadsForVerification,
   setLeadVerificationResult,
 } from "@/lib/db";
 import { decryptVerificationProviderKey } from "@/lib/crypto/verification-provider-key-secret";
@@ -18,6 +19,10 @@ export interface VerificationWorkerSummary {
   claimed: number;
   verified: number;
   failed: number;
+  // Transient (VerificationError outcome "retry") — requeued to 'pending'
+  // instead of terminal 'error', self-healing on the next cron tick.
+  // Reliability Track item 4.
+  retried: number;
 }
 
 // Orchestration only, mirrors lib/email/send-worker.ts: claim due rows via
@@ -32,7 +37,7 @@ export async function runVerificationWorker(limit = DEFAULT_CLAIM_LIMIT): Promis
   const supabase = createAdminClient();
 
   const claimed = await claimDueVerifications(supabase, limit);
-  const summary: VerificationWorkerSummary = { claimed: claimed.length, verified: 0, failed: 0 };
+  const summary: VerificationWorkerSummary = { claimed: claimed.length, verified: 0, failed: 0, retried: 0 };
 
   for (const lead of claimed) {
     try {
@@ -58,7 +63,7 @@ export async function runVerificationWorker(limit = DEFAULT_CLAIM_LIMIT): Promis
   return summary;
 }
 
-async function processLead(supabase: Client, lead: Tables<"leads">): Promise<"verified" | "failed"> {
+async function processLead(supabase: Client, lead: Tables<"leads">): Promise<"verified" | "failed" | "retried"> {
   const verifiedAt = new Date().toISOString();
 
   // A lead's owning user should always have an organization (backfilled by
@@ -101,6 +106,19 @@ async function processLead(supabase: Client, lead: Tables<"leads">): Promise<"ve
     return "verified";
   } catch (error) {
     const message = error instanceof VerificationError || error instanceof Error ? error.message : "Unknown verification error.";
+
+    // A "retry" classification (network error, provider timeout/rate-limit —
+    // see VerificationError in lib/verification/provider.ts) requeues to
+    // 'pending' instead of the terminal 'error' status every other outcome
+    // gets, so a transient provider hiccup self-heals on the next cron tick
+    // (claim_due_verifications() picks it back up once the lock clears)
+    // rather than permanently stopping this lead's verification. Mirrors how
+    // send-worker.ts/reply-worker.ts already treat their own transient
+    // failures. Reliability Track item 4.
+    if (error instanceof VerificationError && error.outcome === "retry") {
+      await queueLeadsForVerification(supabase, lead.user_id, [lead.id]);
+      return "retried";
+    }
 
     await setLeadVerificationResult(supabase, lead.id, {
       verification_status: "error",

@@ -2,14 +2,15 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `0db7a98`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `0db7a98` (Phase C added no code — see below). See
+`CHANGELOG.md` for the commit-by-commit history.
 
 **Last completed milestone:** Enterprise Readiness — Scalability Track,
-Phase B (Infrastructure) — Complete (2026-08-16, commit `0db7a98`). Second
-of five phases (A Foundation / B Infrastructure / C Shadow Validation /
-D Incremental Cutover / E Cleanup) — see Scalability Track under Done for
-what shipped, and the status summary immediately below for where the wider
-initiative stands.
+Phase C (Shadow Validation) — Complete (2026-08-16, verification-only, no
+application code changed). Third of five phases (A Foundation /
+B Infrastructure / C Shadow Validation / D Incremental Cutover / E Cleanup)
+— see Scalability Track under Done for what was validated, and the status
+summary immediately below for where the wider initiative stands.
 
 **Enterprise Readiness initiative status:**
 - ✅ Phase 3A — Operations & Monitoring — Complete
@@ -36,8 +37,16 @@ initiative stands.
   analytics page reads from rollups, no page is wired to the new queries,
   concurrency defaults to the prior sequential behavior. See Scalability
   Track under Done.
-- **Remaining**: Scalability Track Phases C (Shadow Validation), D
-  (Incremental Cutover), and E (Cleanup) are not started — Phase C is the
+- ✅ Scalability Track — Phase C (Shadow Validation) — Complete. Every
+  Phase B capability run for real against the linked development/staging
+  project and compared against the existing raw-fetch path (items 5, 6, 7,
+  10, 11) — every comparison matched, no mismatches found. Item 12 (send
+  -worker concurrency) deliberately not live-canaried — a real send-worker
+  run risks dispatching real outbound email, which is a different kind of
+  approval than anything else in this track; it remains validated only by
+  Phase B's invariant test suite. See Scalability Track under Done.
+- **Remaining**: Scalability Track Phases D (Incremental Cutover) and E
+  (Cleanup) are not started — Phase D is the
   next milestone. Production Readiness findings from the same original
   audit also remain unstarted (see Not started).
 
@@ -758,12 +767,66 @@ Planned
     from 475) passed before commit.
   - **Next milestone: Phase C (Shadow Validation)** — not started. Phases D
     (Incremental Cutover) and E (Cleanup) also remain not started.
+- **Enterprise Readiness — Scalability Track, Phase C (Shadow Validation) —
+  COMPLETE (2026-08-16, verification-only — no application code changed,
+  no commit of its own).** Third of five approved phases. Objective: prove
+  every Phase B capability produces correct output before anything is
+  allowed to affect a real user — read-only/observe-only wherever that
+  concept applies, run directly against the linked development/staging
+  Supabase project (`wxhulmbbobkfvtreaspo`) via two throwaway diagnostic
+  scripts, neither committed (deleted immediately after use; confirmed via
+  `git status` showing nothing left behind).
+  - **Item 5 — backfill, run for real**: `runAnalyticsRollupWorker`
+    invoked with `{since: "2026-08-04", until: "2026-08-16"}`, the full
+    real `email_events` history on this project (3 raw events, one day).
+    Result: 6 rows computed and upserted, 0 failed — split correctly
+    across campaign/mailbox/organization subject types, confirmed by a
+    direct follow-up query against `analytics_daily_rollups`. No
+    domain-level row, correctly, since that mailbox has no `domain_id` set.
+  - **Item 6 — old vs new numbers**: raw `email_events` counts for the
+    campaign (`sent: 2, replied: 1`) compared against the newly-backfilled
+    rollup rows summed for the same period — **exact match on every
+    event_type**, no discrepancy.
+  - **Item 7 — available-leads query**: `listLeadsAvailableForCampaign`'s
+    output compared against the old 10,000-row-fetch-and-JS-diff approach
+    for a real campaign — both returned the identical single-lead result
+    set.
+  - **Item 10 — CSV batch-insert, against real Postgres constraints, not
+    just mocks**: two live tests, cleaned up afterward. (a) 5 rows via the
+    batch path vs. 5 via the sequential path, both fully successful. (b)
+    the one thing a mock can't prove — a batch containing one row that
+    collides with a real `(user_id, email)` unique-constraint violation:
+    the bulk insert failed as a whole, and the per-row fallback correctly
+    isolated the failure to exactly that row while the other two
+    succeeded. All 13 test rows (obviously-fake `@example.invalid`
+    addresses, tagged and scoped to one test user) deleted immediately
+    after, verified with a follow-up count query reporting 0 remaining.
+  - **Item 11 — retention worker, run for real**: `rate_limit_events`
+    (7-day cutoff) and `job_runs` (90-day cutoff) both reported 0
+    candidates — expected, nothing on this project is old enough yet.
+    Confirmed dry-run: no deletions occurred.
+  - **Item 12 — deliberately not live-canaried.** Every other item above
+    is read-only or, at most, writes to a table nothing else reads from
+    yet (`analytics_daily_rollups`) or to rows created and deleted within
+    the same script. A live send-worker concurrency canary is categorically
+    different — it would mean actually claiming real `campaign_leads` and
+    dispatching real outbound email via SMTP/OAuth, an external,
+    irreversible action, not a "shadow" of anything. Left validated by
+    Phase B's existing invariant test suite only, pending a separate,
+    explicit approval if a live canary is ever wanted.
+  - **No migration, no code commit** — this phase was entirely
+    verification against already-shipped Phase B infrastructure. The 6
+    rollup rows it produced in `analytics_daily_rollups` are the one
+    persistent effect, and they are the intended, expected output of item
+    5, not a side effect requiring cleanup.
+  - **Next milestone: Phase D (Incremental Cutover)** — not started. Phase
+    E (Cleanup) also remains not started.
 
 ## Current milestone
 
-Enterprise Readiness — Scalability Track, Phase C (Shadow Validation) — not
-yet started. Phase B (Infrastructure) is complete; Phase C is the next
-milestone once selected.
+Enterprise Readiness — Scalability Track, Phase D (Incremental Cutover) —
+not yet started. Phase C (Shadow Validation) is complete; Phase D is the
+next milestone once selected.
 
 ## In progress / partially built
 
@@ -780,13 +843,13 @@ milestone once selected.
 
 ## Not started
 
-- **Enterprise Readiness — Scalability track, Phases C-E** — the Security
+- **Enterprise Readiness — Scalability track, Phases D-E** — the Security
   track (Phases 3A, 3B Parts 1-3) and the Reliability track (see Done) are
-  both complete, and Scalability Track Phases A (Foundation) and B
-  (Infrastructure) are also complete (see Done) — the entire approved
-  infrastructure exists, but nothing has been validated against real
-  numbers or cut over to production reads yet. Phase C (Shadow
-  Validation), D (Incremental Cutover), and E (Cleanup) — the phases with
+  both complete, and Scalability Track Phases A (Foundation), B
+  (Infrastructure), and C (Shadow Validation) are also complete (see
+  Done) — the entire approved infrastructure exists and has been validated
+  against real numbers, but nothing has been cut over to production reads
+  yet. Phase D (Incremental Cutover) and E (Cleanup) — the phases with
   any real production behavior change — remain not started. Production
   Readiness findings from the same original audit are also still
   unstarted.

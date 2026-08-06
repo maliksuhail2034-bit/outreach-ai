@@ -3,6 +3,54 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-16 — Enterprise Readiness — Scalability Track, Phase C (Shadow Validation), Complete (Verification only — no code commit)
+
+- **Third of five approved phases for the Scalability Track.** Unlike every
+  other entry in this file, this phase produced no code change and has no
+  commit of its own — it exists entirely to prove Phase B's already-shipped
+  infrastructure produces correct output, run directly against the linked
+  development/staging Supabase project (`wxhulmbbobkfvtreaspo`) via two
+  throwaway diagnostic scripts, neither committed (deleted immediately
+  after use; confirmed via `git status` showing nothing left behind).
+  Recorded here anyway since it's a real, completed milestone in the
+  track, not a code artifact.
+  - **Item 5 — backfill, run for real**: `runAnalyticsRollupWorker`
+    invoked with `{since: "2026-08-04", until: "2026-08-16"}`, the full
+    real `email_events` history on this project. Result: 6 rows computed
+    and upserted, 0 failed, correctly split across campaign/mailbox/
+    organization subject types — confirmed directly against
+    `analytics_daily_rollups`, not just the worker's own return value.
+  - **Item 6 — old vs new numbers**: raw `email_events` counts for a real
+    campaign (`sent: 2, replied: 1`) compared against the newly-backfilled
+    rollup rows summed for the same period — exact match on every
+    `event_type`.
+  - **Item 7 — available-leads query**: `listLeadsAvailableForCampaign`'s
+    output compared against the old 10,000-row-fetch-and-JS-diff approach
+    for a real campaign — identical single-lead result set.
+  - **Item 10 — CSV batch-insert, against real Postgres constraints**: (a)
+    5 rows via the batch path vs. 5 via the sequential path, both fully
+    successful; (b) a batch containing one row that collides with a real
+    `(user_id, email)` unique-constraint violation — the bulk insert
+    failed as a whole, and the per-row fallback correctly isolated the
+    failure to exactly that row while the other two succeeded, proving
+    the one thing the mocked unit tests couldn't. All 13 test rows
+    (tagged `@example.invalid` addresses, one test user) deleted
+    immediately after, verified with a follow-up count query reporting 0
+    remaining.
+  - **Item 11 — retention worker, run for real**: both `rate_limit_events`
+    (7-day cutoff) and `job_runs` (90-day cutoff) reported 0 candidates —
+    expected, nothing on this project is old enough yet. Confirmed
+    dry-run: no deletions occurred.
+  - **Item 12 — deliberately not live-canaried.** A live send-worker
+    concurrency test would mean actually claiming real `campaign_leads`
+    and dispatching real outbound email — an external, irreversible
+    action categorically different from every other item here. Left
+    validated by Phase B's existing invariant test suite only, pending a
+    separate, explicit approval if a live canary is ever wanted.
+  - **Result: every comparison matched, no mismatches found.** The 6 rows
+    now in `analytics_daily_rollups` are item 5's intended, expected
+    output — not a side effect requiring cleanup.
+
 ## 2026-08-16 — Enterprise Readiness — Scalability Track, Phase B (Infrastructure), Complete (Commit: 0db7a98)
 
 - **Second of five approved phases for the Scalability Track.** Objective:

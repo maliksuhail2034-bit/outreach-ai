@@ -2,11 +2,12 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `f78c643`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `a758bce`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Enterprise Readiness — Reliability Track —
-Complete (2026-08-06, commit `f78c643`). Six approved items from the same
-original audit's Reliability section — see Reliability Track under Done for
+**Last completed milestone:** Enterprise Readiness — Scalability Track,
+Phase A (Foundation) — Complete (2026-08-15, commit `a758bce`). First of
+five phases (A Foundation / B Infrastructure / C Shadow Validation /
+D Incremental Cutover / E Cleanup) — see Scalability Track under Done for
 what shipped, and the status summary immediately below for where the wider
 initiative stands.
 
@@ -25,10 +26,16 @@ initiative stands.
   consistent retry/backoff across external providers, explicit Stripe SDK
   network retries, reply-sync overlap protection). See Reliability Track
   under Done.
-- **Remaining**: the Scalability track from the same original audit is the
-  next work — not started, not yet broken into sub-phases. Production
-  Readiness findings from the same audit also remain unstarted (see Not
-  started).
+- ✅ Scalability Track — Phase A (Foundation) — Complete. Zero production
+  behavior change: cron worker admin-client cleanup, defensive `.limit()`
+  ceilings on four previously-unbounded queries, and two schema
+  prerequisites (an `analytics_daily_rollups` constraint widening and two
+  new `created_at` retention indexes) for work landing in later phases. See
+  Scalability Track under Done.
+- **Remaining**: Scalability Track Phases B (Infrastructure), C (Shadow
+  Validation), D (Incremental Cutover), and E (Cleanup) are not started —
+  Phase B is the next milestone. Production Readiness findings from the
+  same original audit also remain unstarted (see Not started).
 
 ## Integration status
 
@@ -572,11 +579,84 @@ Planned
     both exist.
   - All checks (typecheck, lint, build, full test suite — 475 tests) passed
     before commit.
+- **Enterprise Readiness — Scalability Track, Phase A (Foundation) —
+  COMPLETE (2026-08-15, commit `a758bce`).** First of five approved phases
+  for the Scalability track (Phase A Foundation / B Infrastructure /
+  C Shadow Validation / D Incremental Cutover / E Cleanup), scoped to only
+  the specific files each item touches rather than a repeat full-codebase
+  audit, and re-verified against the current repository rather than
+  assuming the prior Security/Reliability audits still held. Phase A is
+  strictly zero production behavior change — every item here is
+  prerequisite/hygiene work; the fixes with real user-facing effect land in
+  later phases. **Implementation complete, published, both migrations
+  applied.**
+  - **Item 1 — cron worker admin-client cleanup**: `runCronJob()`
+    (`lib/monitoring/run-cron-job.ts`) now passes its one
+    `createAdminClient()` instance into each worker's `run()` callback
+    instead of every worker creating a redundant second instance. Touches
+    all 5 cron routes and all 5 workers (`send-worker.ts`,
+    `reply-worker.ts`, `bulk-worker.ts`, `digest-worker.ts`,
+    `health-check-worker.ts`) plus the two workers' test suites, updated to
+    pass a stub client directly instead of mocking `createAdminClient`.
+  - **Item 2 — defensive `.limit()` ceilings**: `listCampaigns`,
+    `listSendAttemptsForCampaignLeads`, `listEnabledIntegrations`, and
+    `listActiveMailboxesForHealthCheck` were completely unbounded queries
+    identified during this track's audit; each now has a generous ceiling
+    (1000-5000, matching the `EVENT_FETCH_LIMIT` precedent already used
+    across the analytics snapshot builders) as a stopgap ahead of their
+    real pagination/batching fixes in later phases. Verified live against
+    the linked project before choosing values: current real row counts
+    were trivially small (max 1 campaign/user, max 1 send_attempt/campaign,
+    0 enabled integrations, 2 active mailboxes), so today's behavior is
+    unchanged.
+  - **Item 3 — rollup constraint migration (narrowed scope)**: widens
+    `analytics_daily_rollups_event_type_check` to accept `email_events`'
+    vocabulary (`'sent'`/`'failed'`, previously only `'email_sent'` was
+    allowed and `'failed'` wasn't a valid value at all). The grouped SQL
+    aggregation function originally planned alongside this was deliberately
+    deferred to Phase B — designing it (organization-id derivation via
+    `campaigns`, per-subject-type handling, domains having no direct
+    `email_events` link) is worker-design work, not a schema prerequisite.
+    Purely additive; the table has zero rows and no reader exists yet.
+  - **Item 11 (migration portion) — retention indexes**: adds plain
+    `created_at` indexes to `rate_limit_events` and `job_runs`, verified
+    missing this session — both tables only had composite indexes leading
+    with a different column, which a future retention/pruning worker's
+    `delete where created_at < ...` (Phase B) could not have used, forcing
+    a full table scan on the two fastest-growing tables in the schema.
+  - **Migrations applied, local and remote confirmed in sync**: both
+    applied to the linked development/staging Supabase project
+    (`wxhulmbbobkfvtreaspo`) via `supabase db push`, confirmed by a
+    follow-up `--dry-run` reporting `"upToDate":true` with an empty
+    migrations list, and by `supabase migration list` showing
+    `local == remote` for all 43 migrations including both new ones.
+  - **Schema changes confirmed live, not just read from the migration
+    files**: queried directly against the linked project — the widened
+    `analytics_daily_rollups_event_type_check` constraint definition
+    matches exactly, both `rate_limit_events_created_at_idx` and
+    `job_runs_created_at_idx` exist as plain btree indexes on `created_at`.
+    Also confirmed no unexpected side effects: RLS remains enabled on all
+    three affected tables, `rate_limit_events` and `job_runs` each have
+    exactly one additional index (nothing else added or removed), and
+    `analytics_daily_rollups` has the same 6 constraints as before this
+    migration, only the `event_type` check's definition changed.
+  - **Explicitly confirmed unchanged**: `claim_due_sends()`, the
+    `send_attempts` RPC functions (`claim_send_attempt`,
+    `record_send_success`, `record_send_failure`), monitoring's actual
+    logging/heartbeat/error-tracking behavior (only `run-cron-job.ts`'s
+    `run()` callback signature changed, not what gets recorded or when),
+    audit logging, and rate limiting.
+  - All checks (typecheck, lint, build, full test suite — 475 tests) passed
+    before commit.
+  - **Next milestone: Phase B (Infrastructure)** — not started. Phases C
+    (Shadow Validation), D (Incremental Cutover), and E (Cleanup) also
+    remain not started.
 
 ## Current milestone
 
-No milestone currently in progress — the next milestone has not been
-selected yet.
+Enterprise Readiness — Scalability Track, Phase B (Infrastructure) — not
+yet started. Phase A (Foundation) is complete; Phase B is the next
+milestone once selected.
 
 ## In progress / partially built
 
@@ -593,12 +673,14 @@ selected yet.
 
 ## Not started
 
-- **Enterprise Readiness — Scalability track** — the Security track
-  (Phases 3A, 3B Parts 1-3) and the Reliability track (see Done) are both
-  complete. The same original audit's Scalability findings (a separate
-  category from Security and Reliability) remain entirely unstarted and
-  haven't yet been broken into sub-phases. Production Readiness findings
-  from the same audit are also still unstarted.
+- **Enterprise Readiness — Scalability track, Phases B-E** — the Security
+  track (Phases 3A, 3B Parts 1-3) and the Reliability track (see Done) are
+  both complete, and Scalability Track Phase A (Foundation) is also
+  complete (see Done). Phases B (Infrastructure), C (Shadow Validation),
+  D (Incremental Cutover), and E (Cleanup) — the phases with the actual
+  N+1/pagination/CSV-batching/concurrency fixes and any real production
+  behavior change — remain not started. Production Readiness findings from
+  the same original audit are also still unstarted.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

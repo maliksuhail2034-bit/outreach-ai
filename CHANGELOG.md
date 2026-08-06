@@ -3,6 +3,98 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-15 — Enterprise Readiness — Scalability Track, Phase A (Foundation), Complete (Commit: a758bce)
+
+- **First of five approved phases for the Scalability Track** (Phase A
+  Foundation / B Infrastructure / C Shadow Validation / D Incremental
+  Cutover / E Cleanup) — a separate category from the now-complete Security
+  and Reliability tracks. The underlying audit was re-verified against the
+  current repository rather than assuming the prior Security/Reliability
+  audits still held. Phase A is strictly zero production behavior change —
+  every item is prerequisite/hygiene work; the fixes with real user-facing
+  effect (N+1 analytics rollup, campaign/leads pagination, CSV import
+  batching, send-worker concurrency) land in later phases.
+  **Implementation complete, published, both migrations applied.**
+  - **Item 1 — cron worker admin-client cleanup** — `runCronJob()`
+    (`lib/monitoring/run-cron-job.ts`) previously created one
+    `createAdminClient()` instance, then every worker it wrapped created a
+    second, redundant instance of its own. `run()`'s signature now takes
+    the client as a parameter (`run: (supabase: Client) => Promise<T>`),
+    and all 5 workers (`send-worker.ts`, `reply-worker.ts`,
+    `bulk-worker.ts`, `digest-worker.ts`, `health-check-worker.ts`) and all
+    5 `app/api/cron/*/route.ts` call sites were updated accordingly.
+    `digest-worker.test.ts`/`health-check-worker.test.ts` updated to pass a
+    stub client directly instead of mocking `createAdminClient`.
+  - **Item 2 — defensive `.limit()` ceilings** — `listCampaigns`
+    (`lib/db/campaigns.ts`), `listSendAttemptsForCampaignLeads`
+    (`lib/db/send-attempts.ts`), `listEnabledIntegrations`
+    (`lib/db/integrations.ts`), and `listActiveMailboxesForHealthCheck`
+    (`lib/db/mailboxes.ts`) were completely unbounded queries identified
+    during this track's audit. Each now has a `DEFENSIVE_LIST_LIMIT`
+    (1000-5000, matching the `EVENT_FETCH_LIMIT` precedent already used
+    across the analytics snapshot builders) as a stopgap ahead of real
+    pagination/batching fixes in later phases — chosen after querying live
+    row counts against the linked project (max 1 campaign/user, max 1
+    send_attempt/campaign, 0 enabled integrations, 2 active mailboxes at
+    audit time), confirming today's behavior is unaffected.
+    `lib/billing/limits.test.ts`, `lib/db/integrations.test.ts`, and
+    `lib/db/mailboxes.test.ts`'s mock query-builder chains updated to
+    support the new `.limit()` call.
+  - **Item 3 — `analytics_daily_rollups` constraint widening (narrowed
+    scope)** — new migration
+    (`supabase/migrations/20260815100000_analytics_daily_rollups_email_event_types.sql`)
+    widens `analytics_daily_rollups_event_type_check` to accept
+    `email_events`' vocabulary (`'sent'`/`'failed'` — the table previously
+    only allowed `'email_sent'` and had no `'failed'` value at all,
+    inherited from being built for the separate, mostly-unused
+    `analytics_events` stream). The SQL grouped-aggregation function
+    originally scoped alongside this was deliberately deferred to Phase
+    B — designing it (organization-id derivation via `campaigns`,
+    per-subject-type handling, domains having no direct `email_events`
+    link) is worker-design work, not a schema prerequisite, and this
+    narrowing was flagged explicitly rather than silently decided. Purely
+    additive: the table has zero rows and no reader exists yet.
+  - **Item 11 (migration portion) — retention indexes** — new migration
+    (`supabase/migrations/20260815100010_retention_created_at_indexes.sql`)
+    adds plain `created_at` indexes to `rate_limit_events` and `job_runs`,
+    verified missing this session: both tables only had composite indexes
+    leading with a different column (`(scope, identity, created_at)` and
+    `(job, created_at)` respectively), which Postgres cannot use to satisfy
+    a plain `where created_at < X` predicate — exactly the query a future
+    retention/pruning worker (Phase B) will run, and exactly the two
+    fastest-growing tables in the schema.
+  - **Migrations applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for all 43
+    migrations including both new ones.
+  - **Schema changes confirmed live, not just read from the migration
+    files**: the widened `analytics_daily_rollups_event_type_check`
+    definition, and both `rate_limit_events_created_at_idx`/
+    `job_runs_created_at_idx` as plain btree indexes on `created_at`, all
+    queried directly against the linked project. Also confirmed no
+    unexpected side effects: RLS remains enabled on all three affected
+    tables, `rate_limit_events`/`job_runs` each gained exactly one index
+    and nothing else, and `analytics_daily_rollups` retained the same 6
+    constraints as before, only the `event_type` check's definition
+    changed.
+  - **Explicitly confirmed unchanged**: `claim_due_sends()`, the
+    `send_attempts` RPC functions (`claim_send_attempt`,
+    `record_send_success`, `record_send_failure` — as distinct from
+    `listSendAttemptsForCampaignLeads`, the read-only analytics helper in
+    the same file that Item 2 did modify), monitoring's actual logging/
+    heartbeat/error-tracking behavior (`lib/monitoring/heartbeat.ts`/
+    `error-tracking.ts` untouched; only `run-cron-job.ts`'s `run()`
+    callback signature changed), audit logging, and rate limiting.
+  - All checks (typecheck, lint, build, full test suite — 475 tests)
+    passed before commit.
+  - **Next milestone: Phase B (Infrastructure)** — not started. Phases C
+    (Shadow Validation), D (Incremental Cutover), and E (Cleanup) also
+    remain not started.
+
+Commit: `a758bce`
+
 ## 2026-08-06 — Enterprise Readiness — Reliability Track, Complete (Commit: f78c643)
 
 - **Six approved items from the Enterprise Readiness audit's Reliability

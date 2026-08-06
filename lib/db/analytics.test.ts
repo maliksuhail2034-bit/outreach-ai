@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { insertAnalyticsEvent, listAnalyticsEvents, upsertDailyRollup } from "./analytics";
+import { insertAnalyticsEvent, listAnalyticsEvents, listDailyRollups, upsertDailyRollup } from "./analytics";
 
 // Same fake-Client pattern as lib/db/warmup.test.ts.
 function createMockClient(result: { data?: unknown; error?: unknown }) {
@@ -11,12 +11,13 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
     eq: vi.fn(),
     gte: vi.fn(),
     lte: vi.fn(),
+    in: vi.fn(),
     order: vi.fn(),
     limit: vi.fn(),
     single: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "insert", "upsert", "eq", "gte", "lte", "order", "limit", "single"] as const) {
+  for (const method of ["select", "insert", "upsert", "eq", "gte", "lte", "in", "order", "limit", "single"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 
@@ -57,6 +58,54 @@ describe("listAnalyticsEvents", () => {
   it("returns an empty array instead of null when there are no rows", async () => {
     const { client } = createMockClient({ data: null, error: null });
     expect(await listAnalyticsEvents(client, "org-1")).toEqual([]);
+  });
+});
+
+describe("listDailyRollups", () => {
+  it("scopes to the organization and orders oldest-first", async () => {
+    const { client, chainable } = createMockClient({ data: [], error: null });
+
+    await listDailyRollups(client, "org-1");
+
+    expect(client.from).toHaveBeenCalledWith("analytics_daily_rollups");
+    expect(chainable.eq).toHaveBeenCalledWith("organization_id", "org-1");
+    expect(chainable.order).toHaveBeenCalledWith("rollup_date", { ascending: true });
+  });
+
+  it("applies subjectType/subjectId filters when provided (Scalability Track, Phase D)", async () => {
+    const { client, chainable } = createMockClient({ data: [], error: null });
+
+    await listDailyRollups(client, "org-1", { subjectType: "mailbox", subjectId: "mailbox-1" });
+
+    expect(chainable.eq).toHaveBeenCalledWith("subject_type", "mailbox");
+    expect(chainable.eq).toHaveBeenCalledWith("subject_id", "mailbox-1");
+  });
+
+  it("applies a subjectIds filter for aggregating across multiple subjects (e.g. a domain's mailboxes)", async () => {
+    const { client, chainable } = createMockClient({ data: [], error: null });
+
+    await listDailyRollups(client, "org-1", { subjectType: "mailbox", subjectIds: ["mailbox-1", "mailbox-2"] });
+
+    expect(chainable.in).toHaveBeenCalledWith("subject_id", ["mailbox-1", "mailbox-2"]);
+  });
+
+  it("applies the existing date-range and eventType filters when provided", async () => {
+    const { client, chainable } = createMockClient({ data: [], error: null });
+
+    await listDailyRollups(client, "org-1", {
+      since: "2026-08-01",
+      until: "2026-08-31",
+      eventType: "sent",
+    });
+
+    expect(chainable.gte).toHaveBeenCalledWith("rollup_date", "2026-08-01");
+    expect(chainable.lte).toHaveBeenCalledWith("rollup_date", "2026-08-31");
+    expect(chainable.eq).toHaveBeenCalledWith("event_type", "sent");
+  });
+
+  it("returns an empty array instead of null when there are no rows", async () => {
+    const { client } = createMockClient({ data: null, error: null });
+    expect(await listDailyRollups(client, "org-1")).toEqual([]);
   });
 });
 

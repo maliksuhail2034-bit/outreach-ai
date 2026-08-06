@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupCounts, rate, rollingAverage, total } from "./metrics";
+import { groupCounts, rate, rollingAverage, sumByKey, total } from "./metrics";
 
 describe("total", () => {
   it("sums an array of numbers", () => {
@@ -47,5 +47,20 @@ describe("groupCounts", () => {
 
   it("returns an empty object for no items", () => {
     expect(groupCounts([], () => "x")).toEqual({});
+  });
+});
+
+describe("sumByKey", () => {
+  it("sums a numeric field by a derived key", () => {
+    const rollups = [
+      { event_type: "sent", event_count: 3 },
+      { event_type: "sent", event_count: 2 },
+      { event_type: "bounced", event_count: 1 },
+    ];
+    expect(sumByKey(rollups, (r) => r.event_type, (r) => r.event_count)).toEqual({ sent: 5, bounced: 1 });
+  });
+
+  it("returns an empty object for no items", () => {
+    expect(sumByKey([], () => "x", () => 1)).toEqual({});
   });
 });

@@ -51,7 +51,14 @@ export async function listAnalyticsEvents(
 export async function listDailyRollups(
   supabase: Client,
   organizationId: string,
-  options?: { since?: string; until?: string; eventType?: string },
+  options?: {
+    since?: string;
+    until?: string;
+    eventType?: string;
+    subjectType?: string;
+    subjectId?: string;
+    subjectIds?: string[];
+  },
 ) {
   let query = supabase
     .from("analytics_daily_rollups")
@@ -62,6 +69,17 @@ export async function listDailyRollups(
   if (options?.since) query = query.gte("rollup_date", options.since);
   if (options?.until) query = query.lte("rollup_date", options.until);
   if (options?.eventType) query = query.eq("event_type", options.eventType);
+  // subjectType/subjectId(s) (Scalability Track, Phase D): without these, a
+  // caller scoped to one campaign/mailbox/domain would fetch every rollup
+  // row for the whole organization and filter client-side — reintroducing
+  // the same per-entity over-fetch this table exists to eliminate once
+  // callers fan out per campaign/mailbox/domain (see
+  // lib/analytics/organization-rollup.ts). subjectIds mirrors
+  // listEmailEvents' mailboxId/mailboxIds split — a domain aggregates
+  // multiple mailboxes in one query rather than one call each.
+  if (options?.subjectType) query = query.eq("subject_type", options.subjectType);
+  if (options?.subjectId) query = query.eq("subject_id", options.subjectId);
+  if (options?.subjectIds) query = query.in("subject_id", options.subjectIds);
 
   const { data, error } = await query;
   if (error) throw error;

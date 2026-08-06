@@ -1,11 +1,12 @@
 import type { Tables } from "@/types/database.types";
 import type { Client, MailboxSafe } from "@/lib/db";
-import { getMailboxHealth, listAnalyticsEvents, listEmailEvents } from "@/lib/db";
+import { getMailboxHealth, listAnalyticsEvents, listDailyRollups } from "@/lib/db";
 import { summarizeMailboxMetrics, type MailboxMetricsSummary } from "@/lib/analytics/mailbox-metrics";
-import { groupCounts } from "@/lib/analytics/metrics";
+import { groupCounts, sumByKey } from "@/lib/analytics/metrics";
 
-// Single-mailbox scope, so this matches the mailbox analytics page's own
-// limit — comfortably covers a mailbox's full history without pagination.
+// Single-mailbox scope — analytics_events (unlike email_events) has no
+// rollup pipeline yet, so this fetch stays as-is; comfortably covers a
+// mailbox's full history without pagination.
 const EVENT_FETCH_LIMIT = 5000;
 
 export interface MailboxAnalyticsSnapshot {
@@ -21,13 +22,20 @@ export interface MailboxAnalyticsSnapshot {
 // in settings/deliverability/actions.ts — not recomputed here). Shared by
 // Mailbox Comparison and the /analytics organization rollup so neither
 // duplicates this orchestration.
+//
+// Scalability Track, Phase D: overview counts now come from
+// analytics_daily_rollups (pre-aggregated by lib/analytics/rollup-worker.ts)
+// instead of fetching every raw email_events row for this mailbox and
+// grouping in JS — nothing else in this function needs the raw rows (unlike
+// lib/campaigns/campaign-analytics.ts, which still needs them for its
+// step-drop-off computation and hasn't been cut over for that reason).
 export async function loadMailboxAnalyticsSnapshot(
   supabase: Client,
   organizationId: string,
   mailbox: MailboxSafe,
 ): Promise<MailboxAnalyticsSnapshot> {
-  const [emailEvents, analyticsEvents, health] = await Promise.all([
-    listEmailEvents(supabase, undefined, { mailboxId: mailbox.id, limit: EVENT_FETCH_LIMIT }),
+  const [rollups, analyticsEvents, health] = await Promise.all([
+    listDailyRollups(supabase, organizationId, { subjectType: "mailbox", subjectId: mailbox.id }),
     listAnalyticsEvents(supabase, organizationId, {
       subjectType: "mailbox",
       subjectId: mailbox.id,
@@ -36,8 +44,11 @@ export async function loadMailboxAnalyticsSnapshot(
     getMailboxHealth(supabase, mailbox.user_id, mailbox.id),
   ]);
 
-  const events = emailEvents ?? [];
-  const eventCounts = groupCounts(events, (event) => event.event_type);
+  const eventCounts = sumByKey(
+    rollups,
+    (row) => row.event_type,
+    (row) => row.event_count,
+  );
   const analyticsCounts = groupCounts(analyticsEvents, (event) => event.event_type);
 
   const overview = summarizeMailboxMetrics({

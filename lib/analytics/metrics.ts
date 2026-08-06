@@ -39,3 +39,16 @@ export function groupCounts<T>(items: T[], keyOf: (item: T) => string): Record<s
   }
   return counts;
 }
+
+// Sums a numeric field by a derived key — what summing pre-aggregated rows
+// (e.g. analytics_daily_rollups: one row per day per event_type, not one
+// row per event) needs, as opposed to groupCounts' "count raw items by
+// key." Scalability Track, Phase D.
+export function sumByKey<T>(items: T[], keyOf: (item: T) => string, valueOf: (item: T) => number): Record<string, number> {
+  const sums: Record<string, number> = {};
+  for (const item of items) {
+    const key = keyOf(item);
+    sums[key] = (sums[key] ?? 0) + valueOf(item);
+  }
+  return sums;
+}

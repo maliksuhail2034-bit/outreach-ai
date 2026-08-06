@@ -1,5 +1,5 @@
 import type { Client } from "@/lib/db";
-import { listCampaigns, listDomains, listEmailEvents, listMailboxes } from "@/lib/db";
+import { listCampaigns, listDailyRollups, listDomains, listMailboxes } from "@/lib/db";
 import { loadCampaignAnalyticsSnapshot, type CampaignAnalyticsSnapshot } from "@/lib/campaigns/campaign-analytics";
 import { loadMailboxAnalyticsSnapshot, type MailboxAnalyticsSnapshot } from "@/lib/mailboxes/mailbox-analytics";
 import { loadDomainAnalyticsSnapshot, type DomainAnalyticsSnapshot } from "@/lib/deliverability/domain-analytics";
@@ -7,15 +7,7 @@ import { calculatePeerAverage, compareToBenchmark } from "./benchmarks";
 import type { ForecastPoint } from "./forecasting";
 import { benchmarkToInsight, collectInsights, forecastToInsight, type Insight } from "./insights";
 import { summarizeMailboxMetrics, type MailboxMetricsSummary } from "./mailbox-metrics";
-import { groupCounts } from "./metrics";
-
-// Separate, higher limit than the /analytics page's existing 500-row
-// send_attempts/email_events fetch (ANALYTICS_ROW_LIMIT) — that cap exists
-// for that section's charts/timeline, not for a rollup total that claims to
-// represent the whole organization, so this uses the same 5000 every
-// per-entity analytics page already uses rather than silently undercounting
-// past 500 events.
-const ORG_EVENT_FETCH_LIMIT = 5000;
+import { sumByKey } from "./metrics";
 
 export interface OrganizationRollup {
   overview: MailboxMetricsSummary;
@@ -27,37 +19,31 @@ export interface OrganizationRollup {
 // Isolated orchestration boundary for the /analytics page's organization
 // rollup section — the page calls only loadOrganizationRollup() and renders
 // whatever it returns; it never loops over
-// listCampaigns/listMailboxes/listDomains itself. Today this fans out one
+// listCampaigns/listMailboxes/listDomains itself. This still fans out one
 // snapshot fetch per campaign/mailbox/domain (N+1) by calling each entity's
 // existing loadXAnalyticsSnapshot (already shared with that entity's own
-// Compare page) in parallel — acceptable at today's scale, since nothing in
-// this codebase paginates these lists yet. Isolating the fan-out here means
-// a future batched/bulk-query implementation, or a read from
-// analytics_daily_rollups once that pipeline exists (see
-// lib/db/analytics.ts — architecture only today, no writer), can replace
-// the body of this one function without any UI caller changing.
+// Compare page) in parallel — lib/campaigns/campaign-analytics.ts still
+// fetches raw email_events per campaign (it needs the raw rows for its
+// step-drop-off computation, not just counts, so it hasn't been cut over to
+// analytics_daily_rollups — see that file). mailbox/domain snapshots below
+// already read from rollups internally (Scalability Track, Phase D).
+//
+// Scalability Track, Phase D: this function's own top-level overview
+// (below) no longer fetches every raw email_events row across the whole
+// organization — it reads the pre-aggregated 'organization'-subject rollup
+// rows instead, which the rollup worker already computes directly (no
+// summing across mailboxes needed, unlike the mailbox/domain snapshots).
 export async function loadOrganizationRollup(
   supabase: Client,
   userId: string,
   organizationId: string,
 ): Promise<OrganizationRollup> {
-  const [campaigns, mailboxes, domains] = await Promise.all([
+  const [campaigns, mailboxes, domains, orgRollups] = await Promise.all([
     listCampaigns(supabase, userId),
     listMailboxes(supabase, userId),
     listDomains(supabase, userId),
+    listDailyRollups(supabase, organizationId, { subjectType: "organization", subjectId: organizationId }),
   ]);
-
-  // Explicitly scoped to this organization's own mailboxes (already
-  // user_id-filtered above), rather than an unfiltered fetch that only
-  // stayed correct because the caller happened to be using the RLS-scoped
-  // client. This is what makes loadOrganizationRollup safe to call with the
-  // admin client too (see lib/integrations/digest.ts) — without this, an
-  // admin-context caller would pull every organization's events into this
-  // one organization's overview.
-  const orgEvents = await listEmailEvents(supabase, undefined, {
-    mailboxIds: (mailboxes ?? []).map((mailbox) => mailbox.id),
-    limit: ORG_EVENT_FETCH_LIMIT,
-  });
 
   const [campaignSnapshots, mailboxSnapshots, domainSnapshots] = await Promise.all([
     Promise.all(
@@ -69,7 +55,11 @@ export async function loadOrganizationRollup(
     Promise.all((domains ?? []).map((domain) => loadDomainAnalyticsSnapshot(supabase, userId, domain.id))),
   ]);
 
-  const eventCounts = groupCounts(orgEvents ?? [], (event) => event.event_type);
+  const eventCounts = sumByKey(
+    orgRollups,
+    (row) => row.event_type,
+    (row) => row.event_count,
+  );
   const overview = summarizeMailboxMetrics({
     sentCount: eventCounts.sent ?? 0,
     deliveredCount: eventCounts.delivered ?? 0,

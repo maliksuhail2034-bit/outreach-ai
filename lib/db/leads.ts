@@ -34,38 +34,61 @@ export interface PaginatedLeads {
   totalCount: number;
 }
 
-// Scalability Track, Phase B (item 8, build only — not yet wired into any
-// page; app/(app)/leads/page.tsx still calls listLeads() above unchanged).
-// listLeads() above is deliberately left as-is rather than extended with a
-// page param — it has other callers (e.g. the campaign detail page's
-// `{ limit: 10000 }` call) whose exact current behavior this phase must not
-// change. A single query with `{ count: "exact" }` + `.range()` returns both
-// the page of rows and the total count together, the same shape
-// countLeads() + listLeads() currently require two separate calls for.
+// Wired into app/(app)/leads/page.tsx (Scalability Track, Phase D). listLeads()
+// above is deliberately left as-is rather than extended with a page param —
+// it has other callers (e.g. the campaign detail page's `{ limit: 10000 }`
+// call) whose exact current behavior this must not change. A single query
+// with `{ count: "exact" }` + `.range()` returns both the page of rows and
+// the total count together, the same shape countLeads() + listLeads()
+// currently require two separate calls for.
+//
+// PostgREST rejects an out-of-range `.range()` offset outright — HTTP 416
+// / error code PGRST103 ("Requested range not satisfiable"), not an empty
+// result — confirmed live against the real linked project (Scalability
+// Track, Phase D, Step 3) after wiring this into app/(app)/leads/page.tsx
+// and hitting a stale/bookmarked page number for real. Falls back to the
+// last real page instead of throwing, so a page number that's gone stale
+// (e.g. leads were deleted since the URL was bookmarked) self-corrects
+// instead of crashing.
 export async function listLeadsPage(
   supabase: Client,
   userId: string,
   options?: { page?: number; pageSize?: number; listId?: string },
 ): Promise<PaginatedLeads> {
-  const page = Math.max(options?.page ?? 1, 1);
   const pageSize = options?.pageSize ?? DEFAULT_PAGE_SIZE;
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  let page = Math.max(options?.page ?? 1, 1);
 
-  let query = supabase
-    .from("leads")
-    .select("*", { count: "exact" })
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .range(from, to);
+  const buildQuery = (from: number, to: number) => {
+    let query = supabase
+      .from("leads")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+    if (options?.listId) query = query.eq("list_id", options.listId);
+    return query;
+  };
 
-  if (options?.listId) {
-    query = query.eq("list_id", options.listId);
+  let from = (page - 1) * pageSize;
+  let to = from + pageSize - 1;
+  let result = await buildQuery(from, to);
+
+  if (result.error) {
+    if ((result.error as { code?: string }).code !== "PGRST103") throw result.error;
+
+    let countQuery = supabase.from("leads").select("*", { count: "exact", head: true }).eq("user_id", userId);
+    if (options?.listId) countQuery = countQuery.eq("list_id", options.listId);
+    const { count: totalCount, error: countError } = await countQuery;
+    if (countError) throw countError;
+
+    page = Math.max(Math.ceil((totalCount ?? 0) / pageSize), 1);
+    from = (page - 1) * pageSize;
+    to = from + pageSize - 1;
+    result = await buildQuery(from, to);
+    if (result.error) throw result.error;
   }
 
-  const { data, error, count } = await query;
-  if (error) throw error;
-  return { leads: data ?? [], page, pageSize, totalCount: count ?? 0 };
+  return { leads: result.data ?? [], page, pageSize, totalCount: result.count ?? 0 };
 }
 
 // Scalability Track, Phase B (item 7, build only — not yet wired into any

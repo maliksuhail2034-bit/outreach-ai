@@ -28,29 +28,50 @@ export interface PaginatedCampaigns {
   totalCount: number;
 }
 
-// Scalability Track, Phase B (item 9, build only — not yet wired into any
-// page; app/(app)/campaigns/page.tsx still calls listCampaigns() above
-// unchanged). Same shape as lib/db/leads.ts's listLeadsPage(): one query
-// with `{ count: "exact" }` + `.range()` returns both the page of rows and
-// the total count together.
+// Wired into app/(app)/campaigns/page.tsx (Scalability Track, Phase D). Same
+// shape as lib/db/leads.ts's listLeadsPage(): one query with
+// `{ count: "exact" }` + `.range()` returns both the page of rows and the
+// total count together, and the same PGRST103 ("Requested range not
+// satisfiable" — PostgREST rejects an out-of-range offset outright rather
+// than returning zero rows, confirmed live in Phase D, Step 3) fallback to
+// the last real page instead of throwing.
 export async function listCampaignsPage(
   supabase: Client,
   userId: string,
   options?: { page?: number; pageSize?: number },
 ): Promise<PaginatedCampaigns> {
-  const page = Math.max(options?.page ?? 1, 1);
   const pageSize = options?.pageSize ?? DEFAULT_PAGE_SIZE;
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  let page = Math.max(options?.page ?? 1, 1);
 
-  const { data, error, count } = await supabase
-    .from("campaigns")
-    .select("*", { count: "exact" })
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .range(from, to);
-  if (error) throw error;
-  return { campaigns: data ?? [], page, pageSize, totalCount: count ?? 0 };
+  const buildQuery = (from: number, to: number) =>
+    supabase
+      .from("campaigns")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+  let from = (page - 1) * pageSize;
+  let to = from + pageSize - 1;
+  let result = await buildQuery(from, to);
+
+  if (result.error) {
+    if ((result.error as { code?: string }).code !== "PGRST103") throw result.error;
+
+    const { count: totalCount, error: countError } = await supabase
+      .from("campaigns")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId);
+    if (countError) throw countError;
+
+    page = Math.max(Math.ceil((totalCount ?? 0) / pageSize), 1);
+    from = (page - 1) * pageSize;
+    to = from + pageSize - 1;
+    result = await buildQuery(from, to);
+    if (result.error) throw result.error;
+  }
+
+  return { campaigns: result.data ?? [], page, pageSize, totalCount: result.count ?? 0 };
 }
 
 export async function countCampaigns(supabase: Client, userId: string) {

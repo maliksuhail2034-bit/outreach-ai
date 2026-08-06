@@ -21,6 +21,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Pagination } from "@/components/ui/pagination";
 import { CampaignForm } from "./campaign-form";
 
 type Campaign = Tables<"campaigns">;
@@ -36,7 +37,19 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export function CampaignList({ campaigns, mailboxes }: { campaigns: Campaign[]; mailboxes: MailboxSafe[] }) {
+export function CampaignList({
+  campaigns,
+  mailboxes,
+  page,
+  pageSize,
+  totalCount,
+}: {
+  campaigns: Campaign[];
+  mailboxes: MailboxSafe[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}) {
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
   const [deleting, setDeleting] = useState<Campaign | null>(null);
@@ -136,6 +149,17 @@ export function CampaignList({ campaigns, mailboxes }: { campaigns: Campaign[]; 
           </ul>
         )}
       </CardContent>
+
+      {campaigns.length > 0 && (
+        <CardContent className="border-t border-border pt-4">
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            onPageChange={(nextPage) => router.push(`/campaigns?page=${nextPage}`)}
+          />
+        </CardContent>
+      )}
 
       <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <DialogContent>

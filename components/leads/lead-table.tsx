@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { BadgeCheckIcon, PencilIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
@@ -24,6 +25,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Pagination } from "@/components/ui/pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CsvImportDialog } from "./csv-import-dialog";
 import { LeadForm } from "./lead-form";
@@ -75,11 +77,16 @@ export function LeadTable({
   leads,
   leadLists,
   leadCount,
+  page,
+  pageSize,
 }: {
   leads: Lead[];
   leadLists: LeadList[];
   leadCount: number;
+  page: number;
+  pageSize: number;
 }) {
+  const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [deleting, setDeleting] = useState<Lead | null>(null);
@@ -211,7 +218,7 @@ export function LeadTable({
           <CardTitle>Leads</CardTitle>
           <CardDescription>
             {leadCount > leads.length
-              ? `Showing ${leads.length} of ${leadCount} leads.`
+              ? `Showing ${(page - 1) * pageSize + 1}-${(page - 1) * pageSize + leads.length} of ${leadCount} leads.`
               : `${leadCount} lead${leadCount === 1 ? "" : "s"}.`}
           </CardDescription>
         </div>
@@ -384,6 +391,17 @@ export function LeadTable({
           </>
         )}
       </CardContent>
+
+      {leads.length > 0 && (
+        <CardContent className="border-t border-border pt-4">
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            totalCount={leadCount}
+            onPageChange={(nextPage) => router.push(`/leads?page=${nextPage}`)}
+          />
+        </CardContent>
+      )}
 
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>

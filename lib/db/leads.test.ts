@@ -173,6 +173,48 @@ describe("listLeadsPage", () => {
     const { client } = createClient({ data: null, error: new Error("connection lost"), count: null });
     await expect(listLeadsPage(client, "user-1")).rejects.toThrow("connection lost");
   });
+
+  // Confirmed live against the real linked project (Scalability Track,
+  // Phase D, Step 3): PostgREST rejects an out-of-range .range() offset
+  // outright (HTTP 416, error code PGRST103) instead of returning zero
+  // rows -- a stale/bookmarked page number crashed the page in the browser
+  // before this fallback existed.
+  function makeChain(result: { data: unknown; error: unknown; count: unknown }) {
+    const chain = {
+      select: vi.fn(() => chain),
+      eq: vi.fn(() => chain),
+      order: vi.fn(() => chain),
+      range: vi.fn(() => chain),
+      then: (resolve: (value: typeof result) => void) => resolve(result),
+    };
+    return chain;
+  }
+
+  it("falls back to the last real page when the requested page is out of range (PGRST103)", async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(
+        makeChain({ data: null, error: { code: "PGRST103", message: "Requested range not satisfiable" }, count: null }),
+      )
+      .mockReturnValueOnce(makeChain({ data: null, error: null, count: 5 }))
+      .mockReturnValueOnce(makeChain({ data: [{ id: "lead-1" }], error: null, count: 5 }));
+    const client = { from } as unknown as Client;
+
+    const result = await listLeadsPage(client, "user-1", { page: 99, pageSize: 100 });
+
+    expect(result).toEqual({ leads: [{ id: "lead-1" }], page: 1, pageSize: 100, totalCount: 5 });
+    expect(from).toHaveBeenCalledTimes(3);
+  });
+
+  it("re-throws a non-PGRST103 error even from the fallback path shape", async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(makeChain({ data: null, error: { code: "PGRST103" }, count: null }))
+      .mockReturnValueOnce(makeChain({ data: null, error: new Error("db unavailable"), count: null }));
+    const client = { from } as unknown as Client;
+
+    await expect(listLeadsPage(client, "user-1", { page: 99 })).rejects.toThrow("db unavailable");
+  });
 });
 
 // Scalability Track, Phase B (item 10) — build only, not yet called from

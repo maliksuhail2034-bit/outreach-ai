@@ -26,12 +26,17 @@ const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
 const DEFAULT_CLAIM_LIMIT = 25;
 
-// Scalability Track, Phase B (item 12): defaults to 1, which makes
-// processClaimedLeads() below process the claimed batch in the exact same
-// order, one at a time, that the prior plain `for...of` loop did — this
-// phase changes nothing about production behavior. Raising it is a later,
-// separate step (Phase D).
-const DEFAULT_CONCURRENCY = 1;
+// Scalability Track, Phase D (item 12): the Phase B orchestration
+// (processClaimedLeads below) is unchanged by this cutover — only this
+// constant moves, from 1 (fully sequential, matching the original plain
+// `for...of` loop) to a deliberately modest first real value. 5 lets up to
+// five *different* mailboxes send in parallel per invocation — a real
+// throughput gain for any org running multiple mailboxes, out of a claim
+// batch of DEFAULT_CLAIM_LIMIT (25) — without a large first jump. Two leads
+// for the same mailbox are still never processed concurrently regardless of
+// this value: that invariant is structural (inFlightMailboxIds below), not
+// a function of the concurrency number.
+const DEFAULT_CONCURRENCY = 5;
 
 // Wall-clock budget for one runSendWorker() invocation, checked only between
 // claimed leads — never mid-send. A batch of DEFAULT_CLAIM_LIMIT slow/timing
@@ -85,13 +90,15 @@ export async function runSendWorker(
 
 // Processes claimed leads with up to `concurrency` in flight at once, with
 // one hard invariant: two leads for the same mailbox_id are never processed
-// concurrently. mailboxes.cooldown_minutes/hourly_limit, and
-// claim_due_sends()'s daily-limit check (a count(*) taken at claim time,
-// not re-checked per send), both assume sends for one mailbox happen one at
-// a time — true concurrency within a mailbox would let two claimed leads
-// both pass that count check before either send is recorded. With the
-// default concurrency of 1 (Phase B), only one lane ever runs, so this
-// reduces to exactly the prior sequential loop's order and behavior.
+// concurrently. This is what protects mailboxes.cooldown_minutes, which
+// depends on real-world send timing, not just a claim-time count —
+// claim_due_sends() only checks it (and daily_limit/hourly_limit) once, as a
+// snapshot, when a batch is claimed; nothing re-checks it per send. Same-
+// mailbox serialization is structural (inFlightMailboxIds below) and holds
+// regardless of `concurrency`'s value — raising it only lets *different*
+// mailboxes' lanes run in parallel. Item 12 (Scalability Track, Phase D)
+// raises DEFAULT_CONCURRENCY above; this orchestration itself, built in
+// Phase B, is unchanged by that cutover.
 //
 // `processOne` is injected (always processCampaignLead in production, via
 // runSendWorker above) so this orchestration logic — the actual new code

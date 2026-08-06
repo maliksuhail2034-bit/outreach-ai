@@ -12,8 +12,8 @@ const DEFAULT_LIST_LIMIT = 200;
 // mailbox's events (see lib/analytics/mailbox-metrics.ts) — every 'sent'
 // row already carries mailbox_id from record_send_success, so this needs
 // no join. mailboxIds narrows to a *set* of mailboxes in one query instead
-// of one call per mailbox — see lib/analytics/domain-metrics.ts, which
-// aggregates across every mailbox linked to a domain.
+// of one call per mailbox — see lib/deliverability/domain-analytics.ts,
+// which aggregates across every mailbox linked to a domain.
 export async function listEmailEvents(
   supabase: Client,
   campaignId?: string,

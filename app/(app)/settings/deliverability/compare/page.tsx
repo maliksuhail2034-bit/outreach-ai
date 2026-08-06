@@ -132,9 +132,9 @@ export default async function DomainComparePage({
   }
 
   // The one call this whole page exists to finally make for domains —
-  // lib/analytics/domain-metrics.ts's own comment already says two
-  // DomainMetricsSummary-shaped (== MailboxMetricsSummary-shaped) overviews
-  // compare with compareMailboxMetrics directly, no wrapper needed.
+  // domain overviews are MailboxMetricsSummary-shaped (same as mailboxes),
+  // so two of them compare with compareMailboxMetrics directly, no wrapper
+  // needed.
   const metricTrends = compareMailboxMetrics(snapshotA.overview, snapshotB.overview);
 
   const comparisonRows: ComparisonMetricRow[] = [

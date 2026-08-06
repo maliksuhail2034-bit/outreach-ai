@@ -68,7 +68,7 @@ export async function loadOrganizationRollup(
     repliedCount: eventCounts.replied ?? 0,
     bouncedCount: eventCounts.bounced ?? 0,
     // No org-wide spam-complaint data source exists yet — same limitation
-    // lib/analytics/domain-metrics.ts documents for a single domain.
+    // lib/deliverability/domain-analytics.ts documents for a single domain.
     spamComplaintCount: 0,
   });
 

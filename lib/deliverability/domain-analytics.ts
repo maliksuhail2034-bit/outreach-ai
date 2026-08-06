@@ -33,10 +33,10 @@ export interface DomainAnalyticsSnapshot {
 // analytics_daily_rollups (pre-aggregated by lib/analytics/rollup-worker.ts)
 // instead of fetching every raw email_events row across the domain's
 // mailboxes and grouping in JS. Calls summarizeMailboxMetrics directly
-// (bypassing lib/analytics/domain-metrics.ts's summarizeDomainMetrics,
-// which requires raw event rows to do its own counting) rather than
-// changing that shared function's signature — it has no other real caller
-// today, but leaving it as-is keeps this a pure data-source swap.
+// rather than changing that shared function's signature, keeping this a
+// pure data-source swap. (lib/analytics/domain-metrics.ts's
+// summarizeDomainMetrics, the raw-event-counting equivalent this bypassed,
+// was removed in Phase E once this was confirmed as its last real caller.)
 export async function loadDomainAnalyticsSnapshot(
   supabase: Client,
   userId: string,

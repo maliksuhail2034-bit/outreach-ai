@@ -51,8 +51,8 @@ export interface DomainHealthScoreInputs {
   // checks alone can still reach 100.
   reputationScore?: number | null;
   // Optional — only available once a domain has mailboxes with real sending
-  // history (feed lib/analytics/domain-metrics.ts's summarizeDomainMetrics
-  // output directly, the same rates Domain Analytics already computes).
+  // history (feed lib/deliverability/domain-analytics.ts's overview output
+  // directly, the same rates Domain Analytics already computes).
   // Excluded from the average, not counted as a failing 0, until real data
   // exists.
   deliveryRate?: number | null; // percentage 0-100, higher is better

@@ -981,6 +981,24 @@ audit also remain unstarted.
   in place — remains not started, and was explicitly confirmed out of
   scope for Phase D. Production Readiness findings from the same original
   audit are also still unstarted.
+- **Production Readiness — Deliverability Trends Rollup Migration — NOT
+  STARTED (discovered during the Scalability Phase E Exit Review).** The
+  Deliverability Analytics page
+  (`app/(app)/settings/deliverability/[domainId]/analytics/page.tsx`) still
+  consumes `DomainAnalyticsSnapshot.events`. After the Phase D rollup
+  cutover, this field is no longer populated, so the Trends / Forecast / AI
+  Insights section on that page is effectively operating on an empty
+  dataset. The `analytics_daily_rollups` infrastructure already exists and
+  is populated.
+  - **Required work**: rewire the Deliverability Analytics page to use
+    domain-scoped `analytics_daily_rollups`; preserve the existing
+    user-visible metrics; verify parity with the intended trends output;
+    after successful validation, remove `DomainAnalyticsSnapshot.events` and
+    its remaining compatibility code.
+  - **Reason for deferral**: this changes live production UI behavior and
+    exceeds the approved scope of Scalability Phase E, which was limited to
+    cleanup only — a newly discovered follow-up item, not unfinished Phase E
+    work.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

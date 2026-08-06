@@ -3,6 +3,110 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-06 — Enterprise Readiness — Reliability Track, Complete (Commit: f78c643)
+
+- **Six approved items from the Enterprise Readiness audit's Reliability
+  section** — a separate category from the now-complete Security track
+  (Phases 3A, 3B Parts 1-3, see below). Scoped to only the specific files
+  each item touches rather than a repeat full-codebase audit.
+  **Implementation complete, database migration applied.** Explicitly did
+  not modify `claim_due_sends()`, `send_attempts`, monitoring, audit
+  logging, or rate limiting — every change is isolated to its own worker/
+  provider file.
+  - **IMAP connection timeout** — `ImapFlow`
+    (`lib/email/reply-providers/imap.ts`) had no connect/greeting/socket
+    timeout, unlike SMTP since Track B's E4 (`SMTP_TIMEOUTS`,
+    `lib/email/providers/smtp.ts`); a hung/unreachable mailbox could block
+    `reply-worker.ts`'s sequential per-mailbox loop indefinitely. Added
+    `IMAP_TIMEOUTS` mirroring SMTP's 10s/20s values, plus
+    `friendlyImapTimeoutMessage()` translating ImapFlow's internal
+    `CONNECT_TIMEOUT`/`GREETING_TIMEOUT`/`ETIMEOUT`/`UPGRADE_TIMEOUT` codes
+    into one clear message, the same pattern `friendlySmtpTimeoutMessage`
+    already established.
+  - **Send worker invocation time budget** — `runSendWorker`
+    (`lib/email/send-worker.ts`) previously claimed up to
+    `DEFAULT_CLAIM_LIMIT` (25) leads and processed them fully sequentially
+    with no wall-clock ceiling. Added `INVOCATION_TIME_BUDGET_MS` (4
+    minutes), checked only between claimed leads, never mid-send — the
+    worker now stops claiming new work once the budget is hit and returns a
+    partial summary. Does not touch `claim_due_sends()`, `send_attempts`,
+    or the retry ladder (`computeRetryDelay`): a lead left unprocessed
+    simply stays claimed until its existing `locked_until` lease expires,
+    then is reclaimed by the next cron tick like any other in-flight claim.
+  - **Cron schedule verification** — all 5 `.github/workflows/cron-*.yml`
+    schedules (send-emails */5min, sync-replies */10min, verify-leads
+    */10min, deliverability-health-check hourly, integrations-digest daily)
+    checked against their corresponding claim-lease durations
+    (`claim_due_sends()`'s and `claim_due_verifications()`'s 10-minute
+    leases). No drift or misconfiguration found — verification-only, no
+    code change.
+  - **Consistent retry/backoff across external providers** — the bulk
+    verification worker's `processLead()` (`lib/verification/bulk-worker.ts`)
+    previously discarded `VerificationError.outcome` entirely in its catch
+    block and always wrote a terminal `verification_status: "error"`, even
+    when MillionVerifier classified the failure as `"retry"` (network
+    error, provider timeout/rate-limit). A `"retry"` outcome now calls the
+    existing `queueLeadsForVerification()` to reset the lead to `pending`
+    instead, so it self-heals on the next `verify-leads` cron tick once
+    `claim_due_verifications()` picks it back up — matching how
+    `send-worker.ts`/`reply-worker.ts` already treat their own transient
+    failures. `VerificationWorkerSummary` gained a `retried` field
+    (additive only).
+  - **Explicit Stripe SDK network retries** — `getStripeClient()`
+    (`lib/billing/stripe.ts`) previously called `new Stripe(secretKey)`,
+    using the SDK's default `maxNetworkRetries: 0` — a transient network
+    blip during a webhook/checkout-session call wasn't retried at all. Now
+    passes `{ maxNetworkRetries: 2 }`, Stripe's own documented
+    recommendation; safe because the SDK only retries requests it can
+    prove are idempotent (idempotent GETs, and POSTs sent with an
+    idempotency key), so this can't produce a duplicate charge or side
+    effect.
+  - **Reply-sync overlap protection** — unlike the claim-based send and
+    verification pipelines (`campaign_leads.locked_until`/
+    `claim_due_sends()`, `leads.verification_locked_until`/
+    `claim_due_verifications()`), `runReplySyncWorker`
+    (`lib/email/reply-worker.ts`) previously selected mailboxes via a plain
+    `select` (`listMailboxesForReplySync`) with no claim/lease at all — a
+    slow run still in flight when the next scheduled sync-replies
+    invocation fired could process the same mailbox's inbox twice
+    concurrently and race on `updateMailboxSyncCursor`'s plain update. New
+    migration
+    (`supabase/migrations/20260814100000_mailboxes_reply_sync_lock.sql`)
+    adds `mailboxes.reply_sync_locked_until` and
+    `claim_mailboxes_for_reply_sync()` (the same `for update skip locked`
+    lease pattern as `claim_due_sends()`/`claim_due_verifications()`,
+    scoped only to `mailboxes` — does not touch `campaign_leads`,
+    `send_attempts`, or `claim_due_sends()` itself). `claimMailboxesForReplySync()`
+    replaces the old plain-select function in `lib/db/mailboxes.ts`; the
+    new `releaseMailboxReplySyncLock()` releases the lease on a per-mailbox
+    IMAP failure, and `updateMailboxSyncCursor()` now also clears it on
+    success — so a mailbox is never locked out longer than one run. No new
+    RLS policy needed: `mailboxes`' existing 4 owner-scoped policies are
+    unchanged, and the migration's only DDL is the new column and function.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for all 41
+    migrations including this one.
+  - **New column and function confirmed live**, queried directly against
+    the linked project rather than only read from the migration file:
+    `mailboxes.reply_sync_locked_until` (`timestamp with time zone`,
+    nullable) and `claim_mailboxes_for_reply_sync` (`FUNCTION`,
+    `security_type: INVOKER`, matching `claim_due_sends()`/
+    `claim_due_verifications()`'s existing convention of running as
+    invoker rather than security-definer) both confirmed to exist; `mailboxes`
+    RLS confirmed still enabled (`relrowsecurity = true`) with the same 4
+    pre-existing policies, nothing added or changed.
+  - All checks (typecheck, lint, build, full test suite — 475 tests)
+    passed before commit.
+- **Confirmed out of scope, verified against the commit itself**:
+  `claim_due_sends()`, `send_attempts`, monitoring (`lib/monitoring/`),
+  audit logging (`lib/db/audit-log.ts`), and rate limiting
+  (`lib/rate-limit/`) — none were touched by this commit.
+
+Commit: `f78c643`
+
 ## 2026-08-05 — Phase 3B Part 3: Enterprise Readiness — Rate Limiting, Complete (Commit: b6dbaea)
 
 - **Fourth and final sub-phase of the Enterprise Readiness Security track**,

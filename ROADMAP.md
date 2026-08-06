@@ -2,13 +2,13 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `b6dbaea`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `f78c643`. See `CHANGELOG.md` for the commit-by-commit history.
 
-**Last completed milestone:** Phase 3B Part 3 — Enterprise Readiness: Rate
-Limiting — Complete (2026-08-05, commit `b6dbaea`). Fourth and final
-sub-phase of the Enterprise Readiness Security track — see Phase 3B Part 3
-under Done for what shipped, and the status summary immediately below for
-where the wider initiative stands.
+**Last completed milestone:** Enterprise Readiness — Reliability Track —
+Complete (2026-08-06, commit `f78c643`). Six approved items from the same
+original audit's Reliability section — see Reliability Track under Done for
+what shipped, and the status summary immediately below for where the wider
+initiative stands.
 
 **Enterprise Readiness initiative status:**
 - ✅ Phase 3A — Operations & Monitoring — Complete
@@ -17,12 +17,18 @@ where the wider initiative stands.
   headers) — Complete
 - ✅ Phase 3B Part 2 — Security: audit logging — Complete
 - ✅ Phase 3B Part 3 — Security: rate limiting — Complete
-- **The Enterprise Readiness Security track is now complete** — all 7
-  approved Security findings from the original audit are implemented and
-  their migrations applied.
-- **Remaining**: the Reliability and Scalability tracks from the same
-  original audit are the next work — neither has started, and neither has
-  been broken into sub-phases yet (see Not started).
+- **The Enterprise Readiness Security track is complete** — all 7 approved
+  Security findings from the original audit are implemented and their
+  migrations applied.
+- ✅ Reliability Track — Complete (6 approved items: IMAP connection
+  timeout, send worker invocation time budget, cron schedule verification,
+  consistent retry/backoff across external providers, explicit Stripe SDK
+  network retries, reply-sync overlap protection). See Reliability Track
+  under Done.
+- **Remaining**: the Scalability track from the same original audit is the
+  next work — not started, not yet broken into sub-phases. Production
+  Readiness findings from the same audit also remain unstarted (see Not
+  started).
 
 ## Integration status
 
@@ -501,6 +507,71 @@ Planned
     1-3) are implemented and their migrations applied. Remaining from the
     original audit: the Reliability and Scalability tracks, neither
     started, neither yet broken into sub-phases.
+- **Enterprise Readiness — Reliability Track — COMPLETE (2026-08-06, commit
+  `f78c643`).** Six approved items from the same original audit's
+  Reliability section (a separate category from the now-complete Security
+  track above), scoped to the specific files each item touches rather than a
+  repeat full-codebase audit. Explicitly did not modify `claim_due_sends()`,
+  `send_attempts`, monitoring, audit logging, or rate limiting — every
+  change is isolated to its own worker/provider file. All six:
+  - **IMAP connection timeout** — `ImapFlow` (`lib/email/reply-providers/imap.ts`)
+    had no connect/greeting/socket timeout, unlike SMTP since Track B's E4
+    (`SMTP_TIMEOUTS`); a hung/unreachable mailbox could block
+    `reply-worker.ts`'s sequential per-mailbox loop indefinitely. Mirrors
+    SMTP's 10s/20s timeout values, with the same friendly-timeout-message
+    pattern.
+  - **Send worker invocation time budget** — `runSendWorker`
+    (`lib/email/send-worker.ts`) now stops claiming new work after a
+    4-minute wall-clock budget instead of running unbounded across a full
+    claimed batch of slow/timing-out sends. Never aborts a send already in
+    flight; a lead left unprocessed simply stays claimed until its existing
+    lease expires and is reclaimed by the next cron tick, the same self-heal
+    every other early-return path in this file already relies on.
+  - **Cron schedule verification** — all 5 `.github/workflows/cron-*.yml`
+    schedules checked against their corresponding claim-lease durations
+    (`claim_due_sends()`/`claim_due_verifications()`); no drift or
+    misconfiguration found. Verification-only, no code change.
+  - **Consistent retry/backoff across external providers** — the bulk
+    verification worker (`lib/verification/bulk-worker.ts`) previously
+    discarded `VerificationError`'s `"retry"` classification entirely and
+    always wrote a terminal `error` status, even for a transient network/
+    rate-limit failure. It now requeues those to `pending` (via the existing
+    `queueLeadsForVerification`) so they self-heal on the next cron tick,
+    matching how `send-worker.ts`/`reply-worker.ts` already treat their own
+    transient failures.
+  - **Explicit Stripe SDK network retries** — `getStripeClient()`
+    (`lib/billing/stripe.ts`) now passes `maxNetworkRetries: 2` (Stripe's
+    own documented recommendation) instead of the SDK default of 0. Safe
+    because the SDK only retries requests it can prove are idempotent.
+  - **Reply-sync overlap protection** — unlike the claim-based send and
+    verification pipelines, `runReplySyncWorker` previously selected
+    mailboxes via a plain `select` with no lease of any kind, so an
+    overlapping invocation (a slow run still in flight when the next
+    scheduled sync-replies trigger fired) could process the same mailbox's
+    inbox twice concurrently. New migration
+    (`supabase/migrations/20260814100000_mailboxes_reply_sync_lock.sql`)
+    adds `mailboxes.reply_sync_locked_until` + `claim_mailboxes_for_reply_sync()`
+    (same `for update skip locked` lease pattern as `claim_due_sends()`/
+    `claim_due_verifications()`, scoped only to `mailboxes`), with the lease
+    released on both success (`updateMailboxSyncCursor`) and per-mailbox
+    failure. No new RLS policy was needed — `mailboxes`' existing 4
+    owner-scoped policies are unchanged and still enforcing; this migration
+    only adds a column and a function.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for all 41
+    migrations including this one.
+  - **New column and function confirmed live, not just read from the
+    migration file**: queried directly against the linked project —
+    `mailboxes.reply_sync_locked_until` (`timestamp with time zone`,
+    nullable) and `claim_mailboxes_for_reply_sync` (`FUNCTION`,
+    `security_type: INVOKER` — not security-definer, matching
+    `claim_due_sends()`/`claim_due_verifications()`'s existing convention)
+    both exist.
+  - All checks (typecheck, lint, build, full test suite — 475 tests) passed
+    before commit.
 
 ## Current milestone
 
@@ -522,13 +593,12 @@ selected yet.
 
 ## Not started
 
-- **Enterprise Readiness — Reliability and Scalability tracks** — the
-  Security track (Phases 3A, 3B Parts 1-3, see Done) is complete: all 7
-  approved Security findings from the original audit are implemented. The
-  same audit's Reliability and Scalability findings (separate categories
-  from Security) remain entirely unstarted and haven't yet been broken
-  into sub-phases the way Security was. Production Readiness findings from
-  the same audit are also still unstarted.
+- **Enterprise Readiness — Scalability track** — the Security track
+  (Phases 3A, 3B Parts 1-3) and the Reliability track (see Done) are both
+  complete. The same original audit's Scalability findings (a separate
+  category from Security and Reliability) remain entirely unstarted and
+  haven't yet been broken into sub-phases. Production Readiness findings
+  from the same audit are also still unstarted.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

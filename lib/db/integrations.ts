@@ -74,8 +74,19 @@ export async function deleteIntegration(supabase: Client, organizationId: string
 // membership in the loop. Same carve-out as
 // listActiveMailboxesForHealthCheck (lib/db/mailboxes.ts).
 
+// Defensive ceiling only (Scalability Track, Item 2) — this is a
+// platform-wide, unbounded read across every organization's integrations,
+// processed sequentially in one cron invocation. A real batched/claimed
+// pattern (mirroring claim_due_sends()) is a later item; this just stops
+// unbounded growth from getting worse in the meantime.
+const DEFENSIVE_LIST_LIMIT = 1000;
+
 export async function listEnabledIntegrations(supabase: Client): Promise<Tables<"integrations">[]> {
-  const { data, error } = await supabase.from("integrations").select("*").eq("status", "enabled");
+  const { data, error } = await supabase
+    .from("integrations")
+    .select("*")
+    .eq("status", "enabled")
+    .limit(DEFENSIVE_LIST_LIMIT);
   if (error) throw error;
   return data ?? [];
 }

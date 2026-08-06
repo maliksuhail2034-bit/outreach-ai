@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { Client } from "@/lib/db/shared";
 
 const {
   listEnabledIntegrationsMock,
@@ -16,10 +17,6 @@ const {
   sendMock: vi.fn(),
 }));
 
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => ({}),
-}));
-
 vi.mock("@/lib/db", () => ({
   getOrganization: getOrganizationMock,
   listEnabledIntegrations: listEnabledIntegrationsMock,
@@ -35,6 +32,8 @@ vi.mock("./get-provider", () => ({
 }));
 
 import { runIntegrationsDigestWorker } from "./digest-worker";
+
+const supabase = {} as unknown as Client;
 
 const INTEGRATION_A = { id: "integration-a", organization_id: "org-a", provider: "webhook" };
 const INTEGRATION_B = { id: "integration-b", organization_id: "org-b", provider: "webhook" };
@@ -54,7 +53,7 @@ describe("runIntegrationsDigestWorker", () => {
   it("delivers a digest to every enabled integration and reports the summary", async () => {
     listEnabledIntegrationsMock.mockResolvedValue([INTEGRATION_A, INTEGRATION_B]);
 
-    const summary = await runIntegrationsDigestWorker();
+    const summary = await runIntegrationsDigestWorker(supabase);
 
     expect(summary).toEqual({ checked: 2, delivered: 2, failed: 0 });
     expect(sendMock).toHaveBeenCalledTimes(2);
@@ -69,7 +68,7 @@ describe("runIntegrationsDigestWorker", () => {
     listEnabledIntegrationsMock.mockResolvedValue([INTEGRATION_A, INTEGRATION_B]);
     sendMock.mockRejectedValueOnce(new Error("webhook unreachable")).mockResolvedValueOnce({ delivered: true });
 
-    const summary = await runIntegrationsDigestWorker();
+    const summary = await runIntegrationsDigestWorker(supabase);
 
     expect(summary).toEqual({ checked: 2, delivered: 1, failed: 1 });
     expect(recordIntegrationDeliveryResultMock).toHaveBeenCalledWith(
@@ -86,7 +85,7 @@ describe("runIntegrationsDigestWorker", () => {
       insights: [],
     });
 
-    const summary = await runIntegrationsDigestWorker();
+    const summary = await runIntegrationsDigestWorker(supabase);
 
     expect(summary).toEqual({ checked: 2, delivered: 1, failed: 1 });
   });
@@ -96,7 +95,7 @@ describe("runIntegrationsDigestWorker", () => {
     sendMock.mockRejectedValueOnce(new Error("webhook unreachable"));
     recordIntegrationDeliveryResultMock.mockRejectedValueOnce(new Error("db unavailable"));
 
-    const summary = await runIntegrationsDigestWorker();
+    const summary = await runIntegrationsDigestWorker(supabase);
 
     expect(summary).toEqual({ checked: 1, delivered: 0, failed: 1 });
   });
@@ -104,7 +103,7 @@ describe("runIntegrationsDigestWorker", () => {
   it("returns a zeroed summary when there are no enabled integrations", async () => {
     listEnabledIntegrationsMock.mockResolvedValue([]);
 
-    const summary = await runIntegrationsDigestWorker();
+    const summary = await runIntegrationsDigestWorker(supabase);
 
     expect(summary).toEqual({ checked: 0, delivered: 0, failed: 0 });
     expect(sendMock).not.toHaveBeenCalled();

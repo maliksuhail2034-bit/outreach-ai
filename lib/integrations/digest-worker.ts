@@ -1,4 +1,3 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { Client } from "@/lib/db";
 import { getOrganization, listEnabledIntegrations, recordIntegrationDeliveryResult } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
@@ -19,8 +18,7 @@ export interface IntegrationsDigestSummary {
 // same shape as runReplySyncWorker/runDeliverabilityHealthCheckWorker, so
 // one organization's unreachable webhook can't stop every other
 // organization's digest from sending.
-export async function runIntegrationsDigestWorker(): Promise<IntegrationsDigestSummary> {
-  const supabase = createAdminClient();
+export async function runIntegrationsDigestWorker(supabase: Client): Promise<IntegrationsDigestSummary> {
   const summary: IntegrationsDigestSummary = { checked: 0, delivered: 0, failed: 0 };
 
   const integrations = await listEnabledIntegrations(supabase);

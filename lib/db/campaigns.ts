@@ -2,12 +2,19 @@ import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types"
 import type { Client } from "./shared";
 import { unwrap } from "./shared";
 
+// Defensive ceiling only (Scalability Track, Item 2) — real pagination for
+// this list is a separate, later item. Chosen well above any current real
+// per-user campaign count so today's behavior is unchanged; this just stops
+// an unbounded fetch from getting worse while the real fix is pending.
+const DEFENSIVE_LIST_LIMIT = 1000;
+
 export async function listCampaigns(supabase: Client, userId: string) {
   const { data, error } = await supabase
     .from("campaigns")
     .select("*")
     .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(DEFENSIVE_LIST_LIMIT);
   if (error) throw error;
   return data;
 }

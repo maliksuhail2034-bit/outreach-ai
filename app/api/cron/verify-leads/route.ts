@@ -9,7 +9,7 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "verify-leads", () => runVerificationWorker());
+  return runCronJob(request, "verify-leads", (supabase) => runVerificationWorker(supabase));
 }
 
 export async function GET(request: Request) {

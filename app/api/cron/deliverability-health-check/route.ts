@@ -13,7 +13,7 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "deliverability-health-check", () => runDeliverabilityHealthCheckWorker());
+  return runCronJob(request, "deliverability-health-check", (supabase) => runDeliverabilityHealthCheckWorker(supabase));
 }
 
 export async function GET(request: Request) {

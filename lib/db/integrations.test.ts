@@ -21,11 +21,12 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
     delete: vi.fn(),
     eq: vi.fn(),
     order: vi.fn(),
+    limit: vi.fn(),
     single: vi.fn(),
     maybeSingle: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "insert", "upsert", "update", "delete", "eq", "order", "single", "maybeSingle"] as const) {
+  for (const method of ["select", "insert", "upsert", "update", "delete", "eq", "order", "limit", "single", "maybeSingle"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 

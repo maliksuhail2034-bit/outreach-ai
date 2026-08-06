@@ -1,4 +1,3 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { Client } from "@/lib/db/shared";
 import type { Json, Tables } from "@/types/database.types";
 import {
@@ -33,9 +32,10 @@ export interface VerificationWorkerSummary {
 // by app/api/cron/verify-leads/route.ts, never called synchronously from a
 // Server Function (see the Email Verification architecture review: bulk
 // verification is always queued, never a synchronous batch).
-export async function runVerificationWorker(limit = DEFAULT_CLAIM_LIMIT): Promise<VerificationWorkerSummary> {
-  const supabase = createAdminClient();
-
+export async function runVerificationWorker(
+  supabase: Client,
+  limit = DEFAULT_CLAIM_LIMIT,
+): Promise<VerificationWorkerSummary> {
   const claimed = await claimDueVerifications(supabase, limit);
   const summary: VerificationWorkerSummary = { claimed: claimed.length, verified: 0, failed: 0, retried: 0 };
 

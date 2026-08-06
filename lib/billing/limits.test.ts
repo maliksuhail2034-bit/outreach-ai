@@ -39,11 +39,12 @@ function createMockClient(overrides: {
       select: vi.fn(),
       eq: vi.fn(),
       order: vi.fn(),
+      limit: vi.fn(),
       single: vi.fn(),
       maybeSingle: vi.fn(),
       then: (resolve: (value: typeof result) => void) => resolve(result),
     };
-    for (const method of ["select", "eq", "order", "single", "maybeSingle"] as const) {
+    for (const method of ["select", "eq", "order", "limit", "single", "maybeSingle"] as const) {
       chainable[method].mockReturnValue(chainable);
     }
     return chainable;

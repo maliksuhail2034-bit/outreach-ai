@@ -88,9 +88,20 @@ export async function countSendAttemptsByStatus(supabase: Client, status?: strin
 // performance table. send_attempts has no campaign_id column directly (only
 // campaign_lead_id), so the caller resolves a campaign's lead ids first
 // (e.g. via listCampaignLeads) and passes them here.
+//
+// DEFENSIVE_LIST_LIMIT (Scalability Track, Item 2): a ceiling only, not real
+// pagination — matches the EVENT_FETCH_LIMIT precedent already used across
+// the analytics snapshot builders (e.g. lib/campaigns/campaign-analytics.ts)
+// for "comfortably covers real usage without pagination" caps.
+const DEFENSIVE_LIST_LIMIT = 5000;
+
 export async function listSendAttemptsForCampaignLeads(supabase: Client, campaignLeadIds: string[]) {
   if (campaignLeadIds.length === 0) return [];
-  const { data, error } = await supabase.from("send_attempts").select("*").in("campaign_lead_id", campaignLeadIds);
+  const { data, error } = await supabase
+    .from("send_attempts")
+    .select("*")
+    .in("campaign_lead_id", campaignLeadIds)
+    .limit(DEFENSIVE_LIST_LIMIT);
   if (error) throw error;
   return data;
 }

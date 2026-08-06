@@ -161,8 +161,19 @@ export async function releaseMailboxReplySyncLock(supabase: Client, id: string) 
 // health-check worker (lib/deliverability/health-check-worker.ts) iterates.
 // Credentials are never needed for scoring, so this returns MailboxSafe like
 // every user-facing read, unlike the reply-sync/send-worker admin reads above.
+//
+// DEFENSIVE_LIST_LIMIT (Scalability Track, Item 2): a ceiling only, not real
+// batching — this is a platform-wide, unbounded read across every user's
+// mailboxes, processed sequentially in one cron invocation. A real
+// batched/claimed pattern (mirroring claim_due_sends()) is a later item.
+const DEFENSIVE_LIST_LIMIT = 5000;
+
 export async function listActiveMailboxesForHealthCheck(supabase: Client): Promise<MailboxSafe[]> {
-  const { data, error } = await supabase.from("mailboxes").select("*").eq("status", "active");
+  const { data, error } = await supabase
+    .from("mailboxes")
+    .select("*")
+    .eq("status", "active")
+    .limit(DEFENSIVE_LIST_LIMIT);
   if (error) throw error;
   return (data ?? []).map(omitPassword);
 }

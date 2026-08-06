@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordJobRun } from "@/lib/db";
+import type { Client } from "@/lib/db";
 import type { Json } from "@/types/database.types";
 import { pingHeartbeat, type CronJobName } from "./heartbeat";
 import { captureError } from "./error-tracking";
@@ -32,10 +33,17 @@ function isAuthorized(request: Request): boolean {
 // themselves stay fully separate (this only wraps the route-level
 // boilerplate, never the worker orchestration) — same deliberate
 // non-coupling reply-worker.ts's route already calls out.
+//
+// The one client created here (below) is handed to `run()` instead of each
+// worker creating its own second instance — every worker previously called
+// createAdminClient() again internally, which was redundant (Scalability
+// Track, Item 1: no correctness issue, since supabase-js is a stateless
+// PostgREST/HTTP client rather than a pooled DB connection, but still two
+// objects doing the same job where one suffices).
 export async function runCronJob<T extends object>(
   request: Request,
   job: CronJobName,
-  run: () => Promise<T>,
+  run: (supabase: Client) => Promise<T>,
 ): Promise<NextResponse> {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -47,7 +55,7 @@ export async function runCronJob<T extends object>(
   const supabase = createAdminClient();
 
   try {
-    const summary = await run();
+    const summary = await run(supabase);
     const executionTimeMs = Date.now() - startedAt;
 
     // The only place a run's outcome was visible short of querying the DB

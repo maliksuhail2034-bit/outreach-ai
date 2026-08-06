@@ -1,4 +1,3 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
@@ -43,8 +42,7 @@ interface ReplyMatch {
 // Orchestration only — mirrors lib/email/send-worker.ts's shape exactly.
 // Sequential across mailboxes (not parallel), a deliberate choice to avoid
 // tripping provider-side IMAP connection/rate limits — see the plan §6.
-export async function runReplySyncWorker(): Promise<ReplySyncSummary> {
-  const supabase = createAdminClient();
+export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSummary> {
   const summary: ReplySyncSummary = {
     mailboxesChecked: 0,
     messagesFetched: 0,

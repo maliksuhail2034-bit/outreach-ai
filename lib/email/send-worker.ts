@@ -1,4 +1,3 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
@@ -62,8 +61,7 @@ type ProcessOutcome = "sent" | "failed" | "needsReview" | "skipped";
 // in earlier tasks (claiming, scheduling math, merge tags, provider send,
 // ledger writes) — this file contains no scheduling, merge-tag, or
 // duplicate-send-prevention logic of its own.
-export async function runSendWorker(limit = DEFAULT_CLAIM_LIMIT): Promise<SendWorkerSummary> {
-  const supabase = createAdminClient();
+export async function runSendWorker(supabase: Client, limit = DEFAULT_CLAIM_LIMIT): Promise<SendWorkerSummary> {
   const startedAt = Date.now();
 
   const claimed = await claimDueSends(supabase, limit);

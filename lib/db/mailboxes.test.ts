@@ -7,9 +7,10 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
   const chainable = {
     select: vi.fn(),
     eq: vi.fn(),
+    limit: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "eq"] as const) {
+  for (const method of ["select", "eq", "limit"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 

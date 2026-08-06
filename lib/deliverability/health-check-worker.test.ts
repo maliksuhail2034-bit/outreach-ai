@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { Client } from "@/lib/db/shared";
 
 const { getWarmupProfileByMailboxIdMock, getMailboxHealthByMailboxIdMock, listActiveMailboxesForHealthCheckMock, upsertMailboxHealthMock } =
   vi.hoisted(() => ({
@@ -8,10 +9,6 @@ const { getWarmupProfileByMailboxIdMock, getMailboxHealthByMailboxIdMock, listAc
     upsertMailboxHealthMock: vi.fn(),
   }));
 
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => ({}),
-}));
-
 vi.mock("@/lib/db", () => ({
   getWarmupProfileByMailboxId: getWarmupProfileByMailboxIdMock,
   getMailboxHealthByMailboxId: getMailboxHealthByMailboxIdMock,
@@ -20,6 +17,8 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { runDeliverabilityHealthCheckWorker } from "./health-check-worker";
+
+const supabase = {} as unknown as Client;
 
 const MAILBOX_A = { id: "mailbox-a", user_id: "user-a", status: "active" };
 const MAILBOX_B = { id: "mailbox-b", user_id: "user-b", status: "active" };
@@ -35,7 +34,7 @@ describe("runDeliverabilityHealthCheckWorker", () => {
   it("recalculates health for every active mailbox and reports the summary", async () => {
     listActiveMailboxesForHealthCheckMock.mockResolvedValue([MAILBOX_A, MAILBOX_B]);
 
-    const summary = await runDeliverabilityHealthCheckWorker();
+    const summary = await runDeliverabilityHealthCheckWorker(supabase);
 
     expect(summary).toEqual({ checked: 2, updated: 2, failed: 0 });
     expect(upsertMailboxHealthMock).toHaveBeenCalledTimes(2);
@@ -49,7 +48,7 @@ describe("runDeliverabilityHealthCheckWorker", () => {
     listActiveMailboxesForHealthCheckMock.mockResolvedValue([MAILBOX_A]);
     getWarmupProfileByMailboxIdMock.mockResolvedValue({ mailbox_id: MAILBOX_A.id, stage: "healthy" });
 
-    await runDeliverabilityHealthCheckWorker();
+    await runDeliverabilityHealthCheckWorker(supabase);
 
     expect(upsertMailboxHealthMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -62,7 +61,7 @@ describe("runDeliverabilityHealthCheckWorker", () => {
     getWarmupProfileByMailboxIdMock.mockResolvedValue(null);
     getMailboxHealthByMailboxIdMock.mockResolvedValue({ warmup_status: "warming", reputation_score: 80 });
 
-    await runDeliverabilityHealthCheckWorker();
+    await runDeliverabilityHealthCheckWorker(supabase);
 
     expect(upsertMailboxHealthMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -77,7 +76,7 @@ describe("runDeliverabilityHealthCheckWorker", () => {
       return Promise.resolve(null);
     });
 
-    const summary = await runDeliverabilityHealthCheckWorker();
+    const summary = await runDeliverabilityHealthCheckWorker(supabase);
 
     expect(summary).toEqual({ checked: 2, updated: 1, failed: 1 });
     expect(upsertMailboxHealthMock).toHaveBeenCalledTimes(1);
@@ -94,7 +93,7 @@ describe("runDeliverabilityHealthCheckWorker", () => {
       return Promise.resolve({ id: "health-2" });
     });
 
-    const summary = await runDeliverabilityHealthCheckWorker();
+    const summary = await runDeliverabilityHealthCheckWorker(supabase);
 
     expect(summary).toEqual({ checked: 2, updated: 1, failed: 1 });
   });
@@ -102,7 +101,7 @@ describe("runDeliverabilityHealthCheckWorker", () => {
   it("returns a zeroed summary when there are no active mailboxes", async () => {
     listActiveMailboxesForHealthCheckMock.mockResolvedValue([]);
 
-    const summary = await runDeliverabilityHealthCheckWorker();
+    const summary = await runDeliverabilityHealthCheckWorker(supabase);
 
     expect(summary).toEqual({ checked: 0, updated: 0, failed: 0 });
     expect(upsertMailboxHealthMock).not.toHaveBeenCalled();

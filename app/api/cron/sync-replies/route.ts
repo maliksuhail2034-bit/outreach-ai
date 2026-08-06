@@ -16,7 +16,7 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "sync-replies", () => runReplySyncWorker());
+  return runCronJob(request, "sync-replies", (supabase) => runReplySyncWorker(supabase));
 }
 
 export async function GET(request: Request) {

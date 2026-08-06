@@ -1,4 +1,3 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { Client, MailboxSafe } from "@/lib/db";
 import {
   getMailboxHealthByMailboxId,
@@ -28,8 +27,7 @@ export interface DeliverabilityHealthCheckSummary {
 // Domain-side automation is deliberately out of scope here — see the
 // roadmap note: no real DNS provider/integration exists yet for domain
 // verification to produce meaningful automated results.
-export async function runDeliverabilityHealthCheckWorker(): Promise<DeliverabilityHealthCheckSummary> {
-  const supabase = createAdminClient();
+export async function runDeliverabilityHealthCheckWorker(supabase: Client): Promise<DeliverabilityHealthCheckSummary> {
   const summary: DeliverabilityHealthCheckSummary = { checked: 0, updated: 0, failed: 0 };
 
   const mailboxes = await listActiveMailboxesForHealthCheck(supabase);

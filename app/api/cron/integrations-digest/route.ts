@@ -9,7 +9,7 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "integrations-digest", () => runIntegrationsDigestWorker());
+  return runCronJob(request, "integrations-digest", (supabase) => runIntegrationsDigestWorker(supabase));
 }
 
 export async function GET(request: Request) {

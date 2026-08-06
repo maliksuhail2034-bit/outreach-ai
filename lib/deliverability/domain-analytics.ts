@@ -3,18 +3,23 @@ import type { Client, MailboxSafe } from "@/lib/db";
 import { getDomain, getOrganizationMembership, listDailyRollups, listMailboxes } from "@/lib/db";
 import { summarizeMailboxMetrics, type MailboxMetricsSummary } from "@/lib/analytics/mailbox-metrics";
 import { sumByKey } from "@/lib/analytics/metrics";
+import type { DateRange } from "@/lib/analytics/types";
 import { calculateDomainHealthScore, type DomainHealthScoreResult } from "./scoring";
 
 export interface DomainAnalyticsSnapshot {
   domain: Tables<"domains">;
   domainMailboxes: MailboxSafe[];
-  // Scalability Track, Phase D: always empty now that overview is sourced
-  // from analytics_daily_rollups instead of a raw email_events fetch.
-  // Confirmed unused by every real caller (the domain analytics page, the
-  // domain compare page, lib/ai/snapshot.ts) before cutting this over — kept
-  // in the return shape for now rather than as a Phase D interface change;
-  // Phase E is where this field actually gets removed.
-  events: Tables<"email_events">[];
+  // Production Readiness, Deliverability Trends Rollup Migration: one row
+  // per (rollup_date, event_type) for this domain (subject_type='domain'),
+  // already written nightly by lib/analytics/rollup-worker.ts's
+  // upsertDomainRollups. Scoped to whatever range the caller passes as
+  // trendsRange; empty when no range is given (Domain Comparison only
+  // needs overview, not trend data). Replaces the old
+  // events: Tables<"email_events">[] field, which Scalability Track Phase D
+  // left permanently empty once the overview computation below moved to
+  // rollups — Phase E's cleanup found it was still consumed by the Trends
+  // section and deferred its replacement here rather than just deleting it.
+  dailyRollups: Tables<"analytics_daily_rollups">[];
   overview: MailboxMetricsSummary;
   healthScore: DomainHealthScoreResult;
 }
@@ -41,6 +46,7 @@ export async function loadDomainAnalyticsSnapshot(
   supabase: Client,
   userId: string,
   domainId: string,
+  trendsRange?: DateRange,
 ): Promise<DomainAnalyticsSnapshot> {
   const domain = await getDomain(supabase, userId, domainId);
 
@@ -81,5 +87,17 @@ export async function loadDomainAnalyticsSnapshot(
     replyRate: overview.replyRate,
   });
 
-  return { domain, domainMailboxes, events: [], overview, healthScore };
+  // Only fetched when a caller passes a range — the domain analytics page
+  // does (for its Trends section); Domain Comparison doesn't.
+  const dailyRollups =
+    membership && trendsRange
+      ? await listDailyRollups(supabase, membership.organization_id, {
+          subjectType: "domain",
+          subjectId: domainId,
+          since: trendsRange.start,
+          until: trendsRange.end,
+        })
+      : [];
+
+  return { domain, domainMailboxes, dailyRollups, overview, healthScore };
 }

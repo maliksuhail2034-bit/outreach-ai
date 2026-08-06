@@ -2,15 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { InboxIcon, MessageCircleReplyIcon, SendIcon, MailCheckIcon, MailWarningIcon, TrendingUpIcon } from "lucide-react";
 
+import type { Tables } from "@/types/database.types";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getLatestRecommendation, getUserOrganization, listAiProviderKeys } from "@/lib/db";
 import type { AiProviderName } from "@/lib/ai/get-provider";
-import { bucketByDayInRange, previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
+import { previousDateRange, resolveDateRange } from "@/lib/analytics/aggregations";
 import { compareMetrics } from "@/lib/analytics/comparisons";
 import { getForecaster, summarizeForecast } from "@/lib/analytics/forecasting";
 import { collectInsights, forecastToInsight, healthFactorsToInsights, trendToInsight } from "@/lib/analytics/insights";
 import { total } from "@/lib/analytics/metrics";
+import type { DailyCount } from "@/lib/analytics/time-buckets";
 import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
 import type { HealthScoreFactor } from "@/lib/analytics/types";
 import { dateRangeQuerySchema } from "@/lib/validations/analytics";
@@ -47,25 +49,6 @@ export default async function DomainAnalyticsPage({
 
   const supabase = await createClient();
 
-  // Fetch orchestration (domain lookup, mailbox resolution, combined event
-  // fetch, overview summary, health score) is shared with Domain Comparison
-  // via lib/deliverability/domain-analytics.ts — this page only adds the
-  // date-ranged trend bucketing below, which Domain Comparison doesn't need.
-  let snapshot: DomainAnalyticsSnapshot;
-  try {
-    snapshot = await loadDomainAnalyticsSnapshot(supabase, user.id, domainId);
-  } catch {
-    notFound();
-  }
-  const { domain, domainMailboxes, events, overview, healthScore } = snapshot;
-
-  const organization = await getUserOrganization(supabase, user);
-  const [aiProviderKeys, latestRecommendation] = await Promise.all([
-    listAiProviderKeys(supabase, organization.id),
-    getLatestRecommendation(supabase, organization.id, "domain", domainId),
-  ]);
-  const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
-
   const query = await searchParams;
   const parsedQuery = dateRangeQuerySchema.safeParse({ preset: query.range ?? "7d", start: query.start, end: query.end });
   const preset: DateRangePreset = parsedQuery.success ? parsedQuery.data.preset : "7d";
@@ -74,6 +57,30 @@ export default async function DomainAnalyticsPage({
       ? resolveDateRange("custom", { start: parsedQuery.data.start, end: parsedQuery.data.end })
       : resolveDateRange(preset === "custom" ? "7d" : preset);
   const priorRange = previousDateRange(currentRange);
+
+  // Fetch orchestration (domain lookup, mailbox resolution, overview
+  // summary, health score) is shared with Domain Comparison via
+  // lib/deliverability/domain-analytics.ts — this page additionally passes
+  // a trends range, which Domain Comparison doesn't need, so that shared
+  // function also fetches this domain's daily rollup rows for the Trends
+  // section below (spanning priorRange through currentRange in one query).
+  let snapshot: DomainAnalyticsSnapshot;
+  try {
+    snapshot = await loadDomainAnalyticsSnapshot(supabase, user.id, domainId, {
+      start: priorRange.start,
+      end: currentRange.end,
+    });
+  } catch {
+    notFound();
+  }
+  const { domain, domainMailboxes, dailyRollups, overview, healthScore } = snapshot;
+
+  const organization = await getUserOrganization(supabase, user);
+  const [aiProviderKeys, latestRecommendation] = await Promise.all([
+    listAiProviderKeys(supabase, organization.id),
+    getLatestRecommendation(supabase, organization.id, "domain", domainId),
+  ]);
+  const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
 
   const activeRangeLabel = ANALYTICS_RANGE_OPTIONS.find((option) => option.preset === preset)?.label ?? "selected range";
 
@@ -168,7 +175,7 @@ export default async function DomainAnalyticsPage({
           </FadeIn>
 
           <TrendsSection
-            events={events}
+            dailyRollups={dailyRollups}
             currentRange={currentRange}
             priorRange={priorRange}
             healthScoreFactors={healthScore.factors}
@@ -187,27 +194,52 @@ export default async function DomainAnalyticsPage({
   );
 }
 
+// Same zero-filled day-range bucketing as
+// lib/analytics/aggregations.ts's bucketByDayInRange (identical UTC cursor
+// loop, identical zero-fill, identical inverted-range short-circuit —
+// see that function's own tests in aggregations.test.ts), but keyed off
+// already-aggregated analytics_daily_rollups rows instead of raw per-event
+// timestamps: there's nothing to re-bucket once counts are pre-summed by
+// day, so this looks up each day's count instead of counting occurrences.
+function bucketDailyRollupsByDay(
+  dailyRollups: Tables<"analytics_daily_rollups">[],
+  eventType: string,
+  range: { start: string; end: string },
+): DailyCount[] {
+  const counts = new Map<string, number>();
+  for (const row of dailyRollups) {
+    if (row.event_type !== eventType) continue;
+    counts.set(row.rollup_date, (counts.get(row.rollup_date) ?? 0) + row.event_count);
+  }
+
+  const result: DailyCount[] = [];
+  const cursor = new Date(`${range.start}T00:00:00Z`);
+  const end = new Date(`${range.end}T00:00:00Z`);
+  if (cursor > end) return result;
+
+  while (cursor <= end) {
+    const key = cursor.toISOString().slice(0, 10);
+    result.push({ date: key, value: counts.get(key) ?? 0 });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return result;
+}
+
 async function TrendsSection({
-  events,
+  dailyRollups,
   currentRange,
   priorRange,
   healthScoreFactors,
 }: {
-  events: { event_type: string; created_at: string }[];
+  dailyRollups: Tables<"analytics_daily_rollups">[];
   currentRange: { start: string; end: string };
   priorRange: { start: string; end: string };
   healthScoreFactors: HealthScoreFactor[];
 }) {
-  const sentTimestamps = events.filter((e) => e.event_type === "sent").map((e) => e.created_at);
-  const deliveredTimestamps = events.filter((e) => e.event_type === "delivered").map((e) => e.created_at);
-  const openedTimestamps = events.filter((e) => e.event_type === "opened").map((e) => e.created_at);
-  const repliedTimestamps = events.filter((e) => e.event_type === "replied").map((e) => e.created_at);
-  const bouncedTimestamps = events.filter((e) => e.event_type === "bounced").map((e) => e.created_at);
-
-  const dailySends = bucketByDayInRange(sentTimestamps, currentRange);
-  const dailyOpens = bucketByDayInRange(openedTimestamps, currentRange);
-  const dailyReplies = bucketByDayInRange(repliedTimestamps, currentRange);
-  const dailyBounces = bucketByDayInRange(bouncedTimestamps, currentRange);
+  const dailySends = bucketDailyRollupsByDay(dailyRollups, "sent", currentRange);
+  const dailyOpens = bucketDailyRollupsByDay(dailyRollups, "opened", currentRange);
+  const dailyReplies = bucketDailyRollupsByDay(dailyRollups, "replied", currentRange);
+  const dailyBounces = bucketDailyRollupsByDay(dailyRollups, "bounced", currentRange);
 
   // Reuses lib/analytics/forecasting.ts's LinearTrendForecaster over
   // dailySends, the same series "Daily sends" renders below — no extra
@@ -216,14 +248,14 @@ async function TrendsSection({
   const sendForecastSummary = summarizeForecast(sendForecast);
 
   const sendsTotal = total(dailySends.map((d) => d.value));
-  const deliveredTotal = total(bucketByDayInRange(deliveredTimestamps, currentRange).map((d) => d.value));
+  const deliveredTotal = total(bucketDailyRollupsByDay(dailyRollups, "delivered", currentRange).map((d) => d.value));
   const repliesTotal = total(dailyReplies.map((d) => d.value));
   const bouncesTotal = total(dailyBounces.map((d) => d.value));
 
-  const priorSends = total(bucketByDayInRange(sentTimestamps, priorRange).map((d) => d.value));
-  const priorDelivered = total(bucketByDayInRange(deliveredTimestamps, priorRange).map((d) => d.value));
-  const priorReplies = total(bucketByDayInRange(repliedTimestamps, priorRange).map((d) => d.value));
-  const priorBounces = total(bucketByDayInRange(bouncedTimestamps, priorRange).map((d) => d.value));
+  const priorSends = total(bucketDailyRollupsByDay(dailyRollups, "sent", priorRange).map((d) => d.value));
+  const priorDelivered = total(bucketDailyRollupsByDay(dailyRollups, "delivered", priorRange).map((d) => d.value));
+  const priorReplies = total(bucketDailyRollupsByDay(dailyRollups, "replied", priorRange).map((d) => d.value));
+  const priorBounces = total(bucketDailyRollupsByDay(dailyRollups, "bounced", priorRange).map((d) => d.value));
 
   const trends = compareMetrics(
     { sends: sendsTotal, delivered: deliveredTotal, replies: repliesTotal, bounces: bouncesTotal },

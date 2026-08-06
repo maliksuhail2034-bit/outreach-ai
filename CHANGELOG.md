@@ -3,6 +3,127 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-06 — Enterprise Readiness — Scalability Track, Phase D (Incremental Cutover), Complete (Commits: ceaa989, 0e8494c, d80ccd2, 57fedd7, 6f851aa, 94c3418)
+
+- **Fourth of five approved phases for the Scalability Track.** Objective:
+  cut every Phase B capability over to real production behavior, one item
+  at a time — the only phase in this track where real production behavior
+  actually changes. Each of the six steps below was independently audited,
+  implemented, verified (typecheck/lint/build/test), committed, and pushed
+  before the next began; none were bundled. **Implementation complete,
+  published, no migration pending.**
+  - **Step 1 / Item 6 — mailbox, domain, and organization analytics cut
+    over to rollups** (commit `ceaa989`) — `lib/mailboxes/mailbox-analytics.ts`,
+    `lib/deliverability/domain-analytics.ts`, and
+    `lib/analytics/organization-rollup.ts` now read from
+    `analytics_daily_rollups` via `listDailyRollups()`/`sumByKey()`
+    instead of fetching and summing raw `email_events` rows in Node.
+    `lib/campaigns/campaign-analytics.ts` deliberately excluded — it needs
+    raw per-step event rows for step-level drop-off/health-score
+    computation, which the rollup granularity can't serve — and confirmed
+    byte-for-byte unchanged both at this step and again just before Item
+    10. Verified live against the linked development/staging project: the
+    `/analytics` page's numbers (`Emails sent: 2, Reply rate: 50%`)
+    matched Phase C's already-validated rollup numbers exactly.
+  - **Step 2 / Item 7 — available-leads query wired in** (commit
+    `0e8494c`) — the campaign detail page
+    (`app/(app)/campaigns/[campaignId]/page.tsx`) now calls
+    `listLeadsAvailableForCampaign()` (built in Phase B) instead of the
+    old 10,000-row account-wide fetch diffed against enrolled leads in JS.
+  - **Step 3 / Items 8/9 — pagination wired in, plus deferred composite
+    indexes** (commit `d80ccd2`) — `/leads` and `/campaigns`
+    (`app/(app)/leads/page.tsx`, `app/(app)/campaigns/page.tsx`,
+    `components/leads/lead-table.tsx`,
+    `components/campaigns/campaign-list.tsx`) now call
+    `listLeadsPage()`/`listCampaignsPage()` with a new
+    `components/ui/pagination.tsx` control, replacing the prior
+    unbounded/capped `listLeads()`/`listCampaigns()` reads on those two
+    pages specifically (both functions are kept — still used elsewhere,
+    e.g. the campaign detail page's `{ limit: 10000 }` call). Adds the
+    two composite indexes deferred from Phase B
+    (`leads_user_id_created_at_idx`, `campaigns_user_id_created_at_idx`,
+    migration `20260817100000_leads_campaigns_pagination_indexes.sql`).
+    **Live browser testing at this step surfaced a real bug no mocked
+    unit test had caught**: PostgREST rejects an out-of-range `.range()`
+    offset outright (HTTP 416, error code `PGRST103`, "Requested range
+    not satisfiable") rather than returning zero rows — navigating to
+    `/leads?page=2` with only 2 real leads crashed the page. Fixed by
+    having both paginated queries fall back to a count-only query and
+    clamp to the last valid page on `PGRST103` instead of throwing,
+    covered by new fallback tests in `lib/db/leads.test.ts` and a new
+    `lib/db/campaigns.test.ts`, and re-verified live in the browser
+    afterward — both pages now self-correct to page 1 instead of
+    crashing on a stale/out-of-range page number.
+  - **Item 10 — CSV batch-insert swap** (commit `57fedd7`) —
+    `app/(app)/leads/import-actions.ts` still validates, dedups, and
+    quota-checks each CSV row up front exactly as before, then makes one
+    call to `createLeadsBatch()` (built in Phase B) instead of one
+    `createLead()` round trip per row, mapping any batch-insert failure
+    back to its original CSV row number so the existing
+    `imported`/`skippedDuplicates`/`failed`/`failedRows` UX is
+    unchanged. One narrow tradeoff was identified, evaluated, and
+    explicitly documented rather than silently accepted: dedup/quota
+    state is reserved optimistically before the batch runs rather than
+    only after a confirmed insert, which can very rarely cause an
+    over-conservative skip within a single import (never an
+    under-conservative one) — the database's `leads_user_email_key`
+    unique constraint remains the actual authority against duplicates
+    regardless, and both `knownEmails` and `remainingQuota` are
+    recomputed from the database on every import, so the tradeoff is
+    self-correcting and cannot cause over-admission past quota.
+  - **Item 11 — retention worker, dry-run to real delete** (commit
+    `6f851aa`) — `lib/monitoring/retention-worker.ts` now calls
+    `.delete({ count: "exact" })` instead of a count-only `.select()` for
+    both `rate_limit_events` (7-day cutoff) and `job_runs` (90-day
+    cutoff), reporting `deletedCount` instead of `candidateCount`. Same
+    two tables, same two retention windows, same `created_at` indexes as
+    the dry-run had. No new migration needed — `job_runs_job_check`
+    already allowed the `retention-cleanup` job name from Phase B.
+    Confirmed via the migrations directly that neither table has foreign
+    keys pointing at it, so there are no cascading child rows to worry
+    about.
+  - **Item 12 — bounded send-worker concurrency, raised from 1 to 5**
+    (commit `94c3418`) — `DEFAULT_CONCURRENCY` in
+    `lib/email/send-worker.ts` raised from 1 to 5; the
+    `processClaimedLeads()` orchestration itself (built and tested in
+    Phase B) is unchanged. Before implementing, every guarantee the
+    change could plausibly threaten was traced against the actual code:
+    the same-mailbox-never-concurrent invariant is structural
+    (`inFlightMailboxIds`), holding regardless of the concurrency value;
+    `claim_due_sends()`'s daily/hourly/cooldown checks are a claim-time
+    snapshot never re-checked per send, so any batch-claim overshoot is a
+    pre-existing property of that function alone, unaffected by worker
+    concurrency; `send_attempts_lead_step_key`'s unique constraint plus
+    each claimed lead being removed from the queue before dispatch makes
+    a duplicate send structurally impossible at any concurrency; and
+    `SmtpEmailProvider` creates a fresh, unshared transport per send, so
+    parallel sends to different mailboxes can't race on shared state.
+    This is the highest-risk item in the track — the only one enabling
+    real concurrent outbound sends — and was deliberately implemented
+    last.
+  - **No migrations created by this phase's implementation work.** The
+    one migration among these six commits
+    (`20260817100000_leads_campaigns_pagination_indexes.sql`, Step 3) was
+    already applied to the linked development/staging project
+    (`wxhulmbbobkfvtreaspo`) in an earlier, separately-approved step and
+    confirmed live before Item 10 began. **No pending migrations remain
+    for Phase D.**
+  - **Confirmed out of scope for this milestone**: Phase E (Cleanup) —
+    removing the now-superseded raw-fetch analytics code paths, the
+    unbounded `listLeads()`/`listCampaigns()` callers this phase didn't
+    touch, and any other Phase A-D scaffolding kept for backward
+    compatibility — was **not** implemented as part of Phase D and
+    remains not started. Production Readiness findings from the original
+    audit were also **not** implemented and remain not started.
+  - Every step re-ran the full check sequence (typecheck, lint, build,
+    test) before its own commit; the test suite grew from 508 (the Phase
+    B/C baseline) to 523 tests (70 files) over the six steps, all passing
+    at every step and confirmed once more in a final full run at the end
+    of the phase.
+  - **All six commits published on `origin/main`**: `ceaa989` → `0e8494c`
+    → `d80ccd2` → `57fedd7` → `6f851aa` → `94c3418`, each pushed
+    immediately after its own approval, none batched.
+
 ## 2026-08-16 — Enterprise Readiness — Scalability Track, Phase C (Shadow Validation), Complete (Verification only — no code commit)
 
 - **Third of five approved phases for the Scalability Track.** Unlike every

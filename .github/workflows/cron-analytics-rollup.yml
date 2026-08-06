@@ -1,0 +1,15 @@
+name: Cron - analytics rollup
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /api/cron/analytics-rollup
+        run: |
+          curl -f -sS -X POST "${{ secrets.APP_URL }}/api/cron/analytics-rollup" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

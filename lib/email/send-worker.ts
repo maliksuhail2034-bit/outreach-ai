@@ -26,6 +26,13 @@ const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
 const DEFAULT_CLAIM_LIMIT = 25;
 
+// Scalability Track, Phase B (item 12): defaults to 1, which makes
+// processClaimedLeads() below process the claimed batch in the exact same
+// order, one at a time, that the prior plain `for...of` loop did — this
+// phase changes nothing about production behavior. Raising it is a later,
+// separate step (Phase D).
+const DEFAULT_CONCURRENCY = 1;
+
 // Wall-clock budget for one runSendWorker() invocation, checked only between
 // claimed leads — never mid-send. A batch of DEFAULT_CLAIM_LIMIT slow/timing
 // -out sends (each bounded by SMTP_TIMEOUTS, up to ~30s) could otherwise run
@@ -55,32 +62,89 @@ export interface SendWorkerSummary {
   skipped: number;
 }
 
-type ProcessOutcome = "sent" | "failed" | "needsReview" | "skipped";
+export type ProcessOutcome = "sent" | "failed" | "needsReview" | "skipped";
 
 // Orchestration only: every step below delegates to a helper already built
 // in earlier tasks (claiming, scheduling math, merge tags, provider send,
 // ledger writes) — this file contains no scheduling, merge-tag, or
 // duplicate-send-prevention logic of its own.
-export async function runSendWorker(supabase: Client, limit = DEFAULT_CLAIM_LIMIT): Promise<SendWorkerSummary> {
+export async function runSendWorker(
+  supabase: Client,
+  limit = DEFAULT_CLAIM_LIMIT,
+  concurrency = DEFAULT_CONCURRENCY,
+): Promise<SendWorkerSummary> {
   const startedAt = Date.now();
 
   const claimed = await claimDueSends(supabase, limit);
   const summary: SendWorkerSummary = { claimed: claimed.length, sent: 0, failed: 0, needsReview: 0, skipped: 0 };
 
-  for (const campaignLead of claimed) {
-    if (Date.now() - startedAt >= INVOCATION_TIME_BUDGET_MS) {
-      console.log("[send-worker] time budget reached, stopping early", {
-        processed: summary.sent + summary.failed + summary.needsReview + summary.skipped,
-        claimed: claimed.length,
-      });
-      break;
-    }
-
-    const outcome = await processCampaignLead(supabase, campaignLead);
-    summary[outcome] += 1;
-  }
+  await processClaimedLeads(supabase, claimed, concurrency, startedAt, summary, processCampaignLead);
 
   return summary;
+}
+
+// Processes claimed leads with up to `concurrency` in flight at once, with
+// one hard invariant: two leads for the same mailbox_id are never processed
+// concurrently. mailboxes.cooldown_minutes/hourly_limit, and
+// claim_due_sends()'s daily-limit check (a count(*) taken at claim time,
+// not re-checked per send), both assume sends for one mailbox happen one at
+// a time — true concurrency within a mailbox would let two claimed leads
+// both pass that count check before either send is recorded. With the
+// default concurrency of 1 (Phase B), only one lane ever runs, so this
+// reduces to exactly the prior sequential loop's order and behavior.
+//
+// `processOne` is injected (always processCampaignLead in production, via
+// runSendWorker above) so this orchestration logic — the actual new code
+// this track's item 12 adds — is unit-testable on its own, without
+// re-mocking the entire send pipeline processCampaignLead already owns and
+// is already exercised by. Exported for exactly that reason.
+export async function processClaimedLeads(
+  supabase: Client,
+  claimed: Tables<"campaign_leads">[],
+  concurrency: number,
+  startedAt: number,
+  summary: SendWorkerSummary,
+  processOne: (supabase: Client, campaignLead: Tables<"campaign_leads">) => Promise<ProcessOutcome>,
+): Promise<void> {
+  const queue = [...claimed];
+  const inFlightMailboxIds = new Set<string>();
+  let stoppedEarly = false;
+
+  async function lane(): Promise<void> {
+    while (queue.length > 0) {
+      if (Date.now() - startedAt >= INVOCATION_TIME_BUDGET_MS) {
+        if (!stoppedEarly) {
+          stoppedEarly = true;
+          console.log("[send-worker] time budget reached, stopping early", {
+            processed: summary.sent + summary.failed + summary.needsReview + summary.skipped,
+            claimed: claimed.length,
+          });
+        }
+        return;
+      }
+
+      const index = queue.findIndex((lead) => !lead.mailbox_id || !inFlightMailboxIds.has(lead.mailbox_id));
+      if (index === -1) {
+        // Every remaining queued lead's mailbox is currently in flight in
+        // another lane — wait briefly rather than busy-spinning. Only
+        // reachable with concurrency > 1.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
+
+      const [campaignLead] = queue.splice(index, 1);
+      if (campaignLead.mailbox_id) inFlightMailboxIds.add(campaignLead.mailbox_id);
+
+      try {
+        const outcome = await processOne(supabase, campaignLead);
+        summary[outcome] += 1;
+      } finally {
+        if (campaignLead.mailbox_id) inFlightMailboxIds.delete(campaignLead.mailbox_id);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.max(concurrency, 1) }, () => lane()));
 }
 
 async function processCampaignLead(

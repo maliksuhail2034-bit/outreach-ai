@@ -1,0 +1,15 @@
+name: Cron - retention cleanup
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /api/cron/retention-cleanup
+        run: |
+          curl -f -sS -X POST "${{ secrets.APP_URL }}/api/cron/retention-cleanup" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

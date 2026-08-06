@@ -1683,6 +1683,17 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      compute_email_event_rollups: {
+        Args: { p_since: string; p_until: string }
+        Returns: {
+          event_count: number
+          event_type: string
+          organization_id: string
+          rollup_date: string
+          subject_id: string
+          subject_type: string
+        }[]
+      }
       is_organization_member: {
         Args: { p_organization_id: string }
         Returns: boolean

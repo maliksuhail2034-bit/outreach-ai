@@ -128,6 +128,22 @@ export async function getMailboxSmtpCredential(supabase: Client, userId: string,
   return data;
 }
 
+// Admin-context, credential-free (only id/domain_id) — lets the analytics
+// rollup worker (lib/analytics/rollup-worker.ts) resolve which domain each
+// already-computed mailbox-level rollup belongs to, without fetching full
+// mailbox rows. Scoped to a specific id list rather than "every mailbox"
+// since the worker only needs the mailboxes its own rollup pass already
+// produced rows for.
+export async function listMailboxDomainsByIds(
+  supabase: Client,
+  ids: string[],
+): Promise<{ id: string; domain_id: string | null }[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase.from("mailboxes").select("id, domain_id").in("id", ids);
+  if (error) throw error;
+  return data ?? [];
+}
+
 // Reply-tracking reads/writes, admin-context — same carve-out as
 // getMailboxCredentials: restricted to the trusted reply-sync worker
 // (lib/email/reply-worker.ts), never a code path reachable by a browser.

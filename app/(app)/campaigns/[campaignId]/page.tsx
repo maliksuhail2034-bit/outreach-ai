@@ -22,6 +22,7 @@ import {
   listEmailEvents,
   listLeadLists,
   listLeads,
+  listLeadsAvailableForCampaign,
   listMailboxes,
   listSequences,
   listSequenceSteps,
@@ -81,10 +82,23 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
 
   const organization = await getUserOrganization(supabase, user);
 
-  const [campaignLeads, leads, leadLists, mailboxes, sequences, templates, suppressions, domains, emailEvents, analyticsEvents] =
+  const [campaignLeads, leads, availableLeadsResult, leadLists, mailboxes, sequences, templates, suppressions, domains, emailEvents, analyticsEvents] =
     await Promise.all([
       listCampaignLeads(supabase, campaignId),
+      // Still needed as-is: CampaignLeadTable/CampaignQueueView/
+      // CampaignSetupWizard all resolve *already-enrolled* leads' details
+      // (name/email) from this full list too, not just "available" ones —
+      // this fetch doesn't go away, only the availableLeads computation
+      // below does (Scalability Track, Phase D, item 7).
       listLeads(supabase, user.id, { limit: 10000 }),
+      // Pushes the "not yet enrolled" filter into SQL instead of diffing
+      // the full 10,000-row fetch above in JS — removes both the per-render
+      // JS diff and the correctness ceiling that diff had (an account with
+      // more than 10,000 leads previously couldn't show leads past that cap
+      // as available at all). limit explicitly matches the previous
+      // effective ceiling (the 10k allLeads fetch) rather than this
+      // function's own smaller default.
+      listLeadsAvailableForCampaign(supabase, user.id, campaignId, { limit: 10000 }),
       listLeadLists(supabase, user.id),
       listMailboxes(supabase, user.id),
       listSequences(supabase, campaignId),
@@ -100,8 +114,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     ]);
 
   const allLeads = leads ?? [];
-  const enrolledLeadIds = new Set((campaignLeads ?? []).map((row) => row.lead_id));
-  const availableLeads = allLeads.filter((lead) => !enrolledLeadIds.has(lead.id));
+  const availableLeads = availableLeadsResult ?? [];
 
   // Sequences aren't a user-facing concept yet — every campaign has at most
   // one, created lazily on first step add. See getOrCreateDefaultSequence.

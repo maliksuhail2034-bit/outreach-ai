@@ -3,6 +3,114 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-16 — Enterprise Readiness — Scalability Track, Phase B (Infrastructure), Complete (Commit: 0db7a98)
+
+- **Second of five approved phases for the Scalability Track.** Objective:
+  build the entire approved infrastructure with zero production behavior
+  change — no analytics page reads from rollups, no page is wired to any
+  new query, the CSV import action still inserts per row, and send-worker
+  concurrency defaults to the prior sequential behavior.
+  **Implementation complete, published, migration applied.**
+  - **Item 4/5 — analytics rollup worker** (`lib/analytics/rollup-worker.ts`)
+    — computes daily counts via a new SQL function,
+    `compute_email_event_rollups()` (`supabase/migrations/20260816100000_scalability_phase_b_rollup_infrastructure.sql`),
+    so raw `email_events` rows are never fetched into Node — grouping
+    happens in Postgres, the exact pattern the original audit identified as
+    the N+1 root cause in `lib/analytics/organization-rollup.ts`. Covers
+    campaign/mailbox/organization subject types directly; domain-level
+    rollups are summed from the mailbox-level rows by domain (a new
+    `listMailboxDomainsByIds()` in `lib/db/mailboxes.ts`), mirroring
+    `lib/deliverability/domain-analytics.ts`'s existing "resolve mailboxes
+    for a domain, then aggregate" pattern rather than a fourth SQL branch.
+    Writes only to `analytics_daily_rollups`, which nothing reads from yet.
+    Wired through a new `app/api/cron/analytics-rollup/route.ts` and
+    `.github/workflows/cron-analytics-rollup.yml`, mirroring every other
+    cron worker's shape exactly (auth, `runCronJob()`, `job_runs`,
+    heartbeat). Supports an explicit `{since, until}` range for a future
+    backfill (item 5) — not invoked with one yet.
+  - **Item 7 — available-leads query** (`listLeadsAvailableForCampaign`,
+    `lib/db/leads.ts`) — pushes the "not yet enrolled" filter into SQL via
+    a `.not("id", "in", ...)` filter built from a small, campaign-scoped
+    enrolled-id lookup, instead of the campaign detail page's current
+    10,000-row account-wide fetch diffed in JS. Built only, not called from
+    any page yet.
+  - **Item 8/9 — pagination** — `listLeadsPage()`/`listCampaignsPage()`
+    (`lib/db/leads.ts`/`lib/db/campaigns.ts`), one query each combining
+    `.range()` with `{ count: "exact" }` for the page of rows and the total
+    count together, plus a new generic `components/ui/pagination.tsx`. The
+    existing `listLeads()`/`listCampaigns()` functions the live `/leads`
+    and `/campaigns` pages call are untouched. Their supporting composite
+    indexes are deliberately deferred to Phase D — per the approved scope
+    adjustment, they'd be dead weight against unreachable code until the
+    pages actually cut over.
+  - **Item 10 — CSV batch-insert helper** (`createLeadsBatch`,
+    `lib/db/leads.ts`) — chunks lead inserts into array inserts (500 rows
+    per round trip) instead of one round trip per row, falling back to
+    per-row inserts within any chunk that fails as a whole so row-level
+    error attribution isn't lost. Built only —
+    `app/(app)/leads/import-actions.ts` still calls `createLead()` per row.
+  - **Item 11 — retention worker, dry-run only**
+    (`lib/monitoring/retention-worker.ts`) — counts candidates in
+    `rate_limit_events` (7-day retention window) and `job_runs` (90-day
+    window) past their cutoff, using the plain `created_at` indexes Phase A
+    added specifically for this query shape; deletes nothing. Scoped only
+    to those two operational-log tables — `email_events`/`send_attempts`/
+    `analytics_events` are core business data this same track's rollup
+    infrastructure depends on, and `audit_logs`' retention window is a
+    compliance decision, not an engineering one, so neither is touched.
+  - **Item 12 — bounded send-worker concurrency**
+    (`lib/email/send-worker.ts`) — the prior sequential `for...of` loop
+    replaced by a new exported `processClaimedLeads()`, processing up to
+    `concurrency` claimed leads at once with one hard invariant: two leads
+    for the same `mailbox_id` are never processed concurrently, since
+    `mailboxes.cooldown_minutes`/`hourly_limit` and `claim_due_sends()`'s
+    daily-limit check (a count taken at claim time, not re-checked per
+    send) both assume one send per mailbox at a time. Defaults to
+    `concurrency = 1`, reducing the new orchestration to exactly the prior
+    loop's order and behavior — confirmed by a dedicated test file
+    (`lib/email/send-worker.test.ts`, none existed before). `processOne` is
+    injected (`processCampaignLead` in production) specifically so this new
+    orchestration logic is unit-testable without re-mocking the entire send
+    pipeline. `processCampaignLead()` itself is unchanged, diffed
+    line-by-line to confirm.
+  - **One migration, two additive changes** — flagged and approved before
+    implementation, since the phase was originally scoped as needing no
+    migration at all: widens `job_runs_job_check` to allow the two new job
+    names (`analytics-rollup`, `retention-cleanup`) — without it, every
+    invocation of the two new cron routes would silently fail to persist
+    its `job_runs` row, the same observability every other cron job in
+    this codebase relies on — and adds `compute_email_event_rollups()`.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for all 44
+    migrations including this one.
+  - **Schema changes confirmed live, including a real functional smoke
+    test**: the widened `job_runs_job_check` constraint (all 7 job names
+    present) and `compute_email_event_rollups`'s existence (`FUNCTION`,
+    `security_type: INVOKER`, matching `claim_due_sends()`'s convention)
+    both queried directly against the linked project. The function was
+    also called live against real data — it returned correctly-computed,
+    internally consistent rows (the same underlying events counted
+    identically at the campaign, mailbox, and organization level),
+    confirming the `email_events` -> `campaigns` -> `organization_members`
+    join path is correct against the real schema, not just syntactically
+    valid. `job_runs` confirmed to have exactly one changed constraint and
+    zero added/removed indexes or RLS changes.
+  - **Explicitly confirmed unchanged**: `claim_due_sends()`, the
+    `send_attempts` RPC functions, `processCampaignLead()` (the actual send
+    pipeline, diffed line-by-line), every production analytics read path
+    (`lib/campaigns/campaign-analytics.ts`,
+    `lib/mailboxes/mailbox-analytics.ts`,
+    `lib/deliverability/domain-analytics.ts`,
+    `lib/analytics/organization-rollup.ts`), the `/leads` and `/campaigns`
+    pages, `import-actions.ts`, audit logging, and rate limiting.
+  - All checks (typecheck, lint, build, full test suite — 508 tests, up
+    from 475) passed before commit.
+
+Commit: `0db7a98`
+
 ## 2026-08-15 — Enterprise Readiness — Scalability Track, Phase A (Foundation), Complete (Commit: a758bce)
 
 - **First of five approved phases for the Scalability Track** (Phase A

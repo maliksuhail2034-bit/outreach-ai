@@ -2,11 +2,11 @@
 
 This roadmap tracks feature areas for **outreach-ai**, an AI SDR platform.
 Status is derived from the current codebase (`app/`, `lib/`, `supabase/migrations/`)
-as of commit `a758bce`. See `CHANGELOG.md` for the commit-by-commit history.
+as of commit `0db7a98`. See `CHANGELOG.md` for the commit-by-commit history.
 
 **Last completed milestone:** Enterprise Readiness — Scalability Track,
-Phase A (Foundation) — Complete (2026-08-15, commit `a758bce`). First of
-five phases (A Foundation / B Infrastructure / C Shadow Validation /
+Phase B (Infrastructure) — Complete (2026-08-16, commit `0db7a98`). Second
+of five phases (A Foundation / B Infrastructure / C Shadow Validation /
 D Incremental Cutover / E Cleanup) — see Scalability Track under Done for
 what shipped, and the status summary immediately below for where the wider
 initiative stands.
@@ -26,16 +26,20 @@ initiative stands.
   consistent retry/backoff across external providers, explicit Stripe SDK
   network retries, reply-sync overlap protection). See Reliability Track
   under Done.
-- ✅ Scalability Track — Phase A (Foundation) — Complete. Zero production
-  behavior change: cron worker admin-client cleanup, defensive `.limit()`
-  ceilings on four previously-unbounded queries, and two schema
-  prerequisites (an `analytics_daily_rollups` constraint widening and two
-  new `created_at` retention indexes) for work landing in later phases. See
-  Scalability Track under Done.
-- **Remaining**: Scalability Track Phases B (Infrastructure), C (Shadow
-  Validation), D (Incremental Cutover), and E (Cleanup) are not started —
-  Phase B is the next milestone. Production Readiness findings from the
-  same original audit also remain unstarted (see Not started).
+- ✅ Scalability Track — Phase A (Foundation) — Complete. See Scalability
+  Track under Done.
+- ✅ Scalability Track — Phase B (Infrastructure) — Complete. The entire
+  approved infrastructure (analytics rollup worker + SQL aggregation
+  function, available-leads/paginated leads/paginated campaigns queries,
+  CSV batch-insert helper, dry-run-only retention worker, bounded send
+  -worker concurrency) is built with zero production behavior change — no
+  analytics page reads from rollups, no page is wired to the new queries,
+  concurrency defaults to the prior sequential behavior. See Scalability
+  Track under Done.
+- **Remaining**: Scalability Track Phases C (Shadow Validation), D
+  (Incremental Cutover), and E (Cleanup) are not started — Phase C is the
+  next milestone. Production Readiness findings from the same original
+  audit also remain unstarted (see Not started).
 
 ## Integration status
 
@@ -651,11 +655,114 @@ Planned
   - **Next milestone: Phase B (Infrastructure)** — not started. Phases C
     (Shadow Validation), D (Incremental Cutover), and E (Cleanup) also
     remain not started.
+- **Enterprise Readiness — Scalability Track, Phase B (Infrastructure) —
+  COMPLETE (2026-08-16, commit `0db7a98`).** Second of five approved
+  phases. Objective: build the entire approved infrastructure with zero
+  production behavior change — no analytics page reads from rollups, no
+  page is wired to any new query, the CSV import action still inserts per
+  row, and send-worker concurrency defaults to the prior sequential
+  behavior. **Implementation complete, published, migration applied.**
+  - **Item 4/5 — analytics rollup worker** (`lib/analytics/rollup-worker.ts`)
+    — computes daily counts via a new SQL function,
+    `compute_email_event_rollups()`, so raw `email_events` rows are never
+    fetched into Node — grouping happens in Postgres, the exact pattern the
+    original audit identified as missing (the N+1 root cause in
+    `lib/analytics/organization-rollup.ts`). Covers campaign/mailbox/
+    organization subject types directly; domain-level rollups are summed
+    from the mailbox-level rows by domain, mirroring
+    `lib/deliverability/domain-analytics.ts`'s existing "resolve mailboxes
+    for a domain, then aggregate" pattern rather than a fourth SQL branch.
+    Writes only to `analytics_daily_rollups`, which nothing reads from yet.
+    Wired through a new `app/api/cron/analytics-rollup` route and
+    `.github/workflows/cron-analytics-rollup.yml`, mirroring every other
+    cron worker's shape exactly. Supports an explicit `{since, until}`
+    range for a future backfill (item 5) — not invoked with one yet, that's
+    Phase C.
+  - **Item 7 — available-leads query** (`listLeadsAvailableForCampaign`,
+    `lib/db/leads.ts`) — pushes the "not yet enrolled" filter into SQL via
+    a `.not("id", "in", ...)` filter built from a small, campaign-scoped
+    enrolled-id lookup, instead of the campaign detail page's current
+    10,000-row account-wide fetch diffed in JS. Built only — the page
+    itself is untouched.
+  - **Item 8/9 — pagination** (`listLeadsPage`/`listCampaignsPage`, one
+    query each combining `.range()` with `{ count: "exact" }`) plus a new
+    generic `components/ui/pagination.tsx`. The existing `listLeads()`/
+    `listCampaigns()` functions the live pages call are untouched. Their
+    supporting composite indexes are deliberately deferred to Phase D, per
+    the approved scope adjustment — they'd be dead weight against
+    unreachable code until the pages actually cut over.
+  - **Item 10 — CSV batch-insert helper** (`createLeadsBatch`,
+    `lib/db/leads.ts`) — chunks lead inserts into array inserts (500 rows
+    at a time) instead of one round trip per row, falling back to per-row
+    inserts within any chunk that fails as a whole so row-level error
+    attribution isn't lost. Built only —
+    `app/(app)/leads/import-actions.ts` still calls `createLead()` per row,
+    unchanged.
+  - **Item 11 — retention worker, dry-run only**
+    (`lib/monitoring/retention-worker.ts`) — counts candidates in
+    `rate_limit_events` (7-day window) and `job_runs` (90-day window) past
+    their retention cutoff using the plain `created_at` indexes Phase A
+    added specifically for this query shape; deletes nothing. Deliberately
+    scoped to only those two operational-log tables — `email_events`/
+    `send_attempts`/`analytics_events` are core business data this same
+    track's rollup infrastructure depends on, and `audit_logs`' retention
+    window is a compliance decision, not an engineering one, so neither is
+    touched.
+  - **Item 12 — bounded send-worker concurrency**
+    (`lib/email/send-worker.ts`) — the prior sequential `for...of` loop
+    replaced by `processClaimedLeads()`, processing up to `concurrency`
+    claimed leads at once with one hard invariant: two leads for the same
+    `mailbox_id` are never processed concurrently, since
+    `mailboxes.cooldown_minutes`/`hourly_limit` and `claim_due_sends()`'s
+    daily-limit check (a count taken at claim time, not re-checked per
+    send) both assume one send per mailbox at a time. Defaults to
+    `concurrency = 1`, which reduces the new orchestration to exactly the
+    prior loop's order and behavior — confirmed by a dedicated test.
+    `processCampaignLead()` itself (the actual send pipeline) is
+    unchanged, diffed line-by-line to confirm.
+  - **One migration, two additive changes**: widens `job_runs_job_check` to
+    allow the two new job names (`analytics-rollup`, `retention-cleanup`) —
+    without it, every invocation of the two new cron routes would silently
+    fail to persist its `job_runs` row — and adds
+    `compute_email_event_rollups()`. Both flagged and approved before
+    implementation, since the phase was originally scoped as needing no
+    migration at all.
+  - **Migration applied, local and remote confirmed in sync**: applied to
+    the linked development/staging Supabase project (`wxhulmbbobkfvtreaspo`)
+    via `supabase db push`, confirmed by a follow-up `--dry-run` reporting
+    `"upToDate":true` with an empty migrations list, and by
+    `supabase migration list` showing `local == remote` for all 44
+    migrations including this one.
+  - **Schema changes confirmed live, including a real functional smoke
+    test, not just read from the migration file**: the widened
+    `job_runs_job_check` constraint definition (all 7 job names present)
+    and `compute_email_event_rollups`'s existence (`FUNCTION`,
+    `security_type: INVOKER`, matching `claim_due_sends()`'s convention)
+    both queried directly against the linked project. The function was
+    also called live against real data
+    (`compute_email_event_rollups('2020-01-01', '2030-01-01')`) — it
+    returned correctly-computed, internally consistent rows (the same
+    underlying events counted identically at the campaign, mailbox, and
+    organization level), confirming the `email_events` -> `campaigns` ->
+    `organization_members` join path is correct against the real schema,
+    not just syntactically valid. `job_runs` confirmed to have exactly one
+    changed constraint and zero added/removed indexes or RLS changes.
+  - **Explicitly confirmed unchanged**: `claim_due_sends()`, the
+    `send_attempts` RPC functions, `processCampaignLead()` (the actual send
+    pipeline, diffed line-by-line), every production analytics read path
+    (`lib/campaigns/campaign-analytics.ts`, `lib/mailboxes/mailbox-analytics.ts`,
+    `lib/deliverability/domain-analytics.ts`,
+    `lib/analytics/organization-rollup.ts`), the `/leads` and `/campaigns`
+    pages, `import-actions.ts`, audit logging, and rate limiting.
+  - All checks (typecheck, lint, build, full test suite — 508 tests, up
+    from 475) passed before commit.
+  - **Next milestone: Phase C (Shadow Validation)** — not started. Phases D
+    (Incremental Cutover) and E (Cleanup) also remain not started.
 
 ## Current milestone
 
-Enterprise Readiness — Scalability Track, Phase B (Infrastructure) — not
-yet started. Phase A (Foundation) is complete; Phase B is the next
+Enterprise Readiness — Scalability Track, Phase C (Shadow Validation) — not
+yet started. Phase B (Infrastructure) is complete; Phase C is the next
 milestone once selected.
 
 ## In progress / partially built
@@ -673,14 +780,16 @@ milestone once selected.
 
 ## Not started
 
-- **Enterprise Readiness — Scalability track, Phases B-E** — the Security
+- **Enterprise Readiness — Scalability track, Phases C-E** — the Security
   track (Phases 3A, 3B Parts 1-3) and the Reliability track (see Done) are
-  both complete, and Scalability Track Phase A (Foundation) is also
-  complete (see Done). Phases B (Infrastructure), C (Shadow Validation),
-  D (Incremental Cutover), and E (Cleanup) — the phases with the actual
-  N+1/pagination/CSV-batching/concurrency fixes and any real production
-  behavior change — remain not started. Production Readiness findings from
-  the same original audit are also still unstarted.
+  both complete, and Scalability Track Phases A (Foundation) and B
+  (Infrastructure) are also complete (see Done) — the entire approved
+  infrastructure exists, but nothing has been validated against real
+  numbers or cut over to production reads yet. Phase C (Shadow
+  Validation), D (Incremental Cutover), and E (Cleanup) — the phases with
+  any real production behavior change — remain not started. Production
+  Readiness findings from the same original audit are also still
+  unstarted.
 - **AI qualification / scoring** — no lead scoring or AI-driven
   qualification logic yet. `lib/ai/` now exists (see AI Recommendations,
   Done) but is scoped to turning already-computed metrics into

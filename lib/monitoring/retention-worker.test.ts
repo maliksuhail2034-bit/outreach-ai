@@ -3,37 +3,51 @@ import type { Client } from "@/lib/db/shared";
 import { runRetentionWorker } from "./retention-worker";
 
 function createSupabaseStub(countsByTable: Record<string, number>) {
-  const from = vi.fn((table: string) => {
+  // One chain per table, reused across repeated `.from(table)` calls, so a
+  // test can both drive the worker and separately inspect the same chain's
+  // mock calls afterward.
+  const chains: Record<string, ReturnType<typeof makeChain>> = {};
+  function makeChain(table: string) {
     const chain = {
-      select: vi.fn(() => chain),
+      delete: vi.fn(() => chain),
       lt: vi.fn(() => chain),
       then: (resolve: (value: { count: number; error: null }) => void) =>
         resolve({ count: countsByTable[table] ?? 0, error: null }),
     };
     return chain;
+  }
+  const from = vi.fn((table: string) => {
+    chains[table] ??= makeChain(table);
+    return chains[table];
   });
   return { from } as unknown as Client;
 }
 
 describe("runRetentionWorker", () => {
-  it("is dry-run only and never calls delete()", async () => {
+  it("calls delete() for both tables and reports dryRun: false", async () => {
     const supabase = createSupabaseStub({ rate_limit_events: 3, job_runs: 7 });
-    (supabase as unknown as { delete: unknown }).delete = vi.fn();
 
     const summary = await runRetentionWorker(supabase);
 
-    expect(summary.dryRun).toBe(true);
-    expect((supabase as unknown as { delete: ReturnType<typeof vi.fn> }).delete).not.toHaveBeenCalled();
+    expect(summary.dryRun).toBe(false);
+    const rateLimitChain = supabase.from("rate_limit_events");
+    const jobRunsChain = supabase.from("job_runs");
+    expect((rateLimitChain as unknown as { delete: ReturnType<typeof vi.fn> }).delete).toHaveBeenCalledWith({
+      count: "exact",
+    });
+    expect((jobRunsChain as unknown as { delete: ReturnType<typeof vi.fn> }).delete).toHaveBeenCalledWith({
+      count: "exact",
+    });
   });
 
-  it("reports candidate counts for both rate_limit_events and job_runs", async () => {
+  it("reports deleted counts for both rate_limit_events and job_runs", async () => {
     const supabase = createSupabaseStub({ rate_limit_events: 12, job_runs: 4 });
 
     const summary = await runRetentionWorker(supabase);
 
     expect(summary.results).toEqual([
-      expect.objectContaining({ table: "rate_limit_events", candidateCount: 12 }),
-      expect.objectContaining({ table: "job_runs", candidateCount: 4 }),
+      expect.objectContaining({ table: "rate_limit_events", deletedCount: 12 }),
+      expect.objectContaining({ table: "job_runs", deletedCount: 4 }),
     ]);
   });
 
@@ -60,10 +74,10 @@ describe("runRetentionWorker", () => {
     expect(new Date(rateLimitCutoff).getTime()).toBeGreaterThan(new Date(jobRunsCutoff).getTime());
   });
 
-  it("throws when a count query errors", async () => {
+  it("throws when a delete query errors", async () => {
     const from = vi.fn(() => {
       const chain = {
-        select: vi.fn(() => chain),
+        delete: vi.fn(() => chain),
         lt: vi.fn(() => chain),
         then: (resolve: (value: { count: null; error: Error }) => void) =>
           resolve({ count: null, error: new Error("connection lost") }),

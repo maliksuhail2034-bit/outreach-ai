@@ -1,14 +1,14 @@
 import type { Client } from "@/lib/db/shared";
 
-export interface RetentionCandidateSummary {
+export interface RetentionDeletionSummary {
   table: "rate_limit_events" | "job_runs";
   cutoff: string;
-  candidateCount: number;
+  deletedCount: number;
 }
 
 export interface RetentionWorkerSummary {
-  dryRun: true;
-  results: RetentionCandidateSummary[];
+  dryRun: false;
+  results: RetentionDeletionSummary[];
 }
 
 // Scoped to the two operational-log tables the Scalability Track audit
@@ -30,16 +30,19 @@ function cutoffIso(days: number): string {
   return cutoff.toISOString();
 }
 
-// Scalability Track, Phase B (item 11): dry-run only — counts what WOULD be
-// deleted, deletes nothing. Uses the plain created_at indexes added in
-// Phase A specifically for this query shape (`where created_at < X` with no
-// other filter, which neither table's pre-existing composite index could
-// serve). Flipping this from counting to actually deleting is a separate,
-// later step (Phase D) — this file's shape is deliberately unchanged by
-// that flip, only its body's `select(..., { count: "exact", head: true })`
-// becomes a `delete()`.
+// Scalability Track, Phase D (item 11): deletes for real. Phase B/C
+// (dry-run counting, then live-verified against real data with the
+// Postgres-confirmed shadow validation in ROADMAP.md — both tables reported
+// 0 candidates, nothing on the project was old enough yet) are done; this is
+// the approved cutover. Uses the plain created_at indexes added in Phase A
+// specifically for this query shape (`where created_at < X` with no other
+// filter, which neither table's pre-existing composite index could serve).
+// Same two tables, same two retention windows as the dry-run had — only the
+// query itself changed, from a count-only `select(..., { count: "exact",
+// head: true })` to a `delete({ count: "exact" })`, which reports how many
+// rows Postgres actually removed via the same Content-Range/count mechanism.
 export async function runRetentionWorker(supabase: Client): Promise<RetentionWorkerSummary> {
-  const results: RetentionCandidateSummary[] = [];
+  const results: RetentionDeletionSummary[] = [];
 
   const targets: { table: "rate_limit_events" | "job_runs"; days: number }[] = [
     { table: "rate_limit_events", days: RATE_LIMIT_EVENTS_RETENTION_DAYS },
@@ -48,13 +51,13 @@ export async function runRetentionWorker(supabase: Client): Promise<RetentionWor
 
   for (const { table, days } of targets) {
     const cutoff = cutoffIso(days);
-    const { count, error } = await supabase.from(table).select("*", { count: "exact", head: true }).lt("created_at", cutoff);
+    const { count, error } = await supabase.from(table).delete({ count: "exact" }).lt("created_at", cutoff);
     if (error) throw error;
 
-    const candidateCount = count ?? 0;
-    console.log("[retention-worker] dry run", { table, cutoff, candidateCount });
-    results.push({ table, cutoff, candidateCount });
+    const deletedCount = count ?? 0;
+    console.log("[retention-worker] deleted", { table, cutoff, deletedCount });
+    results.push({ table, cutoff, deletedCount });
   }
 
-  return { dryRun: true, results };
+  return { dryRun: false, results };
 }

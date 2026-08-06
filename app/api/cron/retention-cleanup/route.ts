@@ -6,9 +6,8 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 // scheduler hitting this on an interval, GET (Vercel Cron) or POST
 // (manual/other schedulers), with the same CRON_SECRET bearer header.
 //
-// Scalability Track, Phase B: dry-run only — runRetentionWorker() counts
-// candidates and deletes nothing. Flipping it to actually delete is a
-// separate, later step (Phase D).
+// Scalability Track, Phase D (item 11): runRetentionWorker() deletes for
+// real — see lib/monitoring/retention-worker.ts for the cutover details.
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {

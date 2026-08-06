@@ -4,7 +4,8 @@ import Papa from "papaparse";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createLead, getUserOrganization } from "@/lib/db";
+import { createLeadsBatch, getUserOrganization } from "@/lib/db";
+import type { TablesInsert } from "@/types/database.types";
 import { leadCsvRowSchema } from "@/lib/validations/leads";
 import { getRemainingLeadQuota } from "@/lib/billing/limits";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
@@ -108,10 +109,18 @@ export async function importLeadsAction(
   const knownEmails = new Set(existingRows.map((row) => row.email.toLowerCase()));
   let remainingQuota = await getRemainingLeadQuota(supabase, user.id, user.email);
 
-  let imported = 0;
   let skippedDuplicates = 0;
   let failed = 0;
   const failedRows: { row: number; reason: string }[] = [];
+
+  // Validation, dedup, and quota are still resolved one row at a time (they're
+  // cheap in-memory checks), but the actual insert is deferred: rows that pass
+  // become `candidates`, with `rowNumbers` tracking each one's original CSV row
+  // number at the same index. That's what lets a batch-insert failure below
+  // still be attributed back to the exact row, preserving the same per-row
+  // failedRows UX the old sequential-insert loop gave callers.
+  const candidates: TablesInsert<"leads">[] = [];
+  const rowNumbers: number[] = [];
 
   for (const [index, rawRow] of rows.entries()) {
     const rowNumber = index + 2; // +1 for 0-index, +1 for the header row
@@ -139,29 +148,48 @@ export async function importLeadsAction(
       continue;
     }
 
-    try {
-      await createLead(supabase, {
-        user_id: user.id,
-        list_id: listId,
-        first_name: parsed.data.firstName ? parsed.data.firstName : null,
-        last_name: parsed.data.lastName ? parsed.data.lastName : null,
-        email,
-        company: parsed.data.company ? parsed.data.company : null,
-        title: parsed.data.title ? parsed.data.title : null,
-      });
-      knownEmails.add(email);
-      imported += 1;
-      remainingQuota -= 1;
-    } catch {
-      failed += 1;
-      if (failedRows.length < MAX_FAILED_ROWS_SHOWN) {
-        failedRows.push({ row: rowNumber, reason: "Couldn't save this row." });
-      }
+    candidates.push({
+      user_id: user.id,
+      list_id: listId,
+      first_name: parsed.data.firstName ? parsed.data.firstName : null,
+      last_name: parsed.data.lastName ? parsed.data.lastName : null,
+      email,
+      company: parsed.data.company ? parsed.data.company : null,
+      title: parsed.data.title ? parsed.data.title : null,
+    });
+    rowNumbers.push(rowNumber);
+    // Deliberately reserved optimistically, before this row is actually
+    // inserted: a later row in the same CSV needs to be judged against every
+    // row already queued for insert, not just ones already confirmed saved,
+    // and the batch insert below hasn't run yet at this point in the loop.
+    // The tradeoff: if this row's batch insert later fails (rare — schema
+    // validation already covers the normal failure modes; the DB-level
+    // causes are a concurrent insert of the same email racing this import,
+    // or leads_check_list_owner rejecting a list deleted mid-import), a
+    // later duplicate of this email elsewhere in the CSV will be wrongly
+    // skipped as already-known, and remainingQuota is undercounted by one
+    // for the rest of this run. This is safe to accept because the DB's
+    // `leads_user_email_key` unique constraint — not this in-memory Set — is
+    // the actual authority against duplicate leads, so nothing here can ever
+    // let a real duplicate through; it can only be overly conservative. And
+    // neither knownEmails nor remainingQuota is persisted: both are
+    // recomputed from the database at the start of the next import, so any
+    // wrongly-skipped row is simply retryable by re-uploading.
+    knownEmails.add(email);
+    remainingQuota -= 1;
+  }
+
+  const { created, failedIndexes } = await createLeadsBatch(supabase, candidates);
+
+  for (const candidateIndex of failedIndexes) {
+    failed += 1;
+    if (failedRows.length < MAX_FAILED_ROWS_SHOWN) {
+      failedRows.push({ row: rowNumbers[candidateIndex], reason: "Couldn't save this row." });
     }
   }
 
   revalidatePath("/leads");
   revalidatePath("/dashboard");
 
-  return { imported, skippedDuplicates, failed, failedRows };
+  return { imported: created.length, skippedDuplicates, failed, failedRows };
 }

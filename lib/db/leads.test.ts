@@ -217,7 +217,7 @@ describe("listLeadsPage", () => {
   });
 });
 
-// Scalability Track, Phase B (item 10) — build only, not yet called from
+// Scalability Track, Phase D (item 10) — wired into
 // app/(app)/leads/import-actions.ts.
 describe("createLeadsBatch", () => {
   function makeChain(result: { data: unknown; error: unknown }) {

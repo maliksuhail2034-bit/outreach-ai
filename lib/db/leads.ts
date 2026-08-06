@@ -182,14 +182,13 @@ export interface CreateLeadsBatchResult {
   failedIndexes: number[];
 }
 
-// Scalability Track, Phase B (item 10, build only — app/(app)/leads/
-// import-actions.ts still calls createLead() per row, unchanged). Inserts
-// in chunks via a single array insert per chunk instead of one round trip
-// per row. If a chunk's bulk insert fails as a whole (e.g. one malformed
-// row), it falls back to inserting that chunk's rows one at a time so a
-// single bad row doesn't sacrifice every other row's error attribution —
-// preserving the same per-row failure granularity the sequential import
-// path already gives callers.
+// Scalability Track, Phase D (item 10) — wired into app/(app)/leads/
+// import-actions.ts. Inserts in chunks via a single array insert per chunk
+// instead of one round trip per row. If a chunk's bulk insert fails as a
+// whole (e.g. one malformed row), it falls back to inserting that chunk's
+// rows one at a time so a single bad row doesn't sacrifice every other row's
+// error attribution — preserving the same per-row failure granularity the
+// sequential import path already gave callers.
 export async function createLeadsBatch(
   supabase: Client,
   values: TablesInsert<"leads">[],

@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { BadgeCheckIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
-import type { Tables } from "@/types/database.types";
+import type { VerificationProviderKeySafe } from "@/lib/db";
 import { disconnectVerificationProviderKeyAction } from "@/app/(app)/settings/verification/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { VerificationProviderKeyForm } from "./verification-provider-key-form";
 
-type VerificationProviderKey = Tables<"verification_provider_keys">;
+type VerificationProviderKey = VerificationProviderKeySafe;
 
 const PROVIDER_LABEL: Record<string, string> = {
   millionverifier: "MillionVerifier",

@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
-import type { Tables } from "@/types/database.types";
+import type { AiProviderKeySafe } from "@/lib/db";
 import { disconnectAiProviderKeyAction } from "@/app/(app)/settings/ai/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { AiProviderKeyForm } from "./ai-provider-key-form";
 
-type AiProviderKey = Tables<"ai_provider_keys">;
+type AiProviderKey = AiProviderKeySafe;
 
 const PROVIDER_LABEL: Record<string, string> = {
   anthropic: "Claude (Anthropic)",

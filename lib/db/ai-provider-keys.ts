@@ -6,10 +6,18 @@ import { unwrap } from "./shared";
 // Mirrors lib/db/integrations.ts's shape exactly (one row per
 // organization per provider, upserted on that pair).
 
-export async function listAiProviderKeys(supabase: Client, organizationId: string) {
+// Excludes encrypted_api_key — mirrors MailboxSafe in lib/db/mailboxes.ts.
+// listAiProviderKeys' result reaches AiProvidersPanel (a Client Component),
+// so it must never carry the ciphertext into the RSC flight payload.
+// getAiProviderKeyByProvider below is the one exception: it feeds the
+// server-only decrypt path in lib/ai/recommendations.ts and still needs the
+// full row — never call it from a path whose result can reach the browser.
+export type AiProviderKeySafe = Omit<Tables<"ai_provider_keys">, "encrypted_api_key">;
+
+export async function listAiProviderKeys(supabase: Client, organizationId: string): Promise<AiProviderKeySafe[]> {
   const { data, error } = await supabase
     .from("ai_provider_keys")
-    .select("*")
+    .select("id, organization_id, provider, key_preview, model, created_at, updated_at")
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false });
   if (error) throw error;

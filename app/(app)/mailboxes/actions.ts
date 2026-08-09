@@ -219,6 +219,61 @@ export async function disconnectOutlookMailboxAction(id: string) {
 
 const TEST_CONNECTION_TIMEOUT_MS = 10_000;
 
+// Classifies a caught test-connection error into one of a small set of
+// safe, user-facing messages instead of returning nodemailer/ImapFlow's raw
+// error text verbatim (which can include internal error codes, raw IMAP/SMTP
+// response text, or connection details) — mirrors classifySmtpError's role
+// in lib/email/providers/smtp.ts for the send pipeline. Full error detail is
+// still logged server-side for diagnostics; only the classified message ever
+// reaches the client. Errors this codebase already sanitizes itself — the
+// friendlySmtpTimeoutMessage/friendlyImapTimeoutMessage translations in
+// lib/email/providers/smtp.ts and lib/email/reply-providers/imap.ts, plus
+// the 10s Promise.race timeout below — are plain Errors with no `code`/
+// `responseCode`, so their message is safe to pass through as-is; anything
+// carrying a raw provider error code/response gets bucketed instead.
+function classifyTestConnectionError(error: unknown, kind: "imap" | "smtp"): string {
+  console.error(`[mailboxes] ${kind} test-connection failed:`, error);
+
+  const err = error as { code?: string; responseCode?: number; responseStatus?: string };
+
+  if (error instanceof Error && !err.code && typeof err.responseCode !== "number" && !err.responseStatus) {
+    return error.message;
+  }
+
+  const unreachableCodes = new Set([
+    "ENOTFOUND",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "EAI_AGAIN",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "ECONNECTION",
+    "NoConnection",
+    "EConnectionClosed",
+  ]);
+  if (err.code && unreachableCodes.has(err.code)) {
+    return "Couldn't reach the mail server. Check the host and port, then try again.";
+  }
+
+  const tlsCodes = new Set(["ESOCKET", "EPROTO", "ERR_TLS_CERT_ALTNAME_INVALID", "CERT_HAS_EXPIRED"]);
+  if (err.code && tlsCodes.has(err.code)) {
+    return "Couldn't establish a secure connection. Check the port and encryption settings.";
+  }
+
+  const isAuthFailure =
+    err.code === "EAUTH" ||
+    (typeof err.responseCode === "number" && err.responseCode >= 500 && err.responseCode < 600) ||
+    err.responseStatus === "NO" ||
+    err.responseStatus === "BAD";
+  if (isAuthFailure) {
+    return "The username or password was rejected. Check your credentials and try again.";
+  }
+
+  return kind === "imap"
+    ? "Couldn't connect to the IMAP server. Check your settings and try again."
+    : "Couldn't connect to the SMTP server. Check your settings and try again.";
+}
+
 export interface TestImapConnectionInput {
   mailboxId?: string;
   imapHost: string;
@@ -308,7 +363,7 @@ export async function testImapConnectionAction(
     ]);
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Couldn't connect to the IMAP server." };
+    return { ok: false, error: classifyTestConnectionError(error, "imap") };
   }
 }
 
@@ -401,6 +456,6 @@ export async function testSmtpConnectionAction(
     ]);
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Couldn't connect to the SMTP server." };
+    return { ok: false, error: classifyTestConnectionError(error, "smtp") };
   }
 }

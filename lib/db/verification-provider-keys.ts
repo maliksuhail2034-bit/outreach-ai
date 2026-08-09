@@ -6,10 +6,22 @@ import { unwrap } from "./shared";
 // Mirrors lib/db/ai-provider-keys.ts's shape exactly (one row per
 // organization per provider, upserted on that pair).
 
-export async function listVerificationProviderKeys(supabase: Client, organizationId: string) {
+// Excludes encrypted_api_key — mirrors MailboxSafe in lib/db/mailboxes.ts.
+// listVerificationProviderKeys' result reaches VerificationProvidersPanel (a
+// Client Component), so it must never carry the ciphertext into the RSC
+// flight payload. getVerificationProviderKeyByProvider below is the one
+// exception: it feeds the server-only decrypt paths in lib/verification/verify.ts
+// and lib/verification/bulk-worker.ts and still needs the full row — never
+// call it from a path whose result can reach the browser.
+export type VerificationProviderKeySafe = Omit<Tables<"verification_provider_keys">, "encrypted_api_key">;
+
+export async function listVerificationProviderKeys(
+  supabase: Client,
+  organizationId: string,
+): Promise<VerificationProviderKeySafe[]> {
   const { data, error } = await supabase
     .from("verification_provider_keys")
-    .select("*")
+    .select("id, organization_id, provider, key_preview, created_at, updated_at")
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false });
   if (error) throw error;

@@ -3,6 +3,70 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-09 — Enterprise Readiness — Production Readiness — UX / Visual Refinement, Complete (Commit: 09d0032)
+
+- **Third Production Readiness item: a dedicated UX/visual-design pass —
+  polished light and dark theming with a warm-orange brand accent, and
+  corrected semantic-color usage across five presentational components.**
+  **Implementation complete, published, no migration created.**
+  - **Stage 1 — theme tokens (`app/globals.css` only)**: replaced the
+    indigo/violet `--primary` brand color with a warm-orange token pair
+    for light and dark mode. `--primary-foreground` now uses near-black
+    text on the orange fill instead of white — verified at 5.84:1
+    contrast in light mode and 8.42:1 in dark mode (both pass WCAG AA;
+    white text on the same orange only reached 3.4:1). Added first-class
+    `--success`, `--warning`, and `--info` tokens (each with its own
+    `-foreground` pairing, independently contrast-checked), so semantic
+    color no longer has to borrow from `--primary` or `--destructive`.
+    Raised dark-mode shadow opacity so `shadow-sm`/`shadow-lg` stay
+    visible against near-black surfaces — same neutral black, no color
+    tint or glow added.
+  - **Stage 2 — semantic-color component fixes**:
+    - `components/ui/badge.tsx` — added `success`/`warning`/`info` Badge
+      variants alongside the existing `default`/`secondary`/`destructive`/
+      `outline` set.
+    - `components/analytics/insights-card.tsx` — good/warning/info tones
+      now map to `text-success`/`text-warning`/`text-info` instead of
+      `text-primary`/`text-destructive`/`text-muted-foreground`, so a
+      warning insight no longer looks identical to a real error.
+    - `components/deliverability/score-badge.tsx` — healthy scores (>=80)
+      now render `success`, mid-range scores (50-79) render `warning`,
+      and poor scores (<50) still render `destructive` — a healthy score
+      no longer renders in brand orange.
+    - `components/dashboard/stat-card.tsx` — added an optional `tone`
+      prop (`brand`/`success`/`warning`/`danger`) defaulting to `brand`,
+      so every existing caller renders unchanged unless it opts in.
+    - `components/warmup/warmup-dashboard.tsx` — replaced the one
+      hardcoded `text-amber-600 dark:text-amber-500` with the centralized
+      `--warning` token.
+  - **Not changed**: business logic, analytics computation, authentication,
+    the database/Supabase layer, workers, migrations, email sending, lead
+    import, pagination, or routes. No security system was touched. Only
+    the six files above (one CSS file, five presentational components)
+    were modified.
+  - **Known limitation, not addressed by this item**: the dashboard's
+    "Failed sends" stat card still renders with the brand-tone icon chip
+    rather than the new `danger` tone, because its caller
+    (`app/(app)/dashboard/page.tsx`) was outside this item's approved
+    file scope. Several other components (e.g. campaign/mailbox "Active"
+    status badges, the setup checklist's completed-step circles) still
+    map positive/active states to brand orange via their own
+    pre-existing, duplicated status-to-color logic — unchanged, not part
+    of this item's five-component scope.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, since no test
+    -covered logic was touched. Also verified by inspecting the running
+    application in both light and dark mode: healthy/poor deliverability
+    scores render success/destructive correctly, "good" analytics
+    insights render success rather than brand orange, the warmup warning
+    text is visually distinct from both the brand button and the
+    destructive badge beside it, and the orange brand treatment (hero
+    glow, buttons, focus states) reads as intended with no added
+    gradients or decorative effects. Commit `09d0032` is published on
+    `origin/main`; local `HEAD` was verified equal to `origin/main` after
+    the push.
+
 ## 2026-08-09 — Documentation clarification — Security Gate scope (no code change)
 
 - **Removed ambiguity in the "other observations" language from the

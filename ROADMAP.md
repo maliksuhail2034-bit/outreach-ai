@@ -85,6 +85,16 @@ the wider Enterprise Readiness initiative stands.
   connection errors into safe, user-facing messages, with full detail
   still logged server-side. No migration required; no RLS/authentication
   architecture changes. See Production Readiness under Done.
+- ✅ Production Readiness — UX / Visual Refinement — Complete (commit
+  `09d0032`). A dedicated UX/visual-design pass: polished light and dark
+  theming in `app/globals.css` with a warm-orange brand accent (accessible
+  primary-foreground treatment, new success/warning/info tokens, tuned
+  dark-mode shadow depth), plus five presentational-component fixes so
+  brand orange no longer doubles as success/warning/error color (Badge
+  semantic variants, analytics insight tones, deliverability score
+  badges, dashboard stat-card tone support, and the warmup warning
+  color). No business logic, database, migration, or security-system
+  change. See Production Readiness under Done.
 - **Remaining**: no further Production Readiness items are currently
   itemized as approved work, and none are pending from the Security Gate.
   The Security Gate was intentionally scoped to its two findings, not
@@ -1167,26 +1177,89 @@ Planned
     files) passed before commit. Commit `83f8e5d` is published on
     `origin/main`; local `HEAD` was verified equal to `origin/main` after
     the push.
+- **Enterprise Readiness — Production Readiness — UX / Visual Refinement
+  — COMPLETE (2026-08-09, commit `09d0032`).** Third tracked item under
+  Production Readiness. Objective: a dedicated UX/visual-design pass —
+  polished light and dark theming with a warm-orange brand accent, and
+  correcting the places where brand color had been doing double duty as
+  semantic success/warning/error color. **Implementation complete,
+  published, no migration created.**
+  - **Stage 1 — theme tokens, `app/globals.css` only**: replaced the
+    indigo/violet `--primary` with a warm-orange token pair for light and
+    dark mode, with an accessible `--primary-foreground` treatment
+    (near-black text on the orange fill instead of white — verified at
+    5.84:1 contrast in light mode and 8.42:1 in dark mode, both passing
+    WCAG AA; white text on the same orange only reached 3.4:1). Added
+    first-class `--success`/`--warning`/`--info` tokens, each with its
+    own `-foreground` pairing independently contrast-checked, so semantic
+    color no longer has to borrow from `--primary` or `--destructive`.
+    Raised dark-mode shadow opacity so `shadow-sm`/`shadow-lg` stay
+    visible against near-black surfaces — same neutral black, no color
+    tint, no glow.
+  - **Stage 2 — semantic-color component fixes**, five files:
+    `components/ui/badge.tsx` (added `success`/`warning`/`info` Badge
+    variants alongside the existing `default`/`secondary`/`destructive`/
+    `outline` set), `components/analytics/insights-card.tsx` (good/
+    warning/info tones now map to their matching semantic token instead
+    of `text-primary`/`text-destructive`/`text-muted-foreground`),
+    `components/deliverability/score-badge.tsx` (healthy scores >=80
+    render `success`, mid-range 50-79 render `warning`, poor scores <50
+    still render `destructive` — a healthy score no longer looks
+    brand-colored), `components/dashboard/stat-card.tsx` (added an
+    optional `tone` prop — `brand`/`success`/`warning`/`danger` —
+    defaulting to `brand` so every existing caller renders unchanged),
+    and `components/warmup/warmup-dashboard.tsx` (replaced the one
+    hardcoded `text-amber-600 dark:text-amber-500` with the centralized
+    `--warning` token).
+  - **Explicitly unchanged**: business logic, analytics computation,
+    authentication, the database/Supabase layer, workers, migrations,
+    email sending, lead import, pagination, and routes — this item
+    touched only the six files above (one CSS file, five presentational
+    components).
+  - **Verified live in both themes**: healthy/poor deliverability scores
+    render success/destructive correctly, "good" analytics insights
+    render success rather than brand orange, the warmup warning text
+    renders in the warning token distinct from both the brand-colored
+    button and the destructive badge next to it, and the brand-orange
+    treatment (hero glow, buttons, focus states) reads as intended in
+    both themes with no added gradients or decorative effects.
+  - **Known, explicitly out-of-scope observations — not implemented in
+    this item**: the dashboard's "Failed sends" stat still renders with
+    the brand-tone icon chip, since its caller
+    (`app/(app)/dashboard/page.tsx`) was outside this item's approved
+    file list — `stat-card.tsx`'s new `danger` tone exists but isn't
+    wired up there yet. Several other components still map "positive/
+    active" states to brand orange via their own duplicated
+    `STATUS_VARIANT`-style logic (e.g. campaign/mailbox "Active" badges,
+    the setup checklist's completed-step circles) — pre-existing,
+    unrelated to this item's five-file scope, not touched.
+  - All checks (typecheck, lint, build — 37/37 routes, full test suite —
+    525 tests, 70 files) passed before commit. Commit `09d0032` is
+    published on `origin/main`; local `HEAD` was verified equal to
+    `origin/main` after the push.
 
 ## Current milestone
 
 Enterprise Readiness — Production Readiness — in progress. The
 Scalability Track (Phases A through E) is fully complete. Production
-Readiness has two completed items so far: the Deliverability Trends
+Readiness has three completed items so far: the Deliverability Trends
 Rollup Migration (commit `7dca187`, discovered during the Scalability
-Phase E Exit Review) and the Security Gate remediation (commit `83f8e5d`,
-a targeted security audit intentionally scoped to two findings —
-provider API-key exposure and IMAP/SMTP test-connection error leakage —
-both of which were found and fixed). Both are complete (see Done). No
-further Production Readiness items are currently itemized as approved
-work, and none are known to be pending from the Security Gate: it did
-not produce a separate enumerated list of other deferred findings, so
-there is no known security backlog to carry forward. This is not a claim
-that the application has been exhaustively security-audited or is
-vulnerability-free — only that the two identified findings are resolved.
-A future security concern found through a fresh audit, bug report,
-penetration test, or other evidence would be scoped as new work at that
-time.
+Phase E Exit Review), the Security Gate remediation (commit `83f8e5d`, a
+targeted security audit intentionally scoped to two findings — provider
+API-key exposure and IMAP/SMTP test-connection error leakage — both of
+which were found and fixed), and the UX / Visual Refinement (commit
+`09d0032`, a warm-orange theme pass in `app/globals.css` plus corrected
+semantic-color usage across five presentational components). All three
+are complete (see Done). No further Production Readiness items are
+currently itemized as approved work, and none are known to be pending
+from the Security Gate: it did not produce a separate enumerated list of
+other deferred findings, so there is no known security backlog to carry
+forward. This is not a claim that the application has been exhaustively
+security-audited, is fully visually polished, or is vulnerability-free —
+only that these three specific items are resolved. Future security or
+UX work (including wiring the dashboard's "Failed sends" stat to its new
+`danger` tone, and the other out-of-scope observations noted above)
+would be scoped as new work at that time.
 
 ## In progress / partially built
 

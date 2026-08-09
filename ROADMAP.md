@@ -86,9 +86,13 @@ the wider Enterprise Readiness initiative stands.
   still logged server-side. No migration required; no RLS/authentication
   architecture changes. See Production Readiness under Done.
 - **Remaining**: no further Production Readiness items are currently
-  itemized as approved work. The original audit's other observations were
-  outside this Security Gate's two-finding scope and remain
-  deferred/theoretical until separately scoped and approved.
+  itemized as approved work, and none are pending from the Security Gate.
+  The Security Gate was intentionally scoped to its two findings, not
+  framed as an exhaustive security review, and it did not produce a
+  separate enumerated list of additional deferred findings — so there is
+  no known security backlog to itemize here. A future security concern
+  surfaced by a fresh audit, bug report, penetration test, or other
+  evidence would be evaluated and scoped as its own new item at that time.
 
 ## Integration status
 
@@ -1099,9 +1103,11 @@ Planned
   Production Readiness surface and remediate any real findings found.
   **Implementation complete, published, no migration created.**
   - **Audit scope**: a targeted pass, not a re-audit of the Enterprise
-    Readiness Security track (see Phase 3B, above). Two real findings
-    were identified; both were remediated. No other observations from
-    this pass were implemented — see "Not implemented" below.
+    Readiness Security track (see Phase 3B, above), and not an exhaustive
+    security review of the application. Two real findings were
+    identified and both were remediated; the audit did not produce a
+    separate enumerated list of additional deferred findings — see
+    "Scope clarification" below.
   - **Finding 1 (Medium) — provider API-key exposure.**
     `listAiProviderKeys()` (`lib/db/ai-provider-keys.ts`) and
     `listVerificationProviderKeys()` (`lib/db/verification-provider-keys.ts`)
@@ -1146,9 +1152,17 @@ Planned
     error-handling changes only; no schema change.
   - **No RLS or authentication architecture changes** — this remediation
     did not touch policy definitions or session/auth handling.
-  - **Not implemented**: any other, unrelated observations from the
-    audit — only the two findings above were scoped, approved, and
-    remediated as part of this item.
+  - **Scope clarification**: this item resolved exactly the two findings
+    above, no more and no less. There is no known deferred security
+    backlog left behind by this audit — it was intentionally scoped to
+    these two findings rather than framed as an exhaustive review, and
+    it produced no separate list of other findings to track. This is not
+    a claim that the application has been exhaustively security-audited
+    or is vulnerability-free — only that these two specific, identified
+    issues are resolved. A future security concern (from a fresh audit,
+    bug report, penetration test, or other evidence) would be evaluated
+    and scoped as its own new item at that time, not folded into this
+    one.
   - All checks (typecheck, lint, build, full test suite — 525 tests, 70
     files) passed before commit. Commit `83f8e5d` is published on
     `origin/main`; local `HEAD` was verified equal to `origin/main` after
@@ -1161,11 +1175,18 @@ Scalability Track (Phases A through E) is fully complete. Production
 Readiness has two completed items so far: the Deliverability Trends
 Rollup Migration (commit `7dca187`, discovered during the Scalability
 Phase E Exit Review) and the Security Gate remediation (commit `83f8e5d`,
-a targeted security audit that found and fixed two issues — provider
-API-key exposure and IMAP/SMTP test-connection error leakage). Both are
-complete (see Done). No further Production Readiness items are currently
-itemized as approved work; other observations from the original audit
-remain deferred/theoretical until separately scoped and approved.
+a targeted security audit intentionally scoped to two findings —
+provider API-key exposure and IMAP/SMTP test-connection error leakage —
+both of which were found and fixed). Both are complete (see Done). No
+further Production Readiness items are currently itemized as approved
+work, and none are known to be pending from the Security Gate: it did
+not produce a separate enumerated list of other deferred findings, so
+there is no known security backlog to carry forward. This is not a claim
+that the application has been exhaustively security-audited or is
+vulnerability-free — only that the two identified findings are resolved.
+A future security concern found through a fresh audit, bug report,
+penetration test, or other evidence would be scoped as new work at that
+time.
 
 ## In progress / partially built
 

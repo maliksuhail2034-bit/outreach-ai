@@ -3,6 +3,34 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-09 — Documentation clarification — Security Gate scope (no code change)
+
+- **Removed ambiguity in the "other observations" language from the
+  Security Gate documentation below.** Documentation-only clarification;
+  no code, migration, or configuration change.
+  - **What was ambiguous**: ROADMAP.md previously said the original
+    audit's "other observations" remained "deferred/theoretical until
+    separately scoped and approved," which could be misread as pointing
+    to a real, if unscoped, backlog of known additional findings.
+  - **Verified conclusion**: the targeted Production Readiness Security
+    Gate was intentionally scoped to two actionable findings — provider
+    API-key exposure and IMAP/SMTP test-connection error leakage — both
+    already remediated in commit `83f8e5d`. That audit did not produce a
+    separate enumerated list of additional deferred findings. The "other
+    observations" phrasing was hedge language acknowledging the Security
+    Gate was a targeted pass, not an exhaustive security review — not a
+    reference to specific, withheld findings.
+  - **Therefore**: there is no currently known deferred security backlog
+    represented by that phrase. This is not a claim that the application
+    has been exhaustively security-audited or is vulnerability-free, and
+    it does not change the status of Production Readiness, which remains
+    in progress. A future security concern surfaced by a fresh audit, bug
+    report, penetration test, or other evidence would be evaluated and
+    scoped as new work at that time.
+  - **ROADMAP.md sections updated**: the Enterprise Readiness initiative
+    status summary, the Production Readiness — Security Gate entry under
+    Done, and the Current milestone section.
+
 ## 2026-08-09 — Enterprise Readiness — Production Readiness — Security Gate, Complete (Commit: 83f8e5d)
 
 - **Second Production Readiness item: a targeted security audit of the

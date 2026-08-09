@@ -213,7 +213,7 @@ export function LeadTable({
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-4">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-4">
         <div>
           <CardTitle>Leads</CardTitle>
           <CardDescription>
@@ -222,7 +222,7 @@ export function LeadTable({
               : `${leadCount} lead${leadCount === 1 ? "" : "s"}.`}
           </CardDescription>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={verificationFilter} onValueChange={(value) => setVerificationFilter(value as VerificationFilter)}>
             <SelectTrigger size="sm" aria-label="Filter by verification status">
               <SelectValue />
@@ -298,7 +298,7 @@ export function LeadTable({
               </div>
             )}
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" style={{ contain: "layout" }}>
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">

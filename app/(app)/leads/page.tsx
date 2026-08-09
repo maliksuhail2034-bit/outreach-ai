@@ -52,7 +52,7 @@ export default async function LeadsPage({
       </FadeIn>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <FadeIn delay={0.05} className="lg:col-span-2">
+        <FadeIn delay={0.05} className="min-w-0 lg:col-span-2">
           <LeadTable
             leads={leads}
             leadLists={leadLists ?? []}

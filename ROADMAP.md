@@ -145,6 +145,37 @@ the wider Enterprise Readiness initiative stands.
   surfaced by a fresh audit, bug report, penetration test, or other
   evidence would be evaluated and scoped as its own new item at that time.
 
+**Design System initiative status** (a separate, dedicated, phased
+visual-design refinement, approved and tracked apart from the Production
+Readiness backlog above):
+- ✅ Phase 1 — Surface Hierarchy — Complete (2026-08-09, commit
+  `3732a2d`). Established a page -> card -> surface-2 -> popover
+  elevation hierarchy: light-mode `--card`/`--popover` moved off pure
+  white onto the same off-white recipe `--sidebar` already used;
+  dark-mode `--popover` became genuinely lighter than `--card` instead of
+  equaling it; a new `--surface-2` token was added (defined, not yet
+  consumed — reserved for a later phase); `Dialog`/`Sheet` switched from
+  `bg-background` to `bg-popover`, fixing a real bug where both blended
+  into the page instead of visually lifting off it. No component API
+  changes. See Design System — Phase 1 under Done.
+- ✅ Phase 2 — Semantic Color Hierarchy — Complete (2026-08-09, commit
+  `d5c017b`). Extended `StatCard`'s existing `tone` prop pattern to
+  `TrendCard`, `PercentageCard`, and `FunnelCard` so brand orange is no
+  longer the default color for every metric icon/fill; corrected
+  components where color contradicted meaning (warmup score badges,
+  mailbox "Active" status, and the health-score checkmark now use
+  success/warning/destructive tokens instead of brand orange; daily bar
+  charts default to a neutral fill instead of orange; the organization
+  Analytics page's "Success rate"/"Failure rate" cards now match the tone
+  of their "Failed" sibling instead of staying brand orange). The
+  duplicated `TrendBadge`/`TrendCard` direction-badge logic was
+  deliberately left untouched, flagged for a later phase rather than
+  refactored here. No database, Supabase, authentication, API, or
+  business-logic change. See Design System — Phase 2 under Done.
+- Phase 3 (semantic-color consistency sweep) and Phases 4-7 (shared table
+  system, logo/brand mark, visual-hierarchy polish, final consistency
+  sweep) — not started.
+
 ## Integration status
 
 Completed
@@ -1354,6 +1385,79 @@ Planned
     525 tests, 70 files) passed before commit. Commit `e1d2b67` is
     published on `origin/main`; local `HEAD` was verified equal to
     `origin/main` after the push.
+- **Design System — Phase 1: Surface Hierarchy — COMPLETE (2026-08-09,
+  commit `3732a2d`).** First of a new, dedicated, phased visual-design
+  refinement, separate from the Production Readiness track above.
+  Objective: establish a real page -> card -> surface-2 -> popover
+  elevation hierarchy — light-mode `--card`/`--popover` previously
+  equaled `--background` exactly (a card was only a border, not a
+  surface) and dark-mode `--popover` equaled `--card` (a dialog/dropdown
+  didn't visually lift off the card behind it). **Implementation
+  complete, published, no migration created.**
+  - `app/globals.css` — light-mode `--card`/`--popover` moved from pure
+    white onto the same off-white recipe `--sidebar` already used
+    (`240 20% 99%`); dark-mode `--popover` changed from equaling `--card`
+    to a genuinely lighter `240 10% 12%`. A new `--surface-2` token was
+    added for both themes, defined but not yet consumed by any component
+    — reserved for a later phase.
+  - `components/ui/dialog.tsx` and `components/ui/sheet.tsx` — both
+    switched from `bg-background` to `bg-popover text-popover-foreground`,
+    fixing a real bug where the Dialog and the mobile-nav Sheet blended
+    into the page instead of visually elevating off it, especially in
+    dark mode.
+  - No component API changes.
+  - All checks (typecheck, lint, build — 37/37 routes, full test suite —
+    525 tests, 70 files) passed before commit. Verified live via
+    computed-style comparison before/after in both light and dark mode.
+    Commit `3732a2d` is published on `origin/main`; local `HEAD` was
+    verified equal to `origin/main` after the push.
+- **Design System — Phase 2: Semantic Color Hierarchy — COMPLETE
+  (2026-08-09, commit `d5c017b`).** Second phase of the same initiative
+  (Phase 1 immediately above). Objective: make color communicate meaning
+  instead of brand orange being the default decoration on every metric
+  card, chart, and status badge. **Implementation complete, published, no
+  migration created.**
+  - **Extended the tone system**: `stat-card.tsx` already had a `tone`
+    prop (`brand`/`success`/`warning`/`danger`) from the earlier UX/
+    Visual Refinement pass (commit `09d0032`); the same pattern was added
+    to `components/dashboard/trend-card.tsx`,
+    `components/dashboard/percentage-card.tsx`, and
+    `components/dashboard/funnel-card.tsx`, all defaulting to `brand` so
+    every existing call site renders unchanged unless it opts in.
+  - **Fixed genuine color/meaning mismatches**:
+    `components/warmup/warmup-dashboard.tsx`'s `scoreVariant()` now
+    returns `success`/`warning`/`destructive` (previously
+    `default`/`secondary`/`destructive`), matching
+    `components/deliverability/score-badge.tsx`'s thresholds instead of
+    contradicting them; `components/mailboxes/mailbox-list.tsx`'s
+    "Active" mailbox status now renders `success` instead of the
+    brand-orange `default`; `components/analytics/health-score-card.tsx`'s
+    "good" factor checkmark now uses `text-success` instead of
+    `text-primary`.
+  - **Neutralized default chart coloring**:
+    `components/analytics/daily-bar-chart.tsx`'s default `barClassName`
+    changed from `bg-primary` to the neutral `bg-secondary-foreground/70`
+    this file's own "opens/replies/clicks" callers already used, so
+    ordinary volume charts (e.g. "Daily sends") no longer default to
+    orange.
+  - **`app/(app)/analytics/page.tsx`** — the organization overview's
+    "Failure rate" card now passes `tone="danger"` (matching its "Failed"
+    sibling) and "Success rate" now passes `tone="success"`, resolving a
+    live mismatch where "Failed: 1" was red but "Failure rate: 100%"
+    stayed brand orange on the same page.
+  - **Deliberately not touched**: `components/dashboard/status-card.tsx`
+    (outside approved scope), and the duplicated `TrendBadge`/`TrendCard`
+    direction-badge logic — flagged for a later phase rather than
+    refactored here. No database, Supabase, authentication, API, or
+    business-logic change.
+  - All checks (typecheck, lint, build — 37/37 routes, full test suite —
+    525 tests, 70 files) passed before commit. Browser-verified live in
+    both light and dark mode across the campaign detail, mailboxes,
+    analytics, dashboard, and warmup pages — confirmed ordinary counts
+    stayed neutral, "Active"/"Failed"/"Failure rate" render their
+    intended semantic colors in both themes, and no layout regressions.
+    Commit `d5c017b` is published on `origin/main`; local `HEAD` was
+    verified equal to `origin/main` after the push.
 
 ## Current milestone
 
@@ -1389,6 +1493,14 @@ is production-ready for a general public launch — only that these five
 specific items are resolved and that the audit judged the product safe
 for a controlled first customer. Future security, UX, or readiness work
 would be scoped as new work at that time.
+
+**Since then**, a separate Design System initiative has started (see
+Design System initiative status above and Done for detail): Phase 1
+(Surface Hierarchy, commit `3732a2d`) and Phase 2 (Semantic Color
+Hierarchy, commit `d5c017b`) are both complete, both the same day as the
+Production Readiness work above. Phase 3 (semantic-color consistency
+sweep) has not started; no further Design System work beyond Phase 2 is
+currently approved.
 
 ## In progress / partially built
 

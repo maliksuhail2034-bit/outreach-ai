@@ -3,6 +3,86 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-09 — Design System — Phase 2: Semantic Color Hierarchy, Complete (Commit: d5c017b)
+
+- **Second phase of a dedicated, phased visual-design refinement (Phase 1:
+  Surface Hierarchy, commit `3732a2d`, same day — see entry below).**
+  Objective: make color communicate meaning instead of brand orange being
+  the default decoration on every metric card, chart, and status badge.
+  **Implementation complete, published, no migration created.**
+  - **Extended the tone system**: `components/dashboard/stat-card.tsx`
+    already had a `tone` prop (`brand`/`success`/`warning`/`danger`) from
+    the earlier UX/Visual Refinement pass (commit `09d0032`); the same
+    pattern was added to `components/dashboard/trend-card.tsx`,
+    `components/dashboard/percentage-card.tsx`, and
+    `components/dashboard/funnel-card.tsx`, all defaulting to `brand` so
+    every existing call site renders unchanged unless it opts in.
+  - **Fixed genuine color/meaning mismatches**:
+    `components/warmup/warmup-dashboard.tsx`'s `scoreVariant()` now
+    returns `success`/`warning`/`destructive` (previously
+    `default`/`secondary`/`destructive`), matching
+    `components/deliverability/score-badge.tsx`'s thresholds exactly
+    instead of contradicting them; `components/mailboxes/mailbox-list.tsx`'s
+    "Active" mailbox status now renders `success` instead of the
+    brand-orange `default`; `components/analytics/health-score-card.tsx`'s
+    "good" factor checkmark now uses `text-success` instead of
+    `text-primary`.
+  - **Neutralized default chart/metric coloring**:
+    `components/analytics/daily-bar-chart.tsx`'s default `barClassName`
+    changed from `bg-primary` to the neutral `bg-secondary-foreground/70`
+    this file's own "opens/replies/clicks" callers already used, so
+    ordinary volume charts (e.g. "Daily sends") no longer default to
+    orange.
+  - **`app/(app)/analytics/page.tsx`** — the organization overview's
+    "Failure rate" card now passes `tone="danger"` (matching its "Failed"
+    sibling) and "Success rate" now passes `tone="success"`, resolving a
+    live mismatch where "Failed: 1" was red but "Failure rate: 100%"
+    stayed brand orange on the same page.
+  - **Deliberately not touched**: `components/dashboard/status-card.tsx`
+    (outside approved scope), and the duplicated `TrendBadge`/`TrendCard`
+    direction-badge logic — flagged for a later phase rather than
+    refactored here. No database, Supabase, authentication, API, or
+    business-logic change.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged. Browser-verified
+    live in both light and dark mode across the campaign detail,
+    mailboxes, analytics, dashboard, and warmup pages — confirmed
+    ordinary counts stayed neutral, "Active"/"Failed"/"Failure rate"
+    render their intended semantic colors in both themes, and no layout
+    regressions. Commit `d5c017b` is published on `origin/main`; local
+    `HEAD` was verified equal to `origin/main` after the push.
+
+## 2026-08-09 — Design System — Phase 1: Surface Hierarchy, Complete (Commit: 3732a2d)
+
+- **First phase of the same visual-design refinement (Phase 2: Semantic
+  Color Hierarchy, commit `d5c017b`, follows immediately above).**
+  Objective: establish a real page -> card -> surface-2 -> popover
+  elevation hierarchy — light-mode `--card`/`--popover` previously
+  equaled `--background` exactly (a card was only a border, not a
+  surface) and dark-mode `--popover` equaled `--card` (a dialog/dropdown
+  didn't visually lift off the card behind it). **Implementation
+  complete, published, no migration created.**
+  - **`app/globals.css`** — light-mode `--card` and `--popover` moved
+    from pure white (`0 0% 100%`) onto the same barely-off-white recipe
+    `--sidebar` already used (`240 20% 99%`); dark-mode `--popover`
+    changed from equaling `--card` exactly to a genuinely lighter
+    `240 10% 12%`. A new `--surface-2` token was added for both themes
+    (`240 15% 97%` light / `240 7% 10%` dark) — defined but not yet
+    consumed by any component, reserved for a later phase.
+  - **`components/ui/dialog.tsx`** and **`components/ui/sheet.tsx`** —
+    both switched from `bg-background` to `bg-popover
+    text-popover-foreground`, fixing a real bug where the Dialog and the
+    mobile-nav Sheet blended into the page instead of visually elevating
+    off it, especially in dark mode.
+  - **No component API changes.**
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged. Verified live
+    via computed-style comparison before/after in both light and dark
+    mode. Commit `3732a2d` is published on `origin/main`; local `HEAD`
+    was verified equal to `origin/main` after the push.
+
 ## 2026-08-09 — Enterprise Readiness — Production Readiness — First-Customer Smoke Test & Remediation, Complete (Commit: ca96c48)
 
 - **Fifth Production Readiness item: a manual, browser-driven smoke test of

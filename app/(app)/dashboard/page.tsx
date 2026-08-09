@@ -151,6 +151,7 @@ export default async function DashboardPage() {
       description: "Sends that didn't go through",
       emptyHint: "No failed sends — nice.",
       isEmpty: failedSendsCount === 0,
+      tone: "danger" as const,
     },
     {
       title: "Active campaigns",

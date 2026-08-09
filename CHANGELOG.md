@@ -3,6 +3,66 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-09 — Enterprise Readiness — Production Readiness — Security Gate, Complete (Commit: 83f8e5d)
+
+- **Second Production Readiness item: a targeted security audit of the
+  Production Readiness surface, with two real findings identified and
+  remediated.** Scope was limited to these two findings; no other audit
+  observations were implemented. **Implementation complete, published, no
+  migration created.**
+  - **Finding 1 (Medium) — provider API-key exposure via unnecessary
+    full-row selects.** `listAiProviderKeys()` (`lib/db/ai-provider-keys.ts`)
+    and `listVerificationProviderKeys()` (`lib/db/verification-provider-keys.ts`)
+    selected `*`, so `encrypted_api_key` ciphertext was included in query
+    results that flow into `AiProvidersPanel` and
+    `VerificationProvidersPanel` — both Client Components — meaning the
+    ciphertext was serialized into the RSC flight payload sent to the
+    browser, even though neither panel uses it.
+    - **Fix**: both list functions now select an explicit safe column set
+      (excluding `encrypted_api_key`) and return new `AiProviderKeySafe`/
+      `VerificationProviderKeySafe` types (`Omit<Tables<...>,
+      "encrypted_api_key">`). The single-row `getAiProviderKeyByProvider`/
+      `getVerificationProviderKeyByProvider` lookups are unchanged and
+      still select the full row, since they feed server-only decrypt paths
+      (`lib/ai/recommendations.ts`, `lib/verification/verify.ts`,
+      `lib/verification/bulk-worker.ts`) that are never reachable from the
+      browser.
+    - **Consuming panels updated**: `components/settings/ai-providers-panel.tsx`
+      and `components/settings/verification-providers-panel.tsx` now type
+      their local state against the new `*Safe` types instead of the raw
+      `Tables<...>` row type.
+  - **Finding 2 (Low) — IMAP/SMTP test-connection error leakage.**
+    `testImapConnectionAction`/`testSmtpConnectionAction`
+    (`app/(app)/mailboxes/actions.ts`) returned the caught error's raw
+    `.message` to the browser on connection failure, which could surface
+    internal nodemailer/ImapFlow error codes or raw IMAP/SMTP server
+    response text to the client.
+    - **Fix**: added `classifyTestConnectionError(error, kind)`, which logs
+      the full error server-side (`console.error`) and returns one of a
+      small set of generic, user-facing messages based on the error's
+      `code`/`responseCode`/`responseStatus` — unreachable host, TLS/
+      certificate problem, rejected credentials, or a generic per-protocol
+      fallback. Plain `Error`s carrying no provider error code (the
+      existing timeout/friendly-message paths in
+      `lib/email/providers/smtp.ts` and
+      `lib/email/reply-providers/imap.ts`, and the 10s test-connection
+      timeout) still pass their message through unchanged, since those are
+      already sanitized by this codebase.
+  - **Files changed**: `lib/db/ai-provider-keys.ts`,
+    `lib/db/verification-provider-keys.ts`,
+    `components/settings/ai-providers-panel.tsx`,
+    `components/settings/verification-providers-panel.tsx`,
+    `app/(app)/mailboxes/actions.ts`.
+  - **No migration required or created.**
+  - **No RLS or authentication architecture changes.**
+  - **Not implemented**: any other, unrelated findings from the original
+    security audit — only the two findings above were in scope for this
+    item.
+  - **Verification**: full check sequence (`npm run typecheck`,
+    `npm run lint`, `npm run build`, `npm test` — 525 tests, 70 files) all
+    passed before commit. Commit `83f8e5d` pushed to `origin/main`; local
+    `HEAD` verified equal to `origin/main` after push.
+
 ## 2026-08-06 — Enterprise Readiness — Production Readiness — Deliverability Trends Rollup Migration, Complete (Commit: 7dca187)
 
 - **First Production Readiness item, discovered during the Scalability

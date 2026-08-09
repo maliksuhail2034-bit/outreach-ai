@@ -71,9 +71,24 @@ the wider Enterprise Readiness initiative stands.
   section is rewired from the always-empty
   `DomainAnalyticsSnapshot.events` to real domain-scoped
   `analytics_daily_rollups` data. See Production Readiness under Done.
+- ✅ Production Readiness — Security Gate — Complete (commit `83f8e5d`).
+  A targeted security audit of the Production Readiness surface found and
+  remediated two real findings: (1) Medium — provider API-key exposure,
+  where `lib/db/ai-provider-keys.ts` and
+  `lib/db/verification-provider-keys.ts` selected full rows (including
+  `encrypted_api_key`) for reads consumed by Client Component settings
+  panels; fixed with explicit safe-column selections and new
+  `AiProviderKeySafe`/`VerificationProviderKeySafe` types, while
+  server-only decrypt paths keep full-row access. (2) Low — IMAP/SMTP
+  test-connection error leakage, where `app/(app)/mailboxes/actions.ts`
+  returned raw provider error text to the browser; fixed by classifying
+  connection errors into safe, user-facing messages, with full detail
+  still logged server-side. No migration required; no RLS/authentication
+  architecture changes. See Production Readiness under Done.
 - **Remaining**: no further Production Readiness items are currently
-  itemized. Additional findings from the original audit may still surface
-  and would be tracked here once scoped.
+  itemized as approved work. The original audit's other observations were
+  outside this Security Gate's two-finding scope and remain
+  deferred/theoretical until separately scoped and approved.
 
 ## Integration status
 
@@ -1078,17 +1093,79 @@ Planned
     tested in earlier Scalability Track phases.
   - All checks (typecheck, lint, build, full test suite — 525 tests, 70
     files) passed before commit.
+- **Enterprise Readiness — Production Readiness — Security Gate —
+  COMPLETE (2026-08-09, commit `83f8e5d`).** Second tracked item under
+  Production Readiness. Objective: run a targeted security audit of the
+  Production Readiness surface and remediate any real findings found.
+  **Implementation complete, published, no migration created.**
+  - **Audit scope**: a targeted pass, not a re-audit of the Enterprise
+    Readiness Security track (see Phase 3B, above). Two real findings
+    were identified; both were remediated. No other observations from
+    this pass were implemented — see "Not implemented" below.
+  - **Finding 1 (Medium) — provider API-key exposure.**
+    `listAiProviderKeys()` (`lib/db/ai-provider-keys.ts`) and
+    `listVerificationProviderKeys()` (`lib/db/verification-provider-keys.ts`)
+    selected `*`, so the `encrypted_api_key` ciphertext was included in
+    query results that flow into `AiProvidersPanel` and
+    `VerificationProvidersPanel` — both Client Components — meaning the
+    ciphertext was reaching the RSC flight payload sent to the browser,
+    unused by either panel.
+    - **Fix**: both list functions now select an explicit safe column set
+      (`id, organization_id, provider, key_preview[, model], created_at,
+      updated_at`) excluding `encrypted_api_key`, and return new
+      `AiProviderKeySafe`/`VerificationProviderKeySafe` types
+      (`Omit<Tables<...>, "encrypted_api_key">`). The single-row
+      `getAiProviderKeyByProvider`/`getVerificationProviderKeyByProvider`
+      lookups are unchanged and still select the full row, since they
+      feed server-only decrypt paths (`lib/ai/recommendations.ts`,
+      `lib/verification/verify.ts`, `lib/verification/bulk-worker.ts`)
+      that are never reachable from the browser.
+    - **Consuming panels updated**:
+      `components/settings/ai-providers-panel.tsx` and
+      `components/settings/verification-providers-panel.tsx` now type
+      their local state against the new `*Safe` types instead of the raw
+      `Tables<...>` row type.
+  - **Finding 2 (Low) — IMAP/SMTP test-connection error leakage.**
+    `testImapConnectionAction`/`testSmtpConnectionAction`
+    (`app/(app)/mailboxes/actions.ts`) returned the caught error's raw
+    `.message` to the browser verbatim on connection failure, which could
+    surface internal nodemailer/ImapFlow error codes or raw IMAP/SMTP
+    server response text to the client.
+    - **Fix**: added `classifyTestConnectionError(error, kind)`, which
+      logs the full error server-side (`console.error`) and returns one
+      of a small set of generic, user-facing messages based on the
+      error's `code`/`responseCode`/`responseStatus` — unreachable host,
+      TLS/certificate problem, rejected credentials, or a generic
+      per-protocol fallback. Plain `Error`s carrying no provider error
+      code (the existing timeout/friendly-message paths in
+      `lib/email/providers/smtp.ts` and
+      `lib/email/reply-providers/imap.ts`, and the 10s test-connection
+      timeout) still pass their message through unchanged, since those
+      are already sanitized by this codebase.
+  - **No migration required or created** — both fixes are read-column and
+    error-handling changes only; no schema change.
+  - **No RLS or authentication architecture changes** — this remediation
+    did not touch policy definitions or session/auth handling.
+  - **Not implemented**: any other, unrelated observations from the
+    audit — only the two findings above were scoped, approved, and
+    remediated as part of this item.
+  - All checks (typecheck, lint, build, full test suite — 525 tests, 70
+    files) passed before commit. Commit `83f8e5d` is published on
+    `origin/main`; local `HEAD` was verified equal to `origin/main` after
+    the push.
 
 ## Current milestone
 
 Enterprise Readiness — Production Readiness — in progress. The
-Scalability Track (Phases A through E) is fully complete; Production
-Readiness is the only tracked milestone remaining in the Enterprise
-Readiness initiative. Its first tracked item, the Deliverability Trends
-Rollup Migration (discovered during the Scalability Phase E Exit Review),
-is now complete (see Done) — commit `7dca187`. No further Production
-Readiness items are currently itemized; additional findings from the
-original audit may still surface.
+Scalability Track (Phases A through E) is fully complete. Production
+Readiness has two completed items so far: the Deliverability Trends
+Rollup Migration (commit `7dca187`, discovered during the Scalability
+Phase E Exit Review) and the Security Gate remediation (commit `83f8e5d`,
+a targeted security audit that found and fixed two issues — provider
+API-key exposure and IMAP/SMTP test-connection error leakage). Both are
+complete (see Done). No further Production Readiness items are currently
+itemized as approved work; other observations from the original audit
+remain deferred/theoretical until separately scoped and approved.
 
 ## In progress / partially built
 

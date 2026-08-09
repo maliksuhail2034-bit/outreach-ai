@@ -83,6 +83,52 @@ the git commit history. Dates reflect the commit date.
     mode. Commit `3732a2d` is published on `origin/main`; local `HEAD`
     was verified equal to `origin/main` after the push.
 
+## 2026-08-09 — Enterprise Readiness — Production Readiness — Final First-Customer Smoke Test & Remediation, Complete (Commit: bf4b31e)
+
+- **Sixth Production Readiness item: a final, test-only first-customer
+  smoke test re-verifying every finding from the previous smoke test,
+  followed by remediation of the one new finding it surfaced.**
+  **Implementation complete, published, no migration created.**
+  - **Test**: re-walked the full first-customer journey (auth, dashboard,
+    mailboxes, leads, campaigns, enrolment/send state, analytics,
+    responsive layout at ~820px and desktop width, light/dark theme) using
+    the environment's existing disposable E2E test fixtures — no new test
+    data, no real mailbox/customer data, no files modified during the test
+    itself.
+  - **Result**: overall verdict **GO** — all 11 previously-fixed items from
+    the prior smoke test (commit `ca96c48`) re-verified as
+    `REGRESSION CHECK: PASS`, zero P0 findings, exactly one new P1
+    finding.
+  - **Finding fixed — Leads page horizontal overflow at tablet width**:
+    the Leads page (`app/(app)/leads/page.tsx`,
+    `components/leads/lead-table.tsx`) had the same class of page-level
+    horizontal-overflow bug already fixed on Mailboxes and campaign detail
+    in the prior pass, just not yet applied there. Fixed with the
+    identical proven pattern: `min-w-0` on the grid item wrapping
+    `LeadTable`, `flex-wrap` on the table's `CardHeader` and its
+    filter/action button group, and `contain: layout` on the table's
+    `overflow-x-auto` scroll wrapper. One refinement discovered during
+    verification: the button group's pre-existing `shrink-0` class
+    silently defeated `flex-wrap` (it let the group claim its full
+    content width regardless of available space), so it was removed to
+    exactly match the already-working `mailbox-list.tsx` pattern, which
+    never had `shrink-0` — confirmed root cause at each step via live DOM
+    measurement (`document.documentElement.scrollWidth`), not assumed.
+  - **Not changed**: business logic, database/Supabase layer, migrations,
+    authentication architecture, APIs, table columns/data/fetching
+    behavior, or any other file. Presentation only.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, re-run after the
+    `shrink-0` correction. Browser-verified live: zero page-level
+    horizontal overflow at ~820px
+    (`document.documentElement.scrollWidth === clientWidth`), the Leads
+    table still scrolls internally when its columns need more room, no
+    regression at desktop width, and the campaign detail page's overflow
+    fix from the prior pass re-confirmed still fixed. Commit `bf4b31e` is
+    published on `origin/main`; local `HEAD` was verified equal to
+    `origin/main` after the push.
+
 ## 2026-08-09 — Enterprise Readiness — Production Readiness — First-Customer Smoke Test & Remediation, Complete (Commit: ca96c48)
 
 - **Fifth Production Readiness item: a manual, browser-driven smoke test of

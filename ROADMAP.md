@@ -136,6 +136,24 @@ the wider Enterprise Readiness initiative stands.
   assumed); (4) a campaign detail breadcrumb no longer mangles a UUID
   route segment. No migration, database, or authentication-architecture
   change. See Production Readiness under Done.
+- ✅ Production Readiness — Final First-Customer Smoke Test & Remediation
+  — Complete (commit `bf4b31e`). A final, test-only smoke test re-walked
+  the full first-customer journey and re-verified all 11 previously-fixed
+  items from the prior smoke test as passing, using the environment's
+  existing disposable E2E test fixtures. Result: **GO**, zero P0
+  findings, one new P1 finding — the Leads page had the same page-level
+  horizontal-overflow bug already fixed on Mailboxes and campaign detail,
+  just not yet applied there. Fixed with the identical proven pattern
+  (`min-w-0` on the grid item, `flex-wrap` on the `CardHeader` and its
+  button group, `contain: layout` on the table's scroll wrapper), plus
+  one refinement found during verification: the button group's
+  pre-existing `shrink-0` class was silently defeating `flex-wrap` and
+  was removed to exactly match the already-working `mailbox-list.tsx`
+  pattern. Browser-verified zero page-level overflow at ~820px with the
+  Leads table still able to scroll internally, and no regression at
+  desktop width or on the campaign detail page. No migration, database,
+  or authentication-architecture change. See Production Readiness under
+  Done.
 - **Remaining**: no further Production Readiness items are currently
   itemized as approved work, and none are pending from the Security Gate.
   The Security Gate was intentionally scoped to its two findings, not
@@ -1463,7 +1481,7 @@ Planned
 
 Enterprise Readiness — Production Readiness — in progress. The
 Scalability Track (Phases A through E) is fully complete. Production
-Readiness has five completed items so far: the Deliverability Trends
+Readiness has six completed items so far: the Deliverability Trends
 Rollup Migration (commit `7dca187`, discovered during the Scalability
 Phase E Exit Review), the Security Gate remediation (commit `83f8e5d`, a
 targeted security audit intentionally scoped to two findings — provider
@@ -1475,24 +1493,30 @@ First-Customer Readiness Audit & Remediation (commit `e1d2b67`, a
 12-surface readiness audit — 0 must-fix, 1 should-fix, 2 safe-to-defer
 findings, recommendation READY FOR CONTROLLED FIRST CUSTOMER — followed
 by remediation of all three findings: a Warmup disclosure fix and two
-unexpected-error-sanitization fixes), and the First-Customer Smoke Test
+unexpected-error-sanitization fixes), the First-Customer Smoke Test
 & Remediation (commit `ca96c48`, a manual browser-driven smoke test of
 the live application — overall verdict READY WITH NON-BLOCKING ISSUES,
 zero launch blockers — followed by remediation of all four findings: a
 raw-error-display fix in the campaign leads table, danger-tone fixes on
 two "Failed" stat cards, a tablet-width horizontal-overflow fix on
-Mailboxes and campaign detail, and a UUID-breadcrumb display fix). All
-five are complete (see Done). No further Production Readiness items are
+Mailboxes and campaign detail, and a UUID-breadcrumb display fix), and
+the Final First-Customer Smoke Test & Remediation (commit `bf4b31e`, a
+test-only re-verification of all 11 previously-fixed items — all passed
+— that surfaced exactly one new P1 finding: the Leads page had the same
+tablet-width horizontal-overflow bug already fixed elsewhere, just not
+yet applied there; fixed with the identical proven pattern). All
+six are complete (see Done). No further Production Readiness items are
 currently itemized as approved work, and none are known to be pending
-from the Security Gate, the First-Customer Readiness audit, or the
-smoke test: none of the three produced a separate enumerated list of
-other deferred findings beyond what's documented above, so there is no
-known backlog to carry forward. This is not a claim that the application
-has been exhaustively security-audited, is fully visually polished, or
-is production-ready for a general public launch — only that these five
-specific items are resolved and that the audit judged the product safe
-for a controlled first customer. Future security, UX, or readiness work
-would be scoped as new work at that time.
+from the Security Gate, either First-Customer smoke test, or the
+First-Customer Readiness audit: none of these produced a separate
+enumerated list of other deferred findings beyond what's documented
+above, so there is no known backlog to carry forward. This is not a
+claim that the application has been exhaustively security-audited, is
+fully visually polished, or is production-ready for a general public
+launch — only that these six specific items are resolved and that the
+audit judged the product safe for a controlled first customer. Future
+security, UX, or readiness work would be scoped as new work at that
+time.
 
 **Since then**, a separate Design System initiative has started (see
 Design System initiative status above and Done for detail): Phase 1

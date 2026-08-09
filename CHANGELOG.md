@@ -3,6 +3,134 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-09 — Enterprise Readiness — Production Readiness — First-Customer Smoke Test & Remediation, Complete (Commit: ca96c48)
+
+- **Fifth Production Readiness item: a manual, browser-driven smoke test of
+  the actual running application across the full first-customer journey,
+  followed by remediation of every concrete finding.**
+  **Implementation complete, published, no migration created.**
+  - **Test**: exercised the live app end to end — repository/git safety
+    checks, dev-server smoke test, dashboard, mailbox connection UI and
+    error sanitization, leads, campaign creation/state transitions,
+    campaign error sanitization, warmup disclosure, analytics accuracy,
+    settings/secret exposure, light/dark theme parity, responsive layout
+    at ~820px and desktop width, and the automated check suite — using
+    the environment's existing disposable E2E test fixtures. No new test
+    data created, no real customer data or real mailbox used.
+  - **Result**: overall verdict READY WITH NON-BLOCKING ISSUES — zero
+    launch blockers, four concrete, reproducible findings recorded and
+    approved for a scoped fix pass.
+  - **Findings fixed**:
+    - `components/campaigns/campaign-lead-table.tsx` — a failed send's
+      raw infrastructure error (e.g. `getaddrinfo ENOTFOUND ...`) was
+      rendered verbatim to the campaign owner. Now classified through the
+      existing `classifyErrorCategory()` (`lib/analytics/error-category.ts`,
+      unchanged) into a short customer-safe label (e.g. "Failed to send
+      (DNS)"); the raw text is preserved in the existing `title` tooltip
+      for debugging. No change to storage, worker, or classification
+      logic.
+    - `app/(app)/campaigns/[campaignId]/page.tsx` and
+      `app/(app)/analytics/page.tsx` — the "Failed emails"/"Failed" stat
+      cards used the brand-orange icon chip instead of the red/danger
+      treatment already shipped for the dashboard's "Failed sends" card
+      (commit `d959c1f`). Both now pass `tone="danger"` to the existing
+      `StatCard` component.
+    - `components/mailboxes/mailbox-list.tsx` and
+      `components/campaigns/campaign-lead-table.tsx` — the Mailboxes
+      connect-button row and the campaign detail page's Enrolled Leads
+      table caused page-wide horizontal scrolling at tablet width
+      (~820px). Root-caused via live DOM inspection rather than assumed:
+      (1) the button-row `CardHeader`s were missing `flex-wrap`; (2)
+      separately, the Enrolled Leads grid item was missing `min-w-0`
+      (letting a CSS Grid item's default `min-width: auto` stretch to the
+      table's min-content size), and the table's `overflow-x-auto`
+      wrapper was missing `contain: layout` — without it, `overflow:
+      auto` alone does not stop a clipped descendant's full intrinsic
+      width from still inflating `document.documentElement.scrollWidth`
+      (confirmed by testing `overflow: hidden` at every ancestor level up
+      to `<body>`, none of which worked, while `contain: layout` did).
+      The table itself still scrolls internally when its content needs
+      more room.
+    - `components/shell/breadcrumbs.tsx` — a campaign detail page's
+      breadcrumb rendered its UUID route segment mangled by the generic
+      slug-to-title-case transform (e.g. "375966a9 4750 4ab8 Bb0d
+      6ef897286b5c"). `labelFor()` now detects UUID-shaped segments and
+      renders them as-is; resolving a UUID to the entity's real name was
+      explicitly out of scope for this pass.
+  - **Not changed**: business logic, database/Supabase layer, migrations,
+    authentication architecture, the sending engine, campaign/mailbox
+    APIs, or any table column/data/fetching behavior. Presentation and
+    error-display only.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, re-run after
+    every implementation revision. Each fix was also verified live in the
+    browser (both light/dark themes, ~820px and desktop widths, and a
+    direct DOM measurement confirming zero page-level horizontal
+    overflow). Commit `ca96c48` is published on `origin/main`; local
+    `HEAD` was verified equal to `origin/main` after the push.
+
+## 2026-08-09 — Enterprise Readiness — Production Readiness — First-Customer Readiness Audit & Remediation, Complete (Commit: e1d2b67)
+
+- **Fourth Production Readiness item: a focused, read-only audit answering
+  "could we safely put this in front of the first real paying customer?",
+  followed by remediation of every approved finding.**
+  **Implementation complete, published, no migration created.**
+  - **Audit**: inspected 12 customer-critical surfaces — auth/tenant
+    isolation, mailbox connection and sending, lead management (including
+    CSV import), campaigns/sequences, deliverability safeguards, analytics
+    accuracy, error handling, security boundaries (RLS/IDOR/credential
+    exposure), production configuration, core UX reliability, responsive
+    behavior, and billing (Stripe — found implemented and audited, not
+    assumed). Scoped to realistic first-customer risks only, not a general
+    code-quality review.
+  - **Result**: 0 must-fix (A) findings, 1 should-fix-before-public-launch
+    (B) finding, 2 safe-to-defer (C) findings. Multi-tenant isolation
+    (RLS + IDOR guards), credential encryption/exposure, cron-endpoint
+    auth, send-worker idempotency/retry/suppression handling, CSV import
+    limits/dedup/quota, campaign launch readiness, Stripe webhook
+    verification/idempotency, and session/proxy handling were all
+    inspected with no finding recorded. Overall recommendation: **READY
+    FOR CONTROLLED FIRST CUSTOMER.**
+  - **B finding fixed — Warmup disclosure** (disclosure/UX only, no
+    throttling logic added): `components/warmup/warmup-dashboard.tsx` and
+    `components/warmup/warmup-settings-form.tsx` now state plainly that
+    warmup doesn't yet change what a live campaign actually sends — a
+    mailbox's Daily/Hourly limit (set under Mailboxes) is what controls
+    that today, since `claim_due_sends()` never reads `warmup_profiles`.
+  - **C findings fixed — unexpected-error sanitization**:
+    - `app/(app)/campaigns/[campaignId]/actions.ts` — seven Server
+      Functions (`launchCampaignAction`, `pauseCampaignAction`,
+      `resumeCampaignAction`, `stopCampaignAction`, `enrollLeadAction`,
+      `enrollLeadListAction`, `resolveSendAttemptAction`) now run inside
+      a new `runUserFacing()` wrapper. A new `UserFacingError` class marks
+      the file's existing deliberate business-rule messages (text
+      unchanged); any other error (a raw `PostgrestError` from
+      `unwrap()`, or a bug) is logged in full server-side and replaced
+      with a generic message before it can reach the browser.
+    - `app/api/oauth/google/callback/route.ts` and
+      `app/api/oauth/microsoft/callback/route.ts` — previously redirected
+      with any non-`GoogleOAuthError`/`MicrosoftOAuthError` error's raw
+      message; both now allow-list only `GoogleOAuthError`/
+      `MicrosoftOAuthError` (the providers' own public OAuth error text)
+      and `PlanLimitError`, logging anything else server-side and
+      redirecting with a generic message instead.
+    - A dedicated post-implementation review (`git diff --ignore-all-space`
+      of the campaigns-actions file against `HEAD`) confirmed the
+      `runUserFacing` wrapper changed no statement, DB query, ownership
+      check, return value, redirect, rate-limit call, or campaign
+      state-transition beyond the intended error-class renames and
+      wrapper insertion — verdict SAFE, approved before commit.
+  - **Not changed**: business logic, analytics computation, authentication
+    architecture, the database/Supabase layer, workers, migrations, the
+    sending engine, `claim_due_sends()`, warmup automation, or billing
+    logic. No RLS policy, schema, or security-architecture change.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged. Commit `e1d2b67`
+    is published on `origin/main`; local `HEAD` was verified equal to
+    `origin/main` after the push.
+
 ## 2026-08-09 — Enterprise Readiness — Production Readiness — UX / Visual Refinement, Complete (Commit: 09d0032)
 
 - **Third Production Readiness item: a dedicated UX/visual-design pass —

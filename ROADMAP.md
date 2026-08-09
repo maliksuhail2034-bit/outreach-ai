@@ -95,6 +95,47 @@ the wider Enterprise Readiness initiative stands.
   badges, dashboard stat-card tone support, and the warmup warning
   color). No business logic, database, migration, or security-system
   change. See Production Readiness under Done.
+- ✅ Production Readiness — First-Customer Readiness Audit & Remediation
+  — Complete (commit `e1d2b67`). A focused, read-only audit assessed
+  whether the product could safely go in front of a first paying
+  customer across 12 surfaces (auth/tenant isolation, mailbox
+  connection/sending, lead management, campaigns/sequences,
+  deliverability safeguards, analytics accuracy, error handling,
+  security boundaries, production configuration, core UX reliability,
+  responsiveness, billing). Result: 0 must-fix findings, 1 should-fix
+  finding, 2 safe-to-defer findings — overall recommendation READY FOR
+  CONTROLLED FIRST CUSTOMER. All three findings were then approved and
+  remediated in one commit: (1) the Warmup page/dialog now discloses
+  that it doesn't yet auto-adjust real campaign sending limits — a
+  mailbox's Daily/Hourly limit is what controls that today; (2)
+  unexpected database/infrastructure errors in seven campaign Server
+  Functions are now sanitized to a generic message before reaching the
+  browser instead of a raw `Error.message` passthrough, while
+  deliberate business-rule messages are unaffected; (3) the Google and
+  Microsoft OAuth mailbox-connect callbacks now sanitize unexpected
+  errors the same way before placing them in a redirect query
+  parameter. No migration, database, or authentication-architecture
+  change. See Production Readiness under Done.
+- ✅ Production Readiness — First-Customer Smoke Test & Remediation —
+  Complete (commit `ca96c48`). A manual, browser-driven smoke test of the
+  live application across the full first-customer journey (login,
+  dashboard, mailboxes, leads, campaigns, warmup, analytics, settings,
+  both themes, tablet-width responsiveness) using the environment's
+  existing disposable E2E test fixtures — no new test data, no real
+  mailbox/customer data. Result: READY WITH NON-BLOCKING ISSUES, zero
+  launch blockers, four concrete findings approved and fixed: (1) a
+  failed send's raw infrastructure error is now classified into a
+  customer-safe label via the existing `classifyErrorCategory()`, raw
+  text kept in a debug tooltip; (2) the campaign-detail and
+  organization-analytics "Failed" stat cards now use the danger/red tone
+  already shipped for the dashboard's card; (3) horizontal overflow at
+  tablet width on Mailboxes and campaign detail — fixed via `flex-wrap`
+  on two button-row headers plus, on campaign detail specifically, a
+  `min-w-0` grid-item fix and a `contain: layout` fix on the Enrolled
+  Leads table's scroll wrapper (root-caused via live DOM measurement, not
+  assumed); (4) a campaign detail breadcrumb no longer mangles a UUID
+  route segment. No migration, database, or authentication-architecture
+  change. See Production Readiness under Done.
 - **Remaining**: no further Production Readiness items are currently
   itemized as approved work, and none are pending from the Security Gate.
   The Security Gate was intentionally scoped to its two findings, not
@@ -1228,13 +1269,89 @@ Planned
     the brand-tone icon chip, since its caller
     (`app/(app)/dashboard/page.tsx`) was outside this item's approved
     file list — `stat-card.tsx`'s new `danger` tone exists but isn't
-    wired up there yet. Several other components still map "positive/
-    active" states to brand orange via their own duplicated
-    `STATUS_VARIANT`-style logic (e.g. campaign/mailbox "Active" badges,
-    the setup checklist's completed-step circles) — pre-existing,
-    unrelated to this item's five-file scope, not touched.
+    wired up there yet. (Closed shortly after, as its own small, separate
+    fix — commit `d959c1f` wires that one caller to `tone="danger"`; see
+    the dashboard route's own history for that change.) Several other
+    components still map "positive/active" states to brand orange via
+    their own duplicated `STATUS_VARIANT`-style logic (e.g. campaign/
+    mailbox "Active" badges, the setup checklist's completed-step
+    circles) — pre-existing, unrelated to this item's five-file scope,
+    not touched.
   - All checks (typecheck, lint, build — 37/37 routes, full test suite —
     525 tests, 70 files) passed before commit. Commit `09d0032` is
+    published on `origin/main`; local `HEAD` was verified equal to
+    `origin/main` after the push.
+- **Enterprise Readiness — Production Readiness — First-Customer
+  Readiness Audit & Remediation — COMPLETE (2026-08-09, commit
+  `e1d2b67`).** Fourth tracked item under Production Readiness.
+  Objective: a focused, read-only audit answering one practical
+  question — "could we safely put this in front of the first real
+  paying customer?" — followed by remediation of every approved
+  finding. **Implementation complete, published, no migration created.**
+  - **Audit scope**: 12 customer-critical surfaces — authentication/
+    account isolation, mailbox connection and sending, lead management
+    (including CSV import), campaigns/sequences, deliverability
+    safeguards, analytics accuracy, error handling, security boundaries
+    (RLS/IDOR/credential exposure), production configuration, core UX
+    reliability, responsive behavior, and billing/payment (found
+    implemented — Stripe — and audited, not assumed). Deliberately not a
+    general code-quality audit; only realistic first-customer risks
+    (data exposure, credential leakage, broken/incorrect sending,
+    corrupted leads, materially misleading analytics, broken core
+    journeys) were in scope.
+  - **Result**: 0 must-fix (A) findings, 1 should-fix-before-public-
+    launch (B) finding, 2 safe-to-defer (C) findings. Multi-tenant
+    isolation (RLS on every table, IDOR guards in campaign Server
+    Functions), credential handling (encrypted mailbox/OAuth/provider
+    secrets, never exposed to Client Components), cron-endpoint auth,
+    send-worker idempotency/retry/suppression handling, CSV import
+    limits/dedup/quota enforcement, campaign launch readiness checks,
+    Stripe webhook signature verification and idempotency, and
+    session/proxy handling were all inspected and found sound — no
+    finding recorded against any of them. Overall recommendation: READY
+    FOR CONTROLLED FIRST CUSTOMER.
+  - **B finding, remediated — Warmup disclosure**: the Warmup page/
+    dialog previously implied that enabling warmup automatically ramps
+    a mailbox's real sending volume; it doesn't — `claim_due_sends()`
+    (the live send gate) only ever reads a mailbox's own `daily_limit`/
+    `hourly_limit`/`cooldown_minutes`, never `warmup_profiles`. Fixed as
+    a disclosure/UX change only, in `components/warmup/warmup-dashboard.tsx`
+    and `components/warmup/warmup-settings-form.tsx`: both now state
+    plainly that warmup doesn't yet change what a live campaign actually
+    sends, and point to the mailbox's own Daily/Hourly limit as the real
+    control today. No automatic warmup throttling was implemented — that
+    remains a separate, larger, not-yet-scoped item.
+  - **C findings, remediated — error-message sanitization**: (1)
+    `app/(app)/campaigns/[campaignId]/actions.ts` — seven Server
+    Functions whose Client Components display a caught error's message
+    (`launchCampaignAction`, `pauseCampaignAction`, `resumeCampaignAction`,
+    `stopCampaignAction`, `enrollLeadAction`, `enrollLeadListAction`,
+    `resolveSendAttemptAction`) now run inside a small `runUserFacing()`
+    wrapper; a new `UserFacingError` class marks the file's existing
+    deliberate business-rule messages (unchanged text), and anything
+    else — a raw `PostgrestError` from `unwrap()`, or an unexpected bug
+    — is logged in full server-side and replaced with a generic message
+    before it can reach the browser. (2) The Google and Microsoft OAuth
+    mailbox-connect callbacks (`app/api/oauth/google/callback/route.ts`,
+    `app/api/oauth/microsoft/callback/route.ts`) previously redirected
+    with any non-`GoogleOAuthError`/`MicrosoftOAuthError` error's raw
+    message; both now allow-list only `GoogleOAuthError`/
+    `MicrosoftOAuthError` (the providers' own public OAuth error text)
+    and `PlanLimitError`, logging anything else server-side and
+    redirecting with a generic message instead. The OAuth flow, RLS,
+    rate limiting, and every DB query in all three files are
+    byte-for-byte unchanged — confirmed via a dedicated post-
+    implementation review (`git diff --ignore-all-space` against `HEAD`)
+    showing the campaigns-actions diff was genuinely limited to the
+    error-class renames and wrapper insertion, with no statement,
+    query, ownership check, return value, or state-transition changed;
+    verdict SAFE, approved before commit.
+  - **Explicitly unchanged**: business logic, analytics computation,
+    authentication architecture, the database/Supabase layer, workers,
+    migrations, the sending engine, `claim_due_sends()`, warmup
+    automation, billing logic, and every unrelated route.
+  - All checks (typecheck, lint, build — 37/37 routes, full test suite —
+    525 tests, 70 files) passed before commit. Commit `e1d2b67` is
     published on `origin/main`; local `HEAD` was verified equal to
     `origin/main` after the push.
 
@@ -1242,23 +1359,35 @@ Planned
 
 Enterprise Readiness — Production Readiness — in progress. The
 Scalability Track (Phases A through E) is fully complete. Production
-Readiness has three completed items so far: the Deliverability Trends
+Readiness has five completed items so far: the Deliverability Trends
 Rollup Migration (commit `7dca187`, discovered during the Scalability
 Phase E Exit Review), the Security Gate remediation (commit `83f8e5d`, a
 targeted security audit intentionally scoped to two findings — provider
 API-key exposure and IMAP/SMTP test-connection error leakage — both of
-which were found and fixed), and the UX / Visual Refinement (commit
+which were found and fixed), the UX / Visual Refinement (commit
 `09d0032`, a warm-orange theme pass in `app/globals.css` plus corrected
-semantic-color usage across five presentational components). All three
-are complete (see Done). No further Production Readiness items are
+semantic-color usage across five presentational components), the
+First-Customer Readiness Audit & Remediation (commit `e1d2b67`, a
+12-surface readiness audit — 0 must-fix, 1 should-fix, 2 safe-to-defer
+findings, recommendation READY FOR CONTROLLED FIRST CUSTOMER — followed
+by remediation of all three findings: a Warmup disclosure fix and two
+unexpected-error-sanitization fixes), and the First-Customer Smoke Test
+& Remediation (commit `ca96c48`, a manual browser-driven smoke test of
+the live application — overall verdict READY WITH NON-BLOCKING ISSUES,
+zero launch blockers — followed by remediation of all four findings: a
+raw-error-display fix in the campaign leads table, danger-tone fixes on
+two "Failed" stat cards, a tablet-width horizontal-overflow fix on
+Mailboxes and campaign detail, and a UUID-breadcrumb display fix). All
+five are complete (see Done). No further Production Readiness items are
 currently itemized as approved work, and none are known to be pending
-from the Security Gate: it did not produce a separate enumerated list of
-other deferred findings, so there is no known security backlog to carry
-forward. This is not a claim that the application has been exhaustively
-security-audited, is fully visually polished, or is vulnerability-free —
-only that these three specific items are resolved. Future security or
-UX work (including wiring the dashboard's "Failed sends" stat to its new
-`danger` tone, and the other out-of-scope observations noted above)
+from the Security Gate, the First-Customer Readiness audit, or the
+smoke test: none of the three produced a separate enumerated list of
+other deferred findings beyond what's documented above, so there is no
+known backlog to carry forward. This is not a claim that the application
+has been exhaustively security-audited, is fully visually polished, or
+is production-ready for a general public launch — only that these five
+specific items are resolved and that the audit judged the product safe
+for a controlled first customer. Future security, UX, or readiness work
 would be scoped as new work at that time.
 
 ## In progress / partially built

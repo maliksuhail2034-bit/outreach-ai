@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createMailbox, getMailboxByUserAndEmail, getUserOrganization, recordAuditEvent, updateMailbox } from "@/lib/db";
-import { assertWithinMailboxLimit } from "@/lib/billing/limits";
+import { assertWithinMailboxLimit, PlanLimitError } from "@/lib/billing/limits";
 import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { exchangeCodeForTokens, getMicrosoftUserInfo, MicrosoftOAuthError } from "@/lib/email/microsoft-oauth";
 import { OUTLOOK_IMAP_HOST, OUTLOOK_IMAP_PORT, OUTLOOK_SMTP_HOST, OUTLOOK_SMTP_PORT } from "@/lib/email/microsoft-constants";
@@ -113,11 +113,19 @@ export async function GET(request: NextRequest) {
       metadata: { email: mailbox.email, provider: "outlook" },
     });
   } catch (error) {
-    const message =
-      error instanceof MicrosoftOAuthError || error instanceof Error
-        ? error.message
-        : "Couldn't connect this Microsoft account.";
-    return redirectWithError(request, message);
+    // Only errors this route already knows are safe to show — Microsoft's
+    // own public OAuth error text (MicrosoftOAuthError) and a plan-limit
+    // message (PlanLimitError) — reach the user with their real message.
+    // Anything else (a raw DB/PostgREST error from createMailbox/
+    // updateMailbox/getUserOrganization/recordAuditEvent, or an unexpected
+    // bug) is logged in full here, server-side only, and replaced with a
+    // generic message before it can reach the redirect URL. Mirrors
+    // app/api/oauth/google/callback/route.ts exactly.
+    if (error instanceof MicrosoftOAuthError || error instanceof PlanLimitError) {
+      return redirectWithError(request, error.message);
+    }
+    console.error("[oauth/microsoft/callback] unexpected error", error);
+    return redirectWithError(request, "Couldn't connect this Microsoft account. Try again.");
   }
 
   const response = NextResponse.redirect(new URL("/mailboxes?connected=outlook", request.url));

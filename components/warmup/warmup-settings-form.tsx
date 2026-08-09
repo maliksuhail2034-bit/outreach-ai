@@ -49,6 +49,11 @@ export function WarmupSettingsForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          These settings drive this dashboard&apos;s ramp forecast only — they don&apos;t yet change what a live
+          campaign actually sends. For real protection on a new mailbox, set its Daily/Hourly limit directly under
+          Mailboxes.
+        </p>
         <FormField
           control={form.control}
           name="targetDailyVolume"

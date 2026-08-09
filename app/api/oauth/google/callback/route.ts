@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createMailbox, getMailboxByUserAndEmail, getUserOrganization, recordAuditEvent, updateMailbox } from "@/lib/db";
-import { assertWithinMailboxLimit } from "@/lib/billing/limits";
+import { assertWithinMailboxLimit, PlanLimitError } from "@/lib/billing/limits";
 import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { exchangeCodeForTokens, getGoogleUserInfo, GoogleOAuthError } from "@/lib/email/google-oauth";
 import { GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, GMAIL_SMTP_HOST, GMAIL_SMTP_PORT } from "@/lib/email/google-constants";
@@ -113,9 +113,18 @@ export async function GET(request: NextRequest) {
       metadata: { email: mailbox.email, provider: "gmail" },
     });
   } catch (error) {
-    const message =
-      error instanceof GoogleOAuthError || error instanceof Error ? error.message : "Couldn't connect this Gmail account.";
-    return redirectWithError(request, message);
+    // Only errors this route already knows are safe to show — Google's own
+    // public OAuth error text (GoogleOAuthError) and a plan-limit message
+    // (PlanLimitError) — reach the user with their real message. Anything
+    // else (a raw DB/PostgREST error from createMailbox/updateMailbox/
+    // getUserOrganization/recordAuditEvent, or an unexpected bug) is logged
+    // in full here, server-side only, and replaced with a generic message
+    // before it can reach the redirect URL.
+    if (error instanceof GoogleOAuthError || error instanceof PlanLimitError) {
+      return redirectWithError(request, error.message);
+    }
+    console.error("[oauth/google/callback] unexpected error", error);
+    return redirectWithError(request, "Couldn't connect this Gmail account. Try again.");
   }
 
   const response = NextResponse.redirect(new URL("/mailboxes?connected=gmail", request.url));

@@ -111,7 +111,9 @@ export function WarmupDashboard({
       <CardHeader>
         <CardTitle>Mailbox warmup</CardTitle>
         <CardDescription>
-          Ramp sending volume gradually to build inbox reputation before real campaigns.
+          Ramp sending volume gradually to build inbox reputation before real campaigns. This doesn&apos;t yet
+          change what a live campaign actually sends — a mailbox&apos;s Daily/Hourly limit (set when connecting
+          it, under Mailboxes) is what controls that today, so set a conservative one for a new mailbox.
         </CardDescription>
       </CardHeader>
 

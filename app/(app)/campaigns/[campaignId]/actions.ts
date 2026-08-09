@@ -38,13 +38,42 @@ import { computeNextSchedule } from "@/lib/email/scheduling";
 import { checkCampaignReadiness, resolveLeadMailboxId } from "@/lib/campaigns/readiness";
 import { campaignLeadSchema, type CampaignLeadInput } from "@/lib/validations/campaign-leads";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
-import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
+import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them. campaign_leads has no user_id column — ownership flows through
 // campaign_id — so getCampaign(userId, campaignId) doubles as the ownership
 // check: it throws if this campaign isn't the caller's before any mutation
 // touches campaign_leads.
+
+// Marks a message this file has already deliberately written for the user
+// (a business-rule/validation failure, e.g. "Only a running campaign can be
+// paused.") — never wraps a raw DB/PostgREST error, which unwrap() (see
+// lib/db/shared.ts) throws as a plain Error/PostgrestError instead. Client
+// components in this campaign's UI (enroll-dialog.tsx, campaign-lead-table.tsx,
+// campaign-execution-controls.tsx, campaign-review-step.tsx) show a caught
+// error's message directly via toast — see runUserFacing below for how an
+// unclassified error is kept from reaching them.
+class UserFacingError extends Error {}
+
+// Wraps the exported actions below that a client component displays
+// error.message from. Only errors this file has explicitly classified as
+// safe (UserFacingError, RateLimitError — both purpose-written, no DB/
+// infrastructure detail) pass through with their message intact; anything
+// else (a raw PostgrestError from unwrap(), an unexpected bug) is logged in
+// full here — server-side only — and replaced with one generic message
+// before it can reach the browser.
+async function runUserFacing<T>(action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    if (error instanceof UserFacingError || error instanceof RateLimitError) {
+      throw error;
+    }
+    console.error("[campaigns] unexpected error", error);
+    throw new Error("Something went wrong. Try again.");
+  }
+}
 
 // Computes and persists the first scheduled send for a freshly-enrolled
 // campaign_lead — reuses computeNextSchedule (lib/email/scheduling.ts) for
@@ -95,7 +124,7 @@ async function loadSequenceSteps(supabase: Client, campaignId: string) {
 // query.
 function assertCampaignLeadInCampaign(campaignLead: Tables<"campaign_leads">, campaignId: string) {
   if (campaignLead.campaign_id !== campaignId) {
-    throw new Error("This lead does not belong to this campaign.");
+    throw new UserFacingError("This lead does not belong to this campaign.");
   }
 }
 
@@ -107,7 +136,7 @@ function assertCampaignLeadInCampaign(campaignLead: Tables<"campaign_leads">, ca
 async function assertSequenceInCampaign(supabase: Client, sequenceId: string, campaignId: string) {
   const sequence = await getSequence(supabase, sequenceId);
   if (sequence.campaign_id !== campaignId) {
-    throw new Error("This step does not belong to this campaign.");
+    throw new UserFacingError("This step does not belong to this campaign.");
   }
 }
 
@@ -118,64 +147,66 @@ async function assertSequenceInCampaign(supabase: Client, sequenceId: string, ca
 // only ever acts on leads enrolled after the campaign is already active, so
 // without this, leads enrolled during setup would stay unscheduled forever.
 export async function launchCampaignAction(campaignId: string) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  const campaign = await getCampaign(supabase, user.id, campaignId);
-  if (campaign.status !== "draft") {
-    throw new Error("This campaign has already been launched.");
-  }
-
-  const organization = await getUserOrganization(supabase, user);
-  await checkRateLimit("campaign:launch", organization.id);
-
-  const steps = await loadSequenceSteps(supabase, campaignId);
-  const leads = await listCampaignLeads(supabase, campaignId);
-  const mailboxes = await listMailboxes(supabase, user.id);
-  const domains = await listDomains(supabase, user.id);
-
-  // Same check the campaign detail/wizard UI runs to show readiness ahead
-  // of the click (see lib/campaigns/readiness.ts) — re-run here because
-  // Server Functions are reachable directly via POST regardless of what the
-  // UI already validated. Only `errors` block the launch; `warnings` (no
-  // sending domain, mailbox limits) are advisory and don't stop it — see
-  // that module for why.
-  const readiness = checkCampaignReadiness({
-    campaign,
-    campaignLeads: leads,
-    sequenceStepCount: steps.length,
-    mailboxes,
-    domainCount: (domains ?? []).length,
-  });
-  if (!readiness.ready) {
-    throw new Error(readiness.errors.join(" "));
-  }
-
-  const activatedCampaign = { ...campaign, status: "active" as const };
-  await updateCampaign(supabase, user.id, campaignId, { status: "active" });
-
-  for (const lead of leads) {
-    if (lead.status !== "pending") continue;
-
-    // Leads enrolled while the campaign was still draft (the wizard's Leads
-    // step runs before its Mailbox step) can have mailbox_id null even
-    // though campaign.default_mailbox_id now resolves them — enrollLeadAction/
-    // enrollLeadListAction only ever resolve the default at the moment of
-    // enrollment, they never retroactively backfill it. claim_due_sends()
-    // requires mailbox_id is not null, so without this a "resolvable" lead
-    // would silently never be picked up by the send worker.
-    let scheduledLead = lead;
-    if (!lead.mailbox_id) {
-      scheduledLead = await updateCampaignLead(supabase, lead.id, {
-        mailbox_id: resolveLeadMailboxId(lead, campaign),
-      });
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    if (campaign.status !== "draft") {
+      throw new UserFacingError("This campaign has already been launched.");
     }
 
-    await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps);
-  }
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:launch", organization.id);
 
-  revalidatePath("/campaigns");
-  revalidatePath(`/campaigns/${campaignId}`);
+    const steps = await loadSequenceSteps(supabase, campaignId);
+    const leads = await listCampaignLeads(supabase, campaignId);
+    const mailboxes = await listMailboxes(supabase, user.id);
+    const domains = await listDomains(supabase, user.id);
+
+    // Same check the campaign detail/wizard UI runs to show readiness ahead
+    // of the click (see lib/campaigns/readiness.ts) — re-run here because
+    // Server Functions are reachable directly via POST regardless of what the
+    // UI already validated. Only `errors` block the launch; `warnings` (no
+    // sending domain, mailbox limits) are advisory and don't stop it — see
+    // that module for why.
+    const readiness = checkCampaignReadiness({
+      campaign,
+      campaignLeads: leads,
+      sequenceStepCount: steps.length,
+      mailboxes,
+      domainCount: (domains ?? []).length,
+    });
+    if (!readiness.ready) {
+      throw new UserFacingError(readiness.errors.join(" "));
+    }
+
+    const activatedCampaign = { ...campaign, status: "active" as const };
+    await updateCampaign(supabase, user.id, campaignId, { status: "active" });
+
+    for (const lead of leads) {
+      if (lead.status !== "pending") continue;
+
+      // Leads enrolled while the campaign was still draft (the wizard's Leads
+      // step runs before its Mailbox step) can have mailbox_id null even
+      // though campaign.default_mailbox_id now resolves them — enrollLeadAction/
+      // enrollLeadListAction only ever resolve the default at the moment of
+      // enrollment, they never retroactively backfill it. claim_due_sends()
+      // requires mailbox_id is not null, so without this a "resolvable" lead
+      // would silently never be picked up by the send worker.
+      let scheduledLead = lead;
+      if (!lead.mailbox_id) {
+        scheduledLead = await updateCampaignLead(supabase, lead.id, {
+          mailbox_id: resolveLeadMailboxId(lead, campaign),
+        });
+      }
+
+      await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps);
+    }
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
 }
 
 // --- Execution controls (Phase 2E) -----------------------------------------
@@ -188,33 +219,37 @@ export async function launchCampaignAction(campaignId: string) {
 // as the campaign is active.
 
 export async function pauseCampaignAction(campaignId: string) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  const campaign = await getCampaign(supabase, user.id, campaignId);
-  if (campaign.status !== "active") {
-    throw new Error("Only a running campaign can be paused.");
-  }
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    if (campaign.status !== "active") {
+      throw new UserFacingError("Only a running campaign can be paused.");
+    }
 
-  await updateCampaign(supabase, user.id, campaignId, { status: "paused" });
+    await updateCampaign(supabase, user.id, campaignId, { status: "paused" });
 
-  revalidatePath("/campaigns");
-  revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
 }
 
 export async function resumeCampaignAction(campaignId: string) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  const campaign = await getCampaign(supabase, user.id, campaignId);
-  if (campaign.status !== "paused") {
-    throw new Error("Only a paused campaign can be resumed.");
-  }
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    if (campaign.status !== "paused") {
+      throw new UserFacingError("Only a paused campaign can be resumed.");
+    }
 
-  await updateCampaign(supabase, user.id, campaignId, { status: "active" });
+    await updateCampaign(supabase, user.id, campaignId, { status: "active" });
 
-  revalidatePath("/campaigns");
-  revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
 }
 
 // Stopping is terminal (unlike pausing): every lead still waiting in the
@@ -224,19 +259,21 @@ export async function resumeCampaignAction(campaignId: string) {
 // added in Phase 2D specifically for "deliberately stopped, not completed
 // or failed" — see 20260804100000_sending_limits.sql.
 export async function stopCampaignAction(campaignId: string) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  const campaign = await getCampaign(supabase, user.id, campaignId);
-  if (campaign.status !== "active" && campaign.status !== "paused") {
-    throw new Error("Only a running or paused campaign can be stopped.");
-  }
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    if (campaign.status !== "active" && campaign.status !== "paused") {
+      throw new UserFacingError("Only a running or paused campaign can be stopped.");
+    }
 
-  await cancelActiveCampaignLeads(supabase, campaignId);
-  await updateCampaign(supabase, user.id, campaignId, { status: "completed" });
+    await cancelActiveCampaignLeads(supabase, campaignId);
+    await updateCampaign(supabase, user.id, campaignId, { status: "completed" });
 
-  revalidatePath("/campaigns");
-  revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
 }
 
 // Re-enrolling a suppressed (bounced/unsubscribed) address won't actually
@@ -252,34 +289,36 @@ export async function enrollLeadAction(
   mailboxId?: string,
   confirmSuppressed = false,
 ) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  const campaign = await getCampaign(supabase, user.id, campaignId);
-  const organization = await getUserOrganization(supabase, user);
-  await checkRateLimit("campaign:enroll", organization.id);
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:enroll", organization.id);
 
-  if (!confirmSuppressed) {
-    const lead = await getLead(supabase, user.id, leadId);
-    const suppressed = await getSuppressedEmails(supabase, user.id, [lead.email]);
-    const reason = suppressed.get(lead.email);
-    if (reason) {
-      throw new Error(`This lead is suppressed (${reason}). Confirm to enroll anyway.`);
+    if (!confirmSuppressed) {
+      const lead = await getLead(supabase, user.id, leadId);
+      const suppressed = await getSuppressedEmails(supabase, user.id, [lead.email]);
+      const reason = suppressed.get(lead.email);
+      if (reason) {
+        throw new UserFacingError(`This lead is suppressed (${reason}). Confirm to enroll anyway.`);
+      }
     }
-  }
 
-  const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
+    const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
 
-  const campaignLead = await addLeadToCampaign(supabase, {
-    campaign_id: campaignId,
-    lead_id: leadId,
-    mailbox_id: effectiveMailboxId,
+    const campaignLead = await addLeadToCampaign(supabase, {
+      campaign_id: campaignId,
+      lead_id: leadId,
+      mailbox_id: effectiveMailboxId,
+    });
+
+    const steps = await loadSequenceSteps(supabase, campaignId);
+    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
+
+    revalidatePath(`/campaigns/${campaignId}`);
   });
-
-  const steps = await loadSequenceSteps(supabase, campaignId);
-  await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
-
-  revalidatePath(`/campaigns/${campaignId}`);
 }
 
 export async function enrollLeadListAction(
@@ -288,41 +327,43 @@ export async function enrollLeadListAction(
   mailboxId?: string,
   confirmSuppressed = false,
 ) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  const campaign = await getCampaign(supabase, user.id, campaignId);
-  const organization = await getUserOrganization(supabase, user);
-  await checkRateLimit("campaign:enroll", organization.id);
-  const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:enroll", organization.id);
+    const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
 
-  const leads = await listLeads(supabase, user.id, { listId, limit: 10000 });
-  const leadRows = leads ?? [];
+    const leads = await listLeads(supabase, user.id, { listId, limit: 10000 });
+    const leadRows = leads ?? [];
 
-  if (!confirmSuppressed) {
-    const suppressed = await getSuppressedEmails(
-      supabase,
-      user.id,
-      leadRows.map((lead) => lead.email),
-    );
-    const suppressedCount = leadRows.filter((lead) => suppressed.has(lead.email)).length;
-    if (suppressedCount > 0) {
-      throw new Error(
-        `${suppressedCount} lead${suppressedCount === 1 ? "" : "s"} in this list ${suppressedCount === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). Confirm to enroll anyway.`,
+    if (!confirmSuppressed) {
+      const suppressed = await getSuppressedEmails(
+        supabase,
+        user.id,
+        leadRows.map((lead) => lead.email),
       );
+      const suppressedCount = leadRows.filter((lead) => suppressed.has(lead.email)).length;
+      if (suppressedCount > 0) {
+        throw new UserFacingError(
+          `${suppressedCount} lead${suppressedCount === 1 ? "" : "s"} in this list ${suppressedCount === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). Confirm to enroll anyway.`,
+        );
+      }
     }
-  }
 
-  const leadIds = leadRows.map((lead) => lead.id);
-  const result = await addLeadsToCampaign(supabase, campaignId, leadIds, effectiveMailboxId);
+    const leadIds = leadRows.map((lead) => lead.id);
+    const result = await addLeadsToCampaign(supabase, campaignId, leadIds, effectiveMailboxId);
 
-  const steps = await loadSequenceSteps(supabase, campaignId);
-  for (const campaignLead of result.rows) {
-    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
-  }
+    const steps = await loadSequenceSteps(supabase, campaignId);
+    for (const campaignLead of result.rows) {
+      await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
+    }
 
-  revalidatePath(`/campaigns/${campaignId}`);
-  return { inserted: result.inserted, skipped: result.skipped };
+    revalidatePath(`/campaigns/${campaignId}`);
+    return { inserted: result.inserted, skipped: result.skipped };
+  });
 }
 
 export async function updateCampaignLeadAction(
@@ -472,43 +513,45 @@ export async function resolveSendAttemptAction(
   campaignLeadId: string,
   action: "retry" | "dismiss",
 ) {
-  const user = await requireUser();
-  const supabase = await createClient();
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-  await getCampaign(supabase, user.id, campaignId);
-  const organization = await getUserOrganization(supabase, user);
-  await checkRateLimit("campaign:resolve_send_attempt", organization.id);
+    await getCampaign(supabase, user.id, campaignId);
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:resolve_send_attempt", organization.id);
 
-  const campaignLead = await getCampaignLead(supabase, campaignLeadId);
-  assertCampaignLeadInCampaign(campaignLead, campaignId);
-  if (campaignLead.status !== "needs_review" && campaignLead.status !== "failed") {
-    throw new Error("This lead isn't awaiting review.");
-  }
-  if (!campaignLead.current_step_id) {
-    throw new Error("This lead has no send attempt to resolve.");
-  }
+    const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+    assertCampaignLeadInCampaign(campaignLead, campaignId);
+    if (campaignLead.status !== "needs_review" && campaignLead.status !== "failed") {
+      throw new UserFacingError("This lead isn't awaiting review.");
+    }
+    if (!campaignLead.current_step_id) {
+      throw new UserFacingError("This lead has no send attempt to resolve.");
+    }
 
-  const sendAttempt = await getSendAttempt(supabase, campaignLeadId, campaignLead.current_step_id);
-  if (sendAttempt) {
-    await resolveSendAttemptManually(
-      supabase,
-      sendAttempt.id,
-      action === "retry" ? "Manually reset for retry." : "Manually dismissed.",
-    );
-  }
+    const sendAttempt = await getSendAttempt(supabase, campaignLeadId, campaignLead.current_step_id);
+    if (sendAttempt) {
+      await resolveSendAttemptManually(
+        supabase,
+        sendAttempt.id,
+        action === "retry" ? "Manually reset for retry." : "Manually dismissed.",
+      );
+    }
 
-  if (action === "retry") {
-    // Hand back to the existing pipeline rather than resending here directly
-    // — claim_due_sends() re-checks mailbox status and suppression at claim
-    // time, so this doesn't need to duplicate those checks.
-    await updateCampaignLead(supabase, campaignLeadId, {
-      status: "active",
-      next_send_at: new Date().toISOString(),
-      locked_until: null,
-    });
-  } else {
-    await updateCampaignLead(supabase, campaignLeadId, { status: "failed" });
-  }
+    if (action === "retry") {
+      // Hand back to the existing pipeline rather than resending here directly
+      // — claim_due_sends() re-checks mailbox status and suppression at claim
+      // time, so this doesn't need to duplicate those checks.
+      await updateCampaignLead(supabase, campaignLeadId, {
+        status: "active",
+        next_send_at: new Date().toISOString(),
+        locked_until: null,
+      });
+    } else {
+      await updateCampaignLead(supabase, campaignLeadId, { status: "failed" });
+    }
 
-  revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
 }

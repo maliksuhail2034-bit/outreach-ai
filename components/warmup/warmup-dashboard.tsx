@@ -160,7 +160,7 @@ export function WarmupDashboard({
                         {warnings.length > 0 && (
                           <>
                             {" · "}
-                            <span className="text-amber-600 dark:text-amber-500">{warnings.join(", ")}</span>
+                            <span className="text-warning">{warnings.join(", ")}</span>
                           </>
                         )}
                       </p>

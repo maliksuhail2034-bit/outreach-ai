@@ -11,9 +11,9 @@ const TONE_ICON: Record<Insight["tone"], typeof CheckCircle2Icon> = {
 };
 
 const TONE_CLASS: Record<Insight["tone"], string> = {
-  good: "text-primary",
-  warning: "text-destructive",
-  info: "text-muted-foreground",
+  good: "text-success",
+  warning: "text-warning",
+  info: "text-info",
 };
 
 // Entity-agnostic rendering of lib/analytics/insights.ts's rule-based

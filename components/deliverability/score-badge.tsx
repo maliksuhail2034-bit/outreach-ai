@@ -1,8 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 
-function variantForScore(score: number): "default" | "secondary" | "destructive" {
-  if (score >= 80) return "default";
-  if (score >= 50) return "secondary";
+function variantForScore(score: number): "success" | "warning" | "destructive" {
+  if (score >= 80) return "success";
+  if (score >= 50) return "warning";
   return "destructive";
 }
 

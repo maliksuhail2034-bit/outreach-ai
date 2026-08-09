@@ -5,6 +5,18 @@ import { motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 
+// Icon-chip color per tone — "brand" (the default) is the original
+// bg-primary/10 text-primary treatment every existing caller already
+// renders with, so omitting `tone` is byte-identical to before this prop
+// existed. The other tones exist for metrics that aren't a brand-neutral
+// count (e.g. a failure count shouldn't look the same as "total campaigns").
+const TONE_CLASS: Record<"brand" | "success" | "warning" | "danger", string> = {
+  brand: "bg-primary/10 text-primary group-hover:bg-primary/15",
+  success: "bg-success/10 text-success group-hover:bg-success/15",
+  warning: "bg-warning/10 text-warning group-hover:bg-warning/15",
+  danger: "bg-destructive/10 text-destructive group-hover:bg-destructive/15",
+};
+
 export function StatCard({
   title,
   value,
@@ -12,6 +24,7 @@ export function StatCard({
   emptyHint,
   isEmpty = false,
   icon,
+  tone = "brand",
   className,
 }: {
   title: string;
@@ -21,6 +34,8 @@ export function StatCard({
   emptyHint?: string;
   isEmpty?: boolean;
   icon: ReactNode;
+  /** Icon-chip color. Defaults to the brand treatment every caller used before this prop existed. */
+  tone?: "brand" | "success" | "warning" | "danger";
   className?: string;
 }) {
   const caption = isEmpty ? emptyHint : description;
@@ -36,7 +51,12 @@ export function StatCard({
     >
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-muted-foreground">{title}</span>
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+        <span
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+            TONE_CLASS[tone],
+          )}
+        >
           {icon}
         </span>
       </div>

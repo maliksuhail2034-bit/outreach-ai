@@ -12,10 +12,25 @@
   --background: 0 0% 100%;
   --foreground: 240 10% 3.9%;
 
-  --card: 0 0% 100%;
+  /* 240 20% 99% — the same barely-off-white recipe --sidebar already uses,
+     applied to cards so a card reads as a surface (not just a border) on
+     the page in light mode, where --card previously equaled --background
+     exactly. */
+  --card: 240 20% 99%;
   --card-foreground: 240 10% 3.9%;
-  --popover: 0 0% 100%;
+  /* Elevated one step above --card — dropdowns/dialogs/sheets need a
+     visible lift off a card sitting behind them, which --popover ==
+     --card couldn't provide. Aligned with --card in light mode (border +
+     shadow already carry separation there); genuinely lighter in dark
+     mode (see .dark below). */
+  --popover: 240 20% 99%;
   --popover-foreground: 240 10% 3.9%;
+  /* One step between --card and --muted/--secondary (95.9%) — for content
+     nested one level deeper than a plain card (e.g. the bg-card/60 +
+     backdrop-blur-sm and bg-muted/30 approximations already in use
+     elsewhere). Not yet consumed by any component; reserved for a later
+     phase so those files aren't touched twice. */
+  --surface-2: 240 15% 97%;
 
   /* Warm-orange brand primary. Text-on-fill uses near-black
      (--foreground) rather than white: at this hue/lightness, white
@@ -76,8 +91,12 @@
 
   --card: 240 8% 7%;
   --card-foreground: 0 0% 98%;
-  --popover: 240 8% 7%;
+  /* Genuinely lighter than --card (unlike light mode, where border/shadow
+     already carry it) so a dialog/dropdown visibly separates from a card
+     sitting behind it instead of matching it exactly. */
+  --popover: 240 10% 12%;
   --popover-foreground: 0 0% 98%;
+  --surface-2: 240 7% 10%;
 
   --primary: 24 95% 62%;
   --primary-foreground: 240 10% 3.9%;
@@ -131,6 +150,7 @@
   --color-card-foreground: hsl(var(--card-foreground));
   --color-popover: hsl(var(--popover));
   --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-surface-2: hsl(var(--surface-2));
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
   --color-secondary: hsl(var(--secondary));

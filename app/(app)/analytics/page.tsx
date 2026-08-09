@@ -272,6 +272,7 @@ export default async function AnalyticsPage({
       description: "Sent ÷ total attempts",
       emptyHint: "Will appear once a campaign starts sending.",
       isEmpty: totalAttempts === 0,
+      tone: "success" as const,
     },
     {
       title: "Failure rate",
@@ -280,6 +281,7 @@ export default async function AnalyticsPage({
       description: "Failed ÷ total attempts",
       emptyHint: "Will appear once a campaign starts sending.",
       isEmpty: totalAttempts === 0,
+      tone: "danger" as const,
     },
   ];
 

@@ -26,8 +26,8 @@ import {
 } from "@/components/ui/dialog";
 import { MailboxForm } from "./mailbox-form";
 
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  active: "default",
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "success" | "outline"> = {
+  active: "success",
   paused: "secondary",
   error: "destructive",
   disconnected: "outline",

@@ -1,5 +1,12 @@
 import { cn } from "@/lib/utils";
 
+const FILL_CLASS: Record<"brand" | "success" | "warning" | "danger", string> = {
+  brand: "bg-primary",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-destructive",
+};
+
 export interface FunnelStage {
   key: string;
   label: string;
@@ -20,10 +27,12 @@ export function FunnelCard({
   title,
   description,
   stages,
+  tone = "brand",
 }: {
   title: string;
   description?: string;
   stages: FunnelStage[];
+  tone?: "brand" | "success" | "warning" | "danger";
 }) {
   const base = stages[0]?.value ?? 0;
 
@@ -56,7 +65,7 @@ export function FunnelCard({
                 </div>
                 <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    className={cn("h-full rounded-full", stage.placeholder ? "bg-muted-foreground/30" : "bg-primary")}
+                    className={cn("h-full rounded-full", stage.placeholder ? "bg-muted-foreground/30" : FILL_CLASS[tone])}
                     style={{ width: `${stage.placeholder ? 0 : percent}%` }}
                   />
                 </div>

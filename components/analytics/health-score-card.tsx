@@ -53,7 +53,7 @@ export function HealthScoreCard({
                 <ul className="mt-1 space-y-1.5">
                   {goodFactors.map((factor) => (
                     <li key={factor.key} className="flex items-start gap-2 text-sm">
-                      <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-primary" />
+                      <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-success" />
                       {factor.detail}
                     </li>
                   ))}

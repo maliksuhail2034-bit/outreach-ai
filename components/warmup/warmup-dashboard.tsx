@@ -32,9 +32,9 @@ const STAGE_LABEL: Record<WarmupStage, string> = {
   paused: "Paused",
 };
 
-function scoreVariant(score: number): "default" | "secondary" | "destructive" {
-  if (score >= 80) return "default";
-  if (score >= 50) return "secondary";
+function scoreVariant(score: number): "success" | "warning" | "destructive" {
+  if (score >= 80) return "success";
+  if (score >= 50) return "warning";
   return "destructive";
 }
 

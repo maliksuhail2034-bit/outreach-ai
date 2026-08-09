@@ -15,7 +15,7 @@ export function DailyBarChart({
   title,
   description,
   data,
-  barClassName = "bg-primary",
+  barClassName = "bg-secondary-foreground/70",
 }: {
   title: string;
   description: string;

@@ -5,6 +5,20 @@ import { motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 
+const TONE_CLASS: Record<"brand" | "success" | "warning" | "danger", string> = {
+  brand: "bg-primary/10 text-primary group-hover:bg-primary/15",
+  success: "bg-success/10 text-success group-hover:bg-success/15",
+  warning: "bg-warning/10 text-warning group-hover:bg-warning/15",
+  danger: "bg-destructive/10 text-destructive group-hover:bg-destructive/15",
+};
+
+const FILL_CLASS: Record<"brand" | "success" | "warning" | "danger", string> = {
+  brand: "bg-primary",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-destructive",
+};
+
 // Reusable rate/percentage display (reply rate, bounce rate, open rate,
 // etc.) — a 0-100 value (or null for "not enough data yet") plus a
 // progress bar, the shape any future rate-based metric card needs
@@ -16,12 +30,14 @@ export function PercentageCard({
   value,
   icon,
   description,
+  tone = "brand",
   className,
 }: {
   title: string;
   value: number | null;
   icon: ReactNode;
   description?: string;
+  tone?: "brand" | "success" | "warning" | "danger";
   className?: string;
 }) {
   const isEmpty = value === null;
@@ -38,7 +54,7 @@ export function PercentageCard({
     >
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-muted-foreground">{title}</span>
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+        <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors", TONE_CLASS[tone])}>
           {icon}
         </span>
       </div>
@@ -46,7 +62,7 @@ export function PercentageCard({
         {isEmpty ? "—" : `${value}%`}
       </div>
       <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${clamped}%` }} />
+        <div className={cn("h-full rounded-full transition-[width]", FILL_CLASS[tone])} style={{ width: `${clamped}%` }} />
       </div>
       {description && <p className="mt-2 text-xs text-muted-foreground">{description}</p>}
     </motion.div>

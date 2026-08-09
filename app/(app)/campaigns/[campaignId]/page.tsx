@@ -224,7 +224,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 <StatCard title="Emails sent" value={executionStatus.sent} icon={<SendIcon className="size-4" />} isEmpty={executionStatus.sent === 0} emptyHint="Will appear once this campaign starts sending." />
               </FadeIn>
               <FadeIn delay={0.13}>
-                <StatCard title="Failed emails" value={executionStatus.failed} icon={<AlertTriangleIcon className="size-4" />} isEmpty={executionStatus.failed === 0} emptyHint="No failures — nice." />
+                <StatCard title="Failed emails" value={executionStatus.failed} icon={<AlertTriangleIcon className="size-4" />} isEmpty={executionStatus.failed === 0} emptyHint="No failures — nice." tone="danger" />
               </FadeIn>
               <FadeIn delay={0.15}>
                 <StatCard title="Replies received" value={executionStatus.replied} icon={<MessageCircleReplyIcon className="size-4" />} isEmpty={executionStatus.replied === 0} emptyHint="Will appear once a lead replies." />
@@ -261,7 +261,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           </FadeIn>
 
           <div className="grid gap-6 lg:grid-cols-3">
-            <FadeIn delay={0.23} className="lg:col-span-2">
+            <FadeIn delay={0.23} className="min-w-0 lg:col-span-2">
               <CampaignLeadTable
                 campaignId={campaignId}
                 campaignLeads={campaignLeads ?? []}

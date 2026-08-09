@@ -98,12 +98,12 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-4">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-4">
         <div>
           <CardTitle>Connected mailboxes</CardTitle>
           <CardDescription>SMTP, Gmail, and Microsoft 365/Outlook accounts you can send campaigns from.</CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" asChild>
             <Link href="/api/oauth/google/start">
               <PlugZapIcon />

@@ -7,6 +7,7 @@ import { MoreVerticalIcon, Trash2Icon, UserMinusIcon } from "lucide-react";
 import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { CAMPAIGN_LEAD_STATUSES } from "@/lib/validations/campaign-leads";
+import { classifyErrorCategory, ERROR_CATEGORY_LABELS } from "@/lib/analytics/error-category";
 import {
   deleteLeadPermanentlyAction,
   removeCampaignLeadAction,
@@ -229,7 +230,7 @@ export function CampaignLeadTable({
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-4">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-4">
         <div>
           <CardTitle>Enrolled leads</CardTitle>
           <CardDescription>
@@ -297,7 +298,7 @@ export function CampaignLeadTable({
                 <p className="mt-1 text-sm text-muted-foreground">Try a different name, email, or status filter.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" style={{ contain: "layout" }}>
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-border text-xs text-muted-foreground">
@@ -421,7 +422,7 @@ export function CampaignLeadTable({
                               )}
                               {row.last_error && (
                                 <p className="truncate text-xs text-destructive" title={row.last_error}>
-                                  {row.last_error}
+                                  Failed to send ({ERROR_CATEGORY_LABELS[classifyErrorCategory(row.last_error)]})
                                 </p>
                               )}
                               {!row.current_step_id && !row.next_send_at && !row.last_error && (

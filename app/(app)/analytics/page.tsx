@@ -247,6 +247,7 @@ export default async function AnalyticsPage({
       description: "Attempts that didn't go through",
       emptyHint: "No failed sends — nice.",
       isEmpty: failedCount === 0,
+      tone: "danger" as const,
     },
     {
       title: "Bounce count",

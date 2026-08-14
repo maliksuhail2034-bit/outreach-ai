@@ -3,6 +3,61 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-14 — Design System — Phase 5: Premium Visual Polish, Complete (Commit: 8845449)
+
+- **Fifth phase of the same visual-design refinement (Phase 4: Composition
+  & Spacing Consistency, commit `6ab9903`, same day — see entry below).**
+  Objective: implement the premium purple accent and intentional
+  glassmorphism the Phase 4 audit had explicitly evaluated and deferred —
+  scoped tightly to the roles that audit identified, not a rebrand and not
+  glass applied indiscriminately. **Implementation complete, published, no
+  migration created.**
+  - **Premium purple accent tokens**: `--accent-purple`/
+    `--accent-purple-foreground` added to `app/globals.css` (light + dark),
+    wired into `@theme inline` the same way `--success`/`--warning`/
+    `--destructive`/`--info` already are. A deliberate secondary/AI accent,
+    not a replacement for `--primary` — the established orange brand/CTA
+    color is unchanged everywhere it already appears.
+  - **AI recommendation surfaces**: `components/ai/recommendation-card.tsx`
+    now renders a purple icon chip (`bg-accent-purple/10 text-accent-purple`)
+    next to "AI Recommendation" in both its empty-state and populated-state
+    headers — the one consistent "this is AI-generated" marker across all
+    four analytics pages that share this component. The "Generate
+    Recommendation" button stays the standard orange `default` variant,
+    unchanged.
+  - **Active-navigation accent**: `components/shell/sidebar.tsx` and
+    `components/shell/mobile-nav.tsx`'s active-nav state moved from neutral
+    (`bg-sidebar-accent`/`text-sidebar-accent-foreground`) to
+    `bg-accent-purple/10`/`text-accent-purple`. Hover state on inactive
+    items is unchanged.
+  - **Intentional glassmorphism**: `components/ui/dialog.tsx` and
+    `components/ui/sheet.tsx`'s overlay (`bg-black/50`) gained
+    `backdrop-blur-sm` — the one glass treatment the Phase 4 audit judged
+    genuinely justified, since a modal overlay always has real page content
+    directly behind it. Dialog/Sheet *content* itself is untouched and
+    stays fully opaque.
+  - **No Phase 1-4 semantic-color or surface-hierarchy work reopened**: no
+    change to `--success`/`--warning`/`--destructive`/`--info` or any
+    consumer. No database, Supabase, authentication, API, business-logic,
+    or route change. No new packages.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, re-run once more
+    immediately before commit. Browser-verified live in both light and
+    dark mode: the Dialog overlay (Leads → "Add a lead") and the Sheet
+    overlay (mobile nav) both show the page content behind them visibly
+    and softly blurred, while the dialog/sheet content itself stays fully
+    opaque and crisp — no washed-out text; the AI Recommendation card's
+    purple icon chip reads clearly distinct from the orange icon chips
+    beside it; the active-nav purple pill is legible against the sidebar
+    in both themes; inputs, labels, placeholders, focus rings, and CTAs
+    all remained readable. Confirmed unchanged: mailbox "Active" still
+    renders green, mailbox health score still renders red, the
+    deterministic "AI Insights" card (a separate component from
+    `RecommendationCard`) still uses `text-success`/no purple, exactly as
+    scoped. Commit `8845449` is published on `origin/main`; local `HEAD`
+    was verified equal to `origin/main` after the push.
+
 ## 2026-08-14 — Design System — Phase 4: Composition & Spacing Consistency, Complete (Commit: 6ab9903)
 
 - **Fourth phase of the same visual-design refinement (Phase 3: Semantic

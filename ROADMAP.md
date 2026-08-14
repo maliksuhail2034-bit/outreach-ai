@@ -211,7 +211,24 @@ Readiness backlog above):
   "up" green unconditionally would mislabel a rising bounce rate as good).
   No new color tokens, no `globals.css` change, no database/Supabase/
   auth/API/business-logic change. See Design System — Phase 3 under Done.
-- Phases 4-7 (shared table system, logo/brand mark, visual-hierarchy
+- ✅ Phase 4 — Composition & Spacing Consistency — Complete (2026-08-14,
+  commit `6ab9903`). A read-only audit of card composition, spacing
+  rhythm, typography hierarchy, and border/radius/shadow consistency —
+  found the system already substantially consistent, no launch blockers
+  — followed by three narrow fixes: `mailboxes`/`warmup`/`settings`
+  (+ its three sub-pages) standardized onto the same responsive
+  `space-y-6 sm:space-y-8` page-container rhythm every other top-level
+  page already used (max-widths unchanged); the inert `bg-card/60
+  backdrop-blur-sm` pattern Phase 1 reserved for a later phase — a no-op
+  over the flat page background across 13 components — replaced with
+  solid `bg-card` (border/shadow/radius/padding/typography unchanged, no
+  new glassmorphism added); and `DropdownMenuSubContent`'s
+  shadow-bigger-than-its-parent inversion fixed (`shadow-lg` ->
+  `shadow-md`, matching `DropdownMenuContent`). Premium purple and any
+  new glassmorphism were explicitly evaluated and left for a future,
+  separately-approved phase. No database, Supabase, authentication, API,
+  or business-logic change. See Design System — Phase 4 under Done.
+- Phases 5-7 (shared table system, logo/brand mark, visual-hierarchy
   polish, final consistency sweep) — not started.
 
 ## Integration status
@@ -1557,6 +1574,78 @@ Planned
     mechanism already visually confirmed live via the mailbox fix. Commit
     `afcd588` is published on `origin/main`; local `HEAD` was verified
     equal to `origin/main` after the push.
+- **Design System — Phase 4: Composition & Spacing Consistency —
+  COMPLETE (2026-08-14, commit `6ab9903`).** Fourth phase of the same
+  initiative (Phase 3 immediately above). Objective: audit card
+  composition, spacing rhythm, typography hierarchy, and border/radius
+  /shadow consistency for genuine inconsistencies — not a redesign, and
+  explicitly not the premium-purple/glassmorphism expansion discussed as
+  a possible future direction. **Implementation complete, published, no
+  migration created.**
+  - **Audit**: inspected card composition, the metric-card family
+    (`StatCard`/`TrendCard`/`PercentageCard`/`FunnelCard`/`StatusCard`
+    /`ComparisonCard` and their analytics/mailbox counterparts), page
+    -level spacing rhythm, typography hierarchy, and border/radius/shadow
+    usage across dashboard, analytics, mailboxes, campaigns, leads,
+    warmup, deliverability, and settings. Conclusion: the system was
+    already substantially consistent (identical page-title/section-title
+    classes on 20+ pages, identical card radius/shadow, identical
+    metric-card label/value typography) — zero P0 launch blockers found.
+  - **Fixed — page-container spacing rhythm**:
+    `app/(app)/mailboxes/page.tsx`, `app/(app)/warmup/page.tsx`,
+    `app/(app)/settings/page.tsx`, and `app/(app)/settings/ai/page.tsx`,
+    `.../verification/page.tsx`, `.../integrations/page.tsx` had three
+    different, undocumented `space-y-*` values for the same page-shell
+    role (a flat `space-y-8`, a flat `space-y-10`, vs. the responsive
+    `space-y-6 sm:space-y-8` every other top-level page already used).
+    All six now use the responsive value; each page's max-width and
+    every other layout decision is unchanged.
+  - **Fixed — inert glass/blur removed**: the `bg-card/60
+    backdrop-blur-sm` pattern — explicitly reserved by Phase 1's own code
+    comment for a later phase — was applied across 13 components sitting
+    on the flat page background with nothing behind them to blur,
+    costing a compositing layer per card for zero visible depth. Now
+    solid `bg-card` in `components/dashboard/stat-card.tsx`,
+    `trend-card.tsx`, `percentage-card.tsx`, `funnel-card.tsx`,
+    `status-card.tsx`, `comparison-card.tsx`,
+    `components/mailboxes/mailbox-health-summary.tsx`,
+    `components/analytics/comparison-table.tsx`, `rollup-table.tsx`, and
+    the picker `<form>` in
+    `app/(app)/settings/deliverability/compare/page.tsx`,
+    `app/(app)/mailboxes/compare/page.tsx`,
+    `app/(app)/campaigns/compare/page.tsx`. Border, shadow, radius,
+    padding, and typography are unchanged in every one; no new
+    glassmorphism was introduced anywhere.
+  - **Fixed — shadow-elevation inversion**:
+    `components/ui/dropdown-menu.tsx`'s `DropdownMenuSubContent` rendered
+    `shadow-lg`, a bigger shadow than its own parent
+    `DropdownMenuContent`'s `shadow-md` — backwards for a surface
+    floating deeper than its parent. Now `shadow-md`, matching the
+    parent; the parent's own shadow is untouched.
+  - **Explicitly out of scope for this phase**: extracting a shared
+    metric-card primitive, replacing the ~7 components that hand-roll
+    `Card`'s exact classes instead of importing it, adding a `CardHeader`
+    flex-row variant, a premium purple accent, any new glassmorphism, and
+    any new design token — all flagged by the audit as legitimate future
+    work but deliberately not implemented here. No database, Supabase,
+    authentication, API, business-logic, or route change.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged. Browser-verified
+    live in both light and dark mode: Mailboxes, Warmup, Settings, and
+    Settings -> AI all render with the tightened, consistent spacing and
+    no overflow or layout regression; the Dashboard `StatCard` grid
+    renders solid and crisp with no visible seam from the removed blur;
+    every Phase 1-3 semantic color ("Active" green, "Failed" red, etc.)
+    renders unchanged. **Accepted limitation**: the three compare-page
+    picker forms could not be screenshotted (the linked development
+    /staging project has fewer than two mailboxes/domains, so those
+    pages render their empty state instead of the form) and
+    `DropdownMenuSubContent` has no live consumer anywhere in the
+    current app — both verified instead via source inspection and the
+    passing build/typecheck rather than a live screenshot. Commit
+    `6ab9903` is published on `origin/main`; local `HEAD` was verified
+    equal to `origin/main` after the push.
 
 ## Current milestone
 
@@ -1604,8 +1693,9 @@ Design System initiative status above and Done for detail): Phase 1
 (Surface Hierarchy, commit `3732a2d`) and Phase 2 (Semantic Color
 Hierarchy, commit `d5c017b`) were both complete the same day as the
 Production Readiness work above; Phase 3 (Semantic Color Consistency
-Sweep, commit `afcd588`) followed on 2026-08-14. All three are complete.
-Phases 4-7 (shared table system, logo/brand mark, visual-hierarchy
+Sweep, commit `afcd588`) and Phase 4 (Composition & Spacing Consistency,
+commit `6ab9903`) both followed on 2026-08-14. All four are complete.
+Phases 5-7 (shared table system, logo/brand mark, visual-hierarchy
 polish, final consistency sweep) have not started; no further Design
 System work is currently approved.
 

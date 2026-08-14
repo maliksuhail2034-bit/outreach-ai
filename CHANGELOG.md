@@ -3,6 +3,76 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-14 — Design System — Phase 4: Composition & Spacing Consistency, Complete (Commit: 6ab9903)
+
+- **Fourth phase of the same visual-design refinement (Phase 3: Semantic
+  Color Consistency Sweep, commit `afcd588`, same day — see entry below).**
+  Objective: a read-only audit of card composition, spacing rhythm,
+  typography hierarchy, and border/radius/shadow consistency, followed by
+  remediation of only the genuine inconsistencies it found — deliberately
+  not a redesign, and explicitly not the premium-purple/glassmorphism
+  expansion discussed as a possible future direction. **Implementation
+  complete, published, no migration created.**
+  - **Audit**: inspected card composition, the metric-card family, page
+    -level spacing rhythm, typography hierarchy, and border/radius/shadow
+    usage across dashboard, analytics, mailboxes, campaigns, leads,
+    warmup, deliverability, and settings. Found the system already
+    substantially consistent (identical page-title/section-title classes
+    on 20+ pages, identical card radius/shadow, identical metric-card
+    label/value typography) — zero P0 launch blockers. Three narrow,
+    genuine findings were approved for this phase; everything else
+    (metric-card primitive extraction, hand-rolled-`Card` replacement,
+    `CardHeader` variants, premium purple, new glassmorphism) was
+    explicitly scoped out.
+  - **Standardized page-container spacing**: `mailboxes`, `warmup`,
+    `settings`, and `settings/ai`/`verification`/`integrations` had three
+    different, undocumented `space-y-*` conventions for the same page
+    -shell role (a flat `space-y-8`, a flat `space-y-10`, vs. the
+    responsive `space-y-6 sm:space-y-8` every other top-level page
+    already used). All six now use the same responsive value; each
+    page's existing max-width and every other layout decision is
+    unchanged.
+  - **Removed inert glass/blur**: `bg-card/60 backdrop-blur-sm` — a
+    pattern Phase 1 explicitly reserved for a later phase — was applied
+    across 13 components sitting on the flat page background, with
+    nothing behind them to blur; the blur was a pure no-op costing a
+    compositing layer per card for zero visible depth. All 13
+    (`StatCard`, `TrendCard`, `PercentageCard`, `FunnelCard`,
+    `StatusCard`, `ComparisonCard`, `MailboxHealthSummary`,
+    `ComparisonTable`, `RollupTable`, and the picker `<form>` in the
+    three `.../compare` pages) now use solid `bg-card`; border, shadow,
+    radius, padding, and typography are all unchanged. No new
+    glassmorphism was introduced anywhere.
+  - **Fixed a shadow-elevation inversion**: `DropdownMenuSubContent`
+    (`components/ui/dropdown-menu.tsx`) rendered `shadow-lg` — a bigger
+    shadow than its own parent `DropdownMenuContent`'s `shadow-md` —
+    backwards from normal elevation logic for a surface floating deeper
+    than its parent. Now `shadow-md`, matching the parent; the parent's
+    shadow is untouched.
+  - **Explicitly not done**: no metric-card primitive was extracted, no
+    hand-rolled `Card`-shaped `<div>` was replaced with the real `Card`
+    component, no `CardHeader` variant was added, no premium purple
+    accent was introduced, no new design tokens were added, and no
+    Phase 1-3 semantic-color or surface-hierarchy work was touched. No
+    database, Supabase, authentication, API, business-logic, or route
+    change.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged. Browser-verified
+    live in both light and dark mode: Mailboxes, Warmup, Settings, and
+    Settings → AI all render with the tightened, consistent spacing and
+    no overflow; the Dashboard `StatCard` grid renders solid and crisp
+    with no visible seam from the removed blur; the "Active"/"Failed"
+    semantic colors from Phase 1-3 render unchanged. Two items could not
+    be visually screenshotted and were instead verified by source
+    inspection and the passing build: the three compare-page picker
+    forms (the linked development/staging project has fewer than two
+    mailboxes/domains, so those pages render their empty state instead
+    of the form) and `DropdownMenuSubContent` (not currently instantiated
+    by any caller in the app). Commit `6ab9903` is published on
+    `origin/main`; local `HEAD` was verified equal to `origin/main` after
+    the push.
+
 ## 2026-08-14 — Design System — Phase 3: Semantic Color Consistency Sweep, Complete (Commit: afcd588)
 
 - **Third phase of the same visual-design refinement (Phase 1: Surface

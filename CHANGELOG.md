@@ -3,6 +3,74 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-14 — Design System — Phase 3: Semantic Color Consistency Sweep, Complete (Commit: afcd588)
+
+- **Third phase of the same visual-design refinement (Phase 1: Surface
+  Hierarchy, commit `3732a2d`; Phase 2: Semantic Color Hierarchy, commit
+  `d5c017b`; both 2026-08-09 — see entries below).** Objective: a
+  read-only audit of every remaining status/verification badge Phase 2
+  didn't reach, followed by remediation of only the genuine
+  inconsistencies it found — explicitly not a second redesign pass.
+  **Implementation complete, published, no migration created.**
+  - **Audit**: inspected `components/deliverability/*` (and its settings
+    routes), leads verification-status badges, mailboxes, warmup,
+    dashboard, analytics, and the global `--success`/`--warning`/
+    `--destructive`/`--info` tokens for genuine color/meaning mismatches
+    vs. intentional brand usage vs. neutral styling. Root cause identified
+    for two of the four fixes: `StatusTone`
+    (`components/dashboard/status-card.tsx`) had no `success` option even
+    though `Badge` (`components/ui/badge.tsx`) already did, so any status
+    routed through `StatusCard` had no correct color available and fell
+    back to brand orange.
+  - **Fixed genuine color/meaning mismatches**: `StatusTone` widened to
+    include `success`. `components/deliverability/mailbox-health-list.tsx`'s
+    and the mailbox analytics page's
+    (`app/(app)/mailboxes/[mailboxId]/analytics/page.tsx`) "Active"
+    mailbox status now render `success` instead of brand-orange `default`
+    — previously only `components/mailboxes/mailbox-list.tsx` had this
+    right, from Phase 2.
+    `components/deliverability/domain-health-list.tsx`'s "Verified"/"Pass"
+    and `domain-dns-status.tsx`'s "Verified" now render `success` instead
+    of `default`, next to a `ScoreBadge` on the same page that already
+    rendered "good" as green. `components/leads/lead-table.tsx`'s "Valid"
+    verification status now renders `success`, matching "Invalid"/"Error"
+    which already correctly rendered `destructive`.
+  - **Confirmed intentional, deliberately left unchanged**: campaign
+    "Active"/"Running" and warmup "Enabled" (consistently brand orange —
+    a lifecycle-in-progress marker, not a health verdict; neither has a
+    failure state the way mailbox/domain/lead status does); the
+    duplicated `TrendBadge`/`TrendCard` direction-badge logic's
+    `up -> default` mapping (`TrendResult` carries no metric-polarity
+    information, so coloring "up" green unconditionally would mislabel a
+    rising bounce-rate trend as good — a deliberate design constraint, not
+    an oversight; per the standing decision from Phase 2, this duplication
+    stays untouched absent a genuine bug); the activity timeline's
+    event-type badges. Two secondary candidates matching the same
+    asymmetry pattern — the lead pipeline's "Qualified" status and the
+    send-attempt "Sent" status — were flagged but deliberately left
+    unchanged, since (unlike the four fixes above) no existing canonical
+    counter-example elsewhere in the codebase established which color is
+    correct; out of this phase's approved scope.
+  - **No database, Supabase, authentication, API, or business-logic
+    change. No new color tokens or `globals.css` change.**
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, re-run once more
+    immediately before commit. Browser-verified live in both light and
+    dark mode against the linked development/staging project
+    (`wxhulmbbobkfvtreaspo`): the mailbox "Active" fix confirmed rendering
+    green in both `mailbox-health-list.tsx` and the mailbox analytics
+    page's `StatusCard`, and no regression on the neutral "Unverified"
+    lead badge or on Dashboard/Analytics/Warmup. **Accepted limitation**:
+    the domain "Verified"/"Pass" and lead "Valid" fixes were not visually
+    confirmed with live green pixels, since the linked project has no
+    domain and no lead in the `valid` state, and creating one was out of
+    scope without separate approval — confirmed instead via `tsc`/`build`
+    type-correctness and the identical `Badge`/`success`-variant rendering
+    mechanism already visually confirmed live via the mailbox fix. Commit
+    `afcd588` is published on `origin/main`; local `HEAD` was verified
+    equal to `origin/main` after the push.
+
 ## 2026-08-09 — Design System — Phase 2: Semantic Color Hierarchy, Complete (Commit: d5c017b)
 
 - **Second phase of a dedicated, phased visual-design refinement (Phase 1:

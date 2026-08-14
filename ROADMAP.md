@@ -242,7 +242,26 @@ Readiness backlog above):
   mailbox "Active" still renders green, health scores still render red.
   No database, Supabase, authentication, API, or business-logic change.
   See Design System — Phase 5 under Done.
-- Phases 6-7 (shared table system, logo/brand mark, visual-hierarchy
+- ✅ Phase 6 — Orange → Premium Purple Rebrand — Complete (2026-08-14,
+  commit `8b1d561`). An intentional visual rebrand, preceded by a
+  read-only audit of every orange usage in the app: promoted Phase 5's
+  already-validated purple from a scoped secondary/AI accent to the
+  product's primary brand color (`--primary`/`--primary-foreground`/
+  `--ring`/`--sidebar-primary`/`-foreground`/`--sidebar-ring` in
+  `app/globals.css`, reusing Phase 5's exact values — no new palette).
+  Because every orange pixel in the app already traced back to those six
+  tokens (zero hardcoded color, confirmed by audit), buttons, badges,
+  links, the hero, checklist, quick actions, icon chips, and every
+  campaign/warmup "default"-variant lifecycle badge recolored
+  automatically — only 4 files needed direct edits, 3 of them just
+  repointing Phase 5's now-redundant `--accent-purple` tokens (removed)
+  to `--primary`. Semantic colors untouched: mailbox "Active" still
+  green, health/failure scores still red, warnings still amber; campaign
+  "Active"/warmup "Enable" (brand-orange purely by old convention, not
+  semantic) now render purple. `Dialog`/`Sheet` glassmorphism (Phase 5)
+  preserved unmodified. No database, Supabase, authentication, API, or
+  business-logic change. See Design System — Phase 6 under Done.
+- Phase 7 (shared table system, logo/brand mark, visual-hierarchy
   polish, final consistency sweep) — not started.
 
 ## Integration status
@@ -1730,6 +1749,86 @@ Planned
     rendering correctly in the mobile nav. Commit `8845449` is published
     on `origin/main`; local `HEAD` was verified equal to `origin/main`
     after the push.
+- **Design System — Phase 6: Orange → Premium Purple Rebrand — COMPLETE
+  (2026-08-14, commit `8b1d561`).** Sixth phase of the same initiative
+  (Phase 5 immediately above). Objective: an intentional visual
+  rebrand — promote Phase 5's already-validated premium purple from a
+  scoped secondary/AI accent to the product's primary brand color,
+  replacing orange everywhere it represented brand identity, while
+  leaving every semantic color untouched. Preceded by a read-only audit
+  classifying every orange usage in the app before any edit was made.
+  **Implementation complete, published, no migration created.**
+  - **Audit**: a full-repo search confirmed every "orange" pixel in the
+    app traced back to exactly six CSS custom properties in
+    `app/globals.css` (`--primary`, `--primary-foreground`, `--ring`,
+    `--sidebar-primary`, `--sidebar-primary-foreground`,
+    `--sidebar-ring`) — zero hardcoded orange anywhere. This meant the
+    rebrand was architecturally almost entirely a single-file change:
+    buttons, badges, links, the hero, setup checklist, quick actions,
+    icon chips (settings/auth/billing/dashboard), campaign/warmup
+    /mailbox-provider/lead "default"-variant status badges,
+    `TrendBadge`'s "up" direction, checkbox accents, and every focus
+    ring all recolor automatically from the token change alone.
+  - **`app/globals.css`**: `--primary`/`--primary-foreground` (light +
+    dark) swapped to Phase 5's already-validated purple values exactly
+    — no new palette invented. Light: `262 83% 58%` with white
+    foreground (`~5.67:1` contrast). Dark: `263 85% 70%` with near-black
+    foreground (`~6.0:1`) — white would only reach `~3.36:1` and fail
+    AA, mirroring exactly how the previous orange token solved the same
+    light/dark contrast problem. `--ring`/`--sidebar-primary`
+    /`--sidebar-primary-foreground`/`--sidebar-ring` continue mirroring
+    `--primary`/`--primary-foreground` exactly, unchanged in structure.
+    The now-redundant `--accent-purple`/`--accent-purple-foreground`
+    pair from Phase 5 and their `@theme inline` entries were removed —
+    reusing, not duplicating, the validated value.
+    `--success`/`--warning`/`--destructive`/`--info` untouched.
+  - **Repointed Phase 5's `--accent-purple` consumers**:
+    `components/ai/recommendation-card.tsx`'s icon chip and
+    `components/shell/sidebar.tsx`/`components/shell/mobile-nav.tsx`'s
+    active-nav state now use `--primary` directly — identical resulting
+    color, removing the token duplication Phase 5 had introduced as a
+    scoped accent.
+  - **Semantic colors and lifecycle-state distinctions preserved
+    exactly**: mailbox "Active" (a health signal, Phase 3) still renders
+    `success` green everywhere checked (mailboxes list, deliverability
+    mailbox health); health/failure scores still render red; warmup's
+    "Not warming up" text still renders `warning` amber; lead
+    "Unverified"/"New" badges stay neutral. Campaign "Active" and
+    warmup "Enable" — brand-colored purely because orange was the old
+    brand, not a semantic signal — now render purple, confirmed live in
+    both themes.
+  - **Glassmorphism preserved, not redesigned**: `Dialog`/`Sheet`
+    overlay `backdrop-blur-sm` (Phase 5) received no changes; only
+    re-verified live that it still blurs real content behind it
+    correctly against the new purple, with dialog/sheet content itself
+    staying fully opaque.
+  - **No Phase 1-5 work reopened**: no change to `--success`/`--warning`/
+    `--destructive`/`--info` or any consumer, no surface-hierarchy or
+    composition/spacing change, no database, Supabase, authentication,
+    API, business-logic, or route change, no new packages. Exactly four
+    files changed.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, re-run once
+    more immediately before commit. Browser-verified live in both light
+    and dark mode across dashboard (hero, stat cards, setup checklist,
+    quick actions), leads (Add-lead dialog, verification badges),
+    mailboxes (Active badge green), campaigns (Active badge purple),
+    warmup, deliverability (domain/mailbox health), settings category
+    cards, billing (plan cards), and the mobile-nav sheet — purple
+    CTAs/links/focus-rings/icon-chips readable in both themes, no
+    washed-out text, no accidental purple on any semantic badge.
+    **Accepted limitations**: no live auth screen could be
+    screenshotted, since this session's authenticated state redirects
+    `/signup`/`/forgot-password` to `/dashboard` — verified instead via
+    source (identical `bg-primary/10 text-primary` pattern already
+    confirmed rendering correctly on Settings/Billing icon chips); the
+    desktop `Sidebar` component could not be visually confirmed — this
+    environment's display is capped below the `lg:` breakpoint — verified
+    instead via source inspection plus the mobile-nav sheet screenshot,
+    which uses the identical classes and is now confirmed working.
+    Commit `8b1d561` is published on `origin/main`; local `HEAD` was
+    verified equal to `origin/main` after the push.
 
 ## Current milestone
 
@@ -1778,11 +1877,11 @@ Design System initiative status above and Done for detail): Phase 1
 Hierarchy, commit `d5c017b`) were both complete the same day as the
 Production Readiness work above; Phase 3 (Semantic Color Consistency
 Sweep, commit `afcd588`), Phase 4 (Composition & Spacing Consistency,
-commit `6ab9903`), and Phase 5 (Premium Visual Polish, commit `8845449`)
-all followed on 2026-08-14. All five are complete. Phases 6-7 (shared
-table system, logo/brand mark, visual-hierarchy polish, final
-consistency sweep) have not started; no further Design System work is
-currently approved.
+commit `6ab9903`), Phase 5 (Premium Visual Polish, commit `8845449`),
+and Phase 6 (Orange -> Premium Purple Rebrand, commit `8b1d561`) all
+followed on 2026-08-14. All six are complete. Phase 7 (final
+visual-hierarchy/consistency sweep) has not started; no further Design
+System work is currently approved.
 
 ## In progress / partially built
 

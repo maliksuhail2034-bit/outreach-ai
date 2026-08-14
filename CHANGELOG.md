@@ -3,6 +3,89 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-08-14 — Design System — Phase 6: Orange → Premium Purple Rebrand, Complete (Commit: 8b1d561)
+
+- **Sixth phase of the same visual-design refinement (Phase 5: Premium
+  Visual Polish, commit `8845449`, same day — see entry below).**
+  Objective: an intentional visual rebrand — promote Phase 5's
+  already-validated premium purple from a scoped secondary/AI accent to
+  the product's primary brand color, replacing orange everywhere it
+  represented brand identity, while leaving every semantic color
+  (success/warning/destructive/info) untouched. Preceded by a read-only
+  audit of every orange usage in the app, classified before any edit was
+  made. **Implementation complete, published, no migration created.**
+  - **Audit finding that shaped the whole implementation**: because
+    every "orange" pixel in the app already traced back to exactly six
+    CSS custom properties in `app/globals.css` (`--primary`,
+    `--primary-foreground`, `--ring`, `--sidebar-primary`,
+    `--sidebar-primary-foreground`, `--sidebar-ring` — no hardcoded
+    orange anywhere, confirmed by a full-repo grep), the rebrand was
+    architecturally almost entirely a single-file change. Buttons,
+    badges, links, the hero, the setup checklist, quick actions, icon
+    chips (settings/auth/billing), campaign/warmup/mailbox-provider/lead
+    "default"-variant badges, `TrendBadge`'s "up" direction, checkbox
+    accents, and every focus ring all recolor automatically from the
+    token change alone — zero component edits needed for any of them.
+  - **`app/globals.css`**: `--primary`/`--primary-foreground` (light +
+    dark) swapped to Phase 5's already-validated purple values exactly
+    (`262 83% 58%` / white foreground light, `~5.67:1` contrast;
+    `263 85% 70%` / near-black foreground dark, `~6.0:1` — white would
+    only reach `~3.36:1` and fail AA, mirroring exactly how the previous
+    orange token solved the identical light/dark contrast problem).
+    `--ring`, `--sidebar-primary`, `--sidebar-primary-foreground`, and
+    `--sidebar-ring` continue mirroring `--primary`/`--primary-foreground`
+    exactly, unchanged in structure. The now-redundant
+    `--accent-purple`/`--accent-purple-foreground` pair (Phase 5) and
+    their `@theme inline` entries were removed — reusing, not
+    duplicating, the validated purple value. `--success`/`--warning`/
+    `--destructive`/`--info` untouched.
+  - **Repointed Phase 5's `--accent-purple` consumers to `--primary`**:
+    `components/ai/recommendation-card.tsx`'s icon chip,
+    `components/shell/sidebar.tsx`'s and
+    `components/shell/mobile-nav.tsx`'s active-nav state — now identical
+    in value, just using the same token every other purple surface in
+    the app uses, removing the duplication.
+  - **Semantic colors and lifecycle-state judgment calls preserved
+    exactly as scoped**: mailbox "Active" (health signal, Phase 3) still
+    renders `success` green; health/failure scores still render red;
+    warmup's "Not warming up" text still renders `warning` amber; lead
+    "Unverified"/"New" badges stay neutral. Campaign "Active" and
+    warmup "Enable" — brand-orange purely because orange was the old
+    brand color, not semantic — now render purple, confirmed live.
+  - **Glassmorphism preserved unchanged**: `Dialog`/`Sheet` overlay
+    `backdrop-blur-sm` (Phase 5) was not modified or redesigned; only
+    re-verified it still reads correctly against the new purple.
+  - **No Phase 1-5 work reopened**: no change to `--success`/`--warning`/
+    `--destructive`/`--info` or any consumer, no surface-hierarchy or
+    composition/spacing change, no database, Supabase, authentication,
+    API, business-logic, or route change, no new packages. Exactly four
+    files changed.
+  - **Verification**: `npm run typecheck`, `npm run lint`, and
+    `npm run build` (37/37 routes) all passed, and the full test suite
+    (`npm test` — 525 tests, 70 files) passed unchanged, re-run once more
+    immediately before commit. Browser-verified live in both light and
+    dark mode across dashboard (hero, stat cards, setup checklist, quick
+    actions), leads (Add-lead dialog, verification badges), mailboxes
+    (Active badge confirmed green), campaigns (Active badge confirmed
+    purple), warmup, deliverability (domain/mailbox health), settings
+    category cards, billing (plan cards), and the mobile-nav sheet —
+    purple CTAs/links/focus-rings/icon-chips readable in both themes,
+    the Dialog/Sheet glass overlay still blurring real content behind it
+    correctly, no washed-out text, no accidental purple on any semantic
+    badge. **Accepted limitations**: no live auth screen (`/signup`,
+    `/forgot-password`) could be screenshotted, since this session's
+    authenticated state redirects those routes to `/dashboard` — verified
+    instead via source (identical `bg-primary/10 text-primary` pattern
+    already confirmed rendering correctly elsewhere); the desktop
+    `Sidebar` component (as opposed to the mobile-nav sheet, which was
+    directly screenshotted) could not be visually confirmed — this
+    environment's display is capped below the `lg:` breakpoint — verified
+    instead via source inspection, since it shares the identical
+    `bg-primary/10`/`text-primary` classes already confirmed rendering
+    correctly in the mobile nav. Commit `8b1d561` is published on
+    `origin/main`; local `HEAD` was verified equal to `origin/main` after
+    the push.
+
 ## 2026-08-14 — Design System — Phase 5: Premium Visual Polish, Complete (Commit: 8845449)
 
 - **Fifth phase of the same visual-design refinement (Phase 4: Composition

@@ -41,10 +41,10 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   unqualified: "destructive",
 };
 
-const VERIFICATION_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+const VERIFICATION_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "success" | "outline"> = {
   unverified: "outline",
   pending: "secondary",
-  valid: "default",
+  valid: "success",
   invalid: "destructive",
   catch_all: "secondary",
   unknown: "secondary",

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-export type StatusTone = "default" | "secondary" | "destructive" | "outline";
+export type StatusTone = "default" | "secondary" | "destructive" | "success" | "outline";
 
 // Reusable status indicator — a label, a toned badge, and an optional
 // description. Generic enough for any dashboard that needs to show a state

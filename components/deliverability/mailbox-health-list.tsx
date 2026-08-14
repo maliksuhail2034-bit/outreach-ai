@@ -25,8 +25,8 @@ const WARMUP_STAGE_LABEL: Record<WarmupStage, string> = {
   paused: "Paused",
 };
 
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  active: "default",
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "success" | "outline"> = {
+  active: "success",
   paused: "secondary",
   error: "destructive",
 };

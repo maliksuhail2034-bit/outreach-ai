@@ -5,13 +5,13 @@ import { FadeIn } from "@/components/motion/fade-in";
 import { StatusCard, type StatusTone } from "@/components/dashboard/status-card";
 
 const DOMAIN_STATUS_TONE: Record<string, StatusTone> = {
-  verified: "default",
+  verified: "success",
   pending: "secondary",
   failed: "destructive",
 };
 
 function dnsTone(verified: boolean): StatusTone {
-  return verified ? "default" : "secondary";
+  return verified ? "success" : "secondary";
 }
 
 function statusLabel(status: string) {

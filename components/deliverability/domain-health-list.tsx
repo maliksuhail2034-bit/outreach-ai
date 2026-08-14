@@ -28,14 +28,14 @@ type DomainDnsCheck = Tables<"domain_dns_checks">;
 
 const DNS_RECORD_TYPES: DnsRecordType[] = ["spf", "dkim", "dmarc", "mx"];
 
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "success" | "outline"> = {
   pending: "secondary",
-  verified: "default",
+  verified: "success",
   failed: "destructive",
 };
 
-const DNS_STATUS_VARIANT: Record<DnsCheckStatus, "default" | "secondary" | "destructive" | "outline"> = {
-  pass: "default",
+const DNS_STATUS_VARIANT: Record<DnsCheckStatus, "default" | "secondary" | "destructive" | "success" | "outline"> = {
+  pass: "success",
   fail: "destructive",
   error: "destructive",
   pending: "outline",

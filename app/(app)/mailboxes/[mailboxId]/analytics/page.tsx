@@ -76,7 +76,7 @@ const STAGE_LABEL: Record<WarmupStage, string> = {
 };
 
 const MAILBOX_STATUS_TONE: Record<string, StatusTone> = {
-  active: "default",
+  active: "success",
   paused: "secondary",
   error: "destructive",
 };

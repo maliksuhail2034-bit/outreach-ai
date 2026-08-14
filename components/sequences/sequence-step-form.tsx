@@ -103,7 +103,7 @@ export function SequenceStepForm({ mode, campaignId, step, templates, onSuccess 
             <FormItem>
               <FormLabel>Body</FormLabel>
               <FormControl>
-                <Textarea rows={8} placeholder="Hi {{firstName}}, ..." {...field} />
+                <Textarea rows={8} placeholder="Hi {{first_name}}, ..." {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>

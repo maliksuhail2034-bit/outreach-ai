@@ -41,7 +41,7 @@ function DomainPicker({
 
   return (
     <form
-      className="rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm"
+      className="rounded-xl border border-border bg-card p-5 shadow-sm"
       action="/settings/deliverability/compare"
       method="get"
     >

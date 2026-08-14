@@ -27,7 +27,7 @@ export default async function WarmupPage() {
   }
 
   return (
-    <div className="max-w-4xl space-y-8">
+    <div className="max-w-4xl space-y-6 sm:space-y-8">
       <FadeIn>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Warmup</h1>

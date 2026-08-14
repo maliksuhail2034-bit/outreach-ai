@@ -37,7 +37,7 @@ export function FunnelCard({
   const base = stages[0]?.value ?? 0;
 
   return (
-    <div className="rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm">
+    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
       <div>
         <h3 className="font-semibold tracking-tight">{title}</h3>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}

@@ -42,7 +42,7 @@ export function RollupTable({
   const showBenchmarkColumn = rows.some((row) => row.replyRateBenchmark !== undefined);
 
   return (
-    <div className="rounded-xl border border-border bg-card/60 shadow-sm backdrop-blur-sm">
+    <div className="rounded-xl border border-border bg-card shadow-sm">
       <div className="border-b border-border p-5">
         <h3 className="font-semibold tracking-tight">{title}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>

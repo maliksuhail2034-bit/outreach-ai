@@ -36,7 +36,7 @@ export function ComparisonTable({
   rows: ComparisonMetricRow[];
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card/60 shadow-sm backdrop-blur-sm">
+    <div className="rounded-xl border border-border bg-card shadow-sm">
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>

@@ -26,7 +26,7 @@ export function StatusCard({
   return (
     <div
       className={cn(
-        "flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm",
+        "flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm",
         className,
       )}
     >

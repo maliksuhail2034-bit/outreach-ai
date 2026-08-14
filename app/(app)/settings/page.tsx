@@ -20,7 +20,7 @@ export default async function SettingsPage() {
   const [profile, settings] = await Promise.all([getProfile(supabase, user.id), getSettings(supabase, user.id)]);
 
   return (
-    <div className="max-w-2xl space-y-10">
+    <div className="max-w-2xl space-y-6 sm:space-y-8">
       <FadeIn>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>

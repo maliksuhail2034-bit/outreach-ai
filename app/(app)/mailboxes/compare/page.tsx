@@ -40,7 +40,7 @@ function MailboxPicker({
   }
 
   return (
-    <form className="rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm" action="/mailboxes/compare" method="get">
+    <form className="rounded-xl border border-border bg-card p-5 shadow-sm" action="/mailboxes/compare" method="get">
       <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
         <div className="space-y-1.5">
           <Label htmlFor="a">Mailbox A</Label>

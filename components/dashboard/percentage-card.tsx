@@ -48,7 +48,7 @@ export function PercentageCard({
       whileHover={{ y: -3 }}
       transition={{ type: "spring", stiffness: 300, damping: 20 }}
       className={cn(
-        "group relative flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm transition-shadow hover:shadow-lg hover:shadow-primary/5",
+        "group relative flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm transition-shadow hover:shadow-lg hover:shadow-primary/5",
         className,
       )}
     >

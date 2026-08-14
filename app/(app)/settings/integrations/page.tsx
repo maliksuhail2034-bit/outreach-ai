@@ -16,7 +16,7 @@ export default async function IntegrationsPage() {
   const integrations = await listIntegrations(supabase, organization.id);
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="max-w-2xl space-y-6 sm:space-y-8">
       <FadeIn>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Integrations</h1>

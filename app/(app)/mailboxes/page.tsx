@@ -26,7 +26,7 @@ export default async function MailboxesPage({
   ]);
 
   return (
-    <div className="max-w-4xl space-y-8">
+    <div className="max-w-4xl space-y-6 sm:space-y-8">
       <GmailConnectToast connected={query.connected} error={query.error} />
       <FadeIn>
         <div className="flex flex-wrap items-center justify-between gap-3">

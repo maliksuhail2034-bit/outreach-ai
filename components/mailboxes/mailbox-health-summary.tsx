@@ -9,7 +9,7 @@ import { ScoreBadge } from "@/components/deliverability/score-badge";
 // of a second copy of the same JSX.
 export function MailboxHealthSummary({ mailboxHealth }: { mailboxHealth: Tables<"mailbox_health"> | null }) {
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card/60 p-5 shadow-sm backdrop-blur-sm">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-muted-foreground">Mailbox health</span>
         <ScoreBadge score={mailboxHealth?.health_score ?? 0} />

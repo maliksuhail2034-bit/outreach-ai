@@ -61,11 +61,16 @@ export function RecommendationCard({ connectedProviders, initialRecommendation, 
   if (connectedProviders.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>AI Recommendation</CardTitle>
-          <CardDescription>
-            Bring your own Claude, OpenAI, or Gemini API key to generate a recommendation from this page&apos;s data.
-          </CardDescription>
+        <CardHeader className="flex-row items-center gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-purple/10 text-accent-purple">
+            <SparklesIcon className="size-4" />
+          </span>
+          <div>
+            <CardTitle>AI Recommendation</CardTitle>
+            <CardDescription>
+              Bring your own Claude, OpenAI, or Gemini API key to generate a recommendation from this page&apos;s data.
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           <Button variant="outline" size="sm" asChild>
@@ -79,9 +84,14 @@ export function RecommendationCard({ connectedProviders, initialRecommendation, 
   return (
     <Card>
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-4">
-        <div>
-          <CardTitle>AI Recommendation</CardTitle>
-          <CardDescription>Generated only when you click below — never on a schedule.</CardDescription>
+        <div className="flex items-center gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-purple/10 text-accent-purple">
+            <SparklesIcon className="size-4" />
+          </span>
+          <div>
+            <CardTitle>AI Recommendation</CardTitle>
+            <CardDescription>Generated only when you click below — never on a schedule.</CardDescription>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {connectedProviders.length > 1 && (

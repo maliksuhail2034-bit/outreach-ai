@@ -30,14 +30,14 @@ export function Sidebar() {
               className={cn(
                 "group relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-150",
                 isActive
-                  ? "text-accent-purple"
+                  ? "text-primary"
                   : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
             >
               {isActive && (
                 <motion.span
                   layoutId="sidebar-active-pill"
-                  className="absolute inset-0 rounded-md bg-accent-purple/10 shadow-sm"
+                  className="absolute inset-0 rounded-md bg-primary/10 shadow-sm"
                   transition={{ type: "spring", stiffness: 500, damping: 35 }}
                 />
               )}

@@ -43,7 +43,7 @@ export function MobileNav() {
                 className={cn(
                   "group flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-150",
                   isActive
-                    ? "bg-accent-purple/10 text-accent-purple shadow-sm"
+                    ? "bg-primary/10 text-primary shadow-sm"
                     : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
               >

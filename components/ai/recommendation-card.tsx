@@ -62,7 +62,7 @@ export function RecommendationCard({ connectedProviders, initialRecommendation, 
     return (
       <Card>
         <CardHeader className="flex-row items-center gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-purple/10 text-accent-purple">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <SparklesIcon className="size-4" />
           </span>
           <div>
@@ -85,7 +85,7 @@ export function RecommendationCard({ connectedProviders, initialRecommendation, 
     <Card>
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-purple/10 text-accent-purple">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <SparklesIcon className="size-4" />
           </span>
           <div>

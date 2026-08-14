@@ -32,13 +32,15 @@
      phase so those files aren't touched twice. */
   --surface-2: 240 15% 97%;
 
-  /* Warm-orange brand primary. Text-on-fill uses near-black
-     (--foreground) rather than white: at this hue/lightness, white
-     text only reaches 3.4:1 (below the 4.5:1 AA text threshold),
-     while near-black text reaches 5.8:1. Mirrors the light/dark
-     -foreground split dark mode already used before this change. */
-  --primary: 20 88% 50%;
-  --primary-foreground: 240 10% 3.9%;
+  /* Premium purple brand primary (Phase 6 rebrand — warm orange through
+     Phase 5). Reuses Phase 5's --accent-purple value exactly, now
+     promoted to --primary rather than duplicated as a separate token.
+     White foreground reaches ~5.67:1 here (passes AA with real margin) —
+     unlike the previous orange token, which needed a near-black
+     -foreground workaround because white only reached 3.4:1 at that
+     hue/lightness. */
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
 
   --secondary: 240 4.8% 95.9%;
   --secondary-foreground: 240 5.9% 10%;
@@ -52,7 +54,7 @@
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 100%;
 
-  /* Semantic status colors — distinct from --primary so brand orange
+  /* Semantic status colors — distinct from --primary so the brand color
      never has to double as success/warning/info. Foreground pairs are
      each independently contrast-checked (>=4.5:1) rather than reusing
      one rule for all three. */
@@ -63,18 +65,9 @@
   --info: 217 80% 50%;
   --info-foreground: 0 0% 100%;
 
-  /* Premium purple — a deliberate secondary/AI accent, not a replacement
-     for --primary. Scoped to two roles: marking AI-generated content
-     (RecommendationCard) and the active-navigation state. White
-     foreground reaches ~5.67:1 here (passes AA with real margin, unlike
-     --primary's orange, which needed the near-black-foreground
-     workaround at this same lightness). */
-  --accent-purple: 262 83% 58%;
-  --accent-purple-foreground: 0 0% 100%;
-
   --border: 240 5.9% 90%;
   --input: 240 5.9% 90%;
-  --ring: 20 88% 50%;
+  --ring: 262 83% 58%;
 
   /* Shadow color/opacity as separate tokens (see @theme inline below)
      so dark mode can raise opacity for visibility against near-black
@@ -86,12 +79,12 @@
 
   --sidebar: 240 20% 99%;
   --sidebar-foreground: 240 10% 3.9%;
-  --sidebar-primary: 20 88% 50%;
-  --sidebar-primary-foreground: 240 10% 3.9%;
+  --sidebar-primary: 262 83% 58%;
+  --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 240 4.8% 95.9%;
   --sidebar-accent-foreground: 240 5.9% 10%;
   --sidebar-border: 240 5.9% 90%;
-  --sidebar-ring: 20 88% 50%;
+  --sidebar-ring: 262 83% 58%;
 }
 
 .dark {
@@ -107,7 +100,11 @@
   --popover-foreground: 0 0% 98%;
   --surface-2: 240 7% 10%;
 
-  --primary: 24 95% 62%;
+  /* Lighter than the light-mode value for visibility against near-black,
+     mirroring the previous orange token's own light/dark split. White
+     foreground would only reach ~3.36:1 here (fails AA) — near-black
+     reaches ~6.0:1. Reuses Phase 5's dark --accent-purple value exactly. */
+  --primary: 263 85% 70%;
   --primary-foreground: 240 10% 3.9%;
 
   --secondary: 240 3.7% 15.9%;
@@ -129,15 +126,9 @@
   --info: 217 85% 65%;
   --info-foreground: 240 10% 3.9%;
 
-  /* Lighter than the light-mode value for visibility against near-black,
-     mirroring --primary's own light/dark split. White foreground would
-     only reach ~3.36:1 here (fails AA) — near-black reaches ~6.0:1. */
-  --accent-purple: 263 85% 70%;
-  --accent-purple-foreground: 240 10% 3.9%;
-
   --border: 240 3.7% 15.9%;
   --input: 240 3.7% 15.9%;
-  --ring: 24 95% 62%;
+  --ring: 263 85% 70%;
 
   --shadow-color: 0 0% 0%;
   --shadow-opacity-1: 0.3;
@@ -145,12 +136,12 @@
 
   --sidebar: 240 9% 6%;
   --sidebar-foreground: 0 0% 98%;
-  --sidebar-primary: 24 95% 62%;
+  --sidebar-primary: 263 85% 70%;
   --sidebar-primary-foreground: 240 10% 3.9%;
   --sidebar-accent: 240 3.7% 15.9%;
   --sidebar-accent-foreground: 0 0% 98%;
   --sidebar-border: 240 3.7% 15.9%;
-  --sidebar-ring: 24 95% 62%;
+  --sidebar-ring: 263 85% 70%;
 }
 
 @theme inline {
@@ -182,8 +173,6 @@
   --color-warning-foreground: hsl(var(--warning-foreground));
   --color-info: hsl(var(--info));
   --color-info-foreground: hsl(var(--info-foreground));
-  --color-accent-purple: hsl(var(--accent-purple));
-  --color-accent-purple-foreground: hsl(var(--accent-purple-foreground));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));

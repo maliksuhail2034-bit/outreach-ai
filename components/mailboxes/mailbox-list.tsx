@@ -46,7 +46,15 @@ function providerLabel(emailProvider: string) {
   return PROVIDER_LABEL[emailProvider] ?? "SMTP";
 }
 
-export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; domains: Tables<"domains">[] }) {
+export function MailboxList({
+  mailboxes,
+  domains,
+  microsoftOauthConfigured,
+}: {
+  mailboxes: MailboxSafe[];
+  domains: Tables<"domains">[];
+  microsoftOauthConfigured: boolean;
+}) {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<MailboxSafe | null>(null);
   const [deleting, setDeleting] = useState<MailboxSafe | null>(null);
@@ -110,12 +118,14 @@ export function MailboxList({ mailboxes, domains }: { mailboxes: MailboxSafe[]; 
               Connect Google Workspace
             </Link>
           </Button>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/api/oauth/microsoft/start">
-              <PlugZapIcon />
-              Connect Microsoft 365
-            </Link>
-          </Button>
+          {microsoftOauthConfigured && (
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/api/oauth/microsoft/start">
+                <PlugZapIcon />
+                Connect Microsoft 365
+              </Link>
+            </Button>
+          )}
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
               <Button size="sm">

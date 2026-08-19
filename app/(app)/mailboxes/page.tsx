@@ -43,7 +43,13 @@ export default async function MailboxesPage({
       </FadeIn>
 
       <FadeIn delay={0.05}>
-        <MailboxList mailboxes={mailboxes} domains={domains ?? []} />
+        <MailboxList
+          mailboxes={mailboxes}
+          domains={domains ?? []}
+          microsoftOauthConfigured={Boolean(
+            process.env.MICROSOFT_OAUTH_CLIENT_ID && process.env.MICROSOFT_OAUTH_CLIENT_SECRET,
+          )}
+        />
       </FadeIn>
     </div>
   );

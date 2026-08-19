@@ -45,3 +45,6 @@ project-tree.txt
 
 # supabase CLI local cache
 /supabase/.temp/
+
+.vercel
+.env*

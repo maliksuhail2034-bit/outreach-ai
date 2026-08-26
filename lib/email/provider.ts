@@ -10,6 +10,13 @@ export interface OutboundEmailMessage {
   html: string;
   text?: string;
   replyTo?: string;
+  // Threading headers (RFC 5322 §3.6.4) — optional, and unused by the
+  // campaign send pipeline (send-worker.ts never sets them), so campaign
+  // sends are byte-for-byte unaffected. Added for the warmup engine's
+  // auto-reply step (lib/warmup/warmup-worker.ts), which threads its
+  // replies under the original warmup message.
+  inReplyTo?: string;
+  references?: string[];
 }
 
 export interface SendResult {

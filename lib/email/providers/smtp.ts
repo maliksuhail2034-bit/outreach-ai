@@ -180,6 +180,12 @@ export class SmtpEmailProvider implements EmailProvider {
         html: message.html,
         text: message.text,
         replyTo: message.replyTo,
+        // Optional threading headers — nodemailer passes both straight
+        // through to the outgoing MIME headers. Undefined for every
+        // existing caller (campaign sends never set these), so this is a
+        // no-op for the send path that already works.
+        inReplyTo: message.inReplyTo,
+        references: message.references?.join(" "),
       });
 
       return { providerMessageId: normalizeMessageId(info.messageId) ?? info.messageId };

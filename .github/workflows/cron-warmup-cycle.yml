@@ -1,0 +1,32 @@
+name: Cron - warmup cycle
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /api/cron/warmup-cycle
+        run: |
+          response=$(curl -f -sS -X POST "${{ secrets.APP_URL }}/api/cron/warmup-cycle" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "$response"
+
+          # Mirrors cron-send-emails.yml's reasoning: curl -f alone only
+          # catches total outages (non-2xx), not a run that completed but
+          # bounced/failed most of what it attempted this cycle.
+          claimed=$(echo "$response" | jq '.claimed // 0')
+          bounced=$(echo "$response" | jq '.bounced // 0')
+          paused=$(echo "$response" | jq '.paused // 0')
+
+          if [ "$claimed" -gt 0 ] && [ "$((bounced * 2))" -gt "$claimed" ]; then
+            echo "::error::High bounce rate this run: $bounced/$claimed profiles bounced"
+            exit 1
+          fi
+
+          if [ "$paused" -gt 0 ]; then
+            echo "::warning::$paused profile(s) auto-paused this run — check the Warmup dashboard"
+          fi

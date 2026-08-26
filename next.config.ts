@@ -15,6 +15,16 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // Next.js 16 logs every Server Function invocation's arguments to the dev
+  // terminal by default (see logging.serverFunctions in the Next.js docs).
+  // Several Server Functions in this app take raw SMTP/IMAP passwords as
+  // arguments (app/(app)/mailboxes/actions.ts) — that default would print
+  // plaintext mailbox credentials to the terminal/log on every call. Off
+  // entirely rather than scoped per-route, since no Server Function in this
+  // codebase should ever have its arguments logged.
+  logging: {
+    serverFunctions: false,
+  },
   async headers() {
     return [
       {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysWarming, forecastNextRamp } from "./scheduler";
+import { daysWarming, forecastNextRamp, randomizedNextSendDelayMinutes } from "./scheduler";
 
 const NOW = new Date("2026-08-02T00:00:00.000Z");
 
@@ -67,5 +67,40 @@ describe("daysWarming", () => {
 
   it("never goes negative for a startedAt in the future", () => {
     expect(daysWarming("2026-08-10T00:00:00.000Z", NOW)).toBe(0);
+  });
+});
+
+describe("randomizedNextSendDelayMinutes", () => {
+  const WINDOW = { startHour: 9, endHour: 17 }; // 8-hour window
+
+  it("stays within the clamped min/max bounds across many samples", () => {
+    for (let i = 0; i < 200; i++) {
+      const delay = randomizedNextSendDelayMinutes(10, WINDOW);
+      expect(delay).toBeGreaterThanOrEqual(20);
+      expect(delay).toBeLessThanOrEqual(240);
+    }
+  });
+
+  it("produces a longer average delay for a lower daily volume", () => {
+    const lowVolumeSamples = Array.from({ length: 50 }, () => randomizedNextSendDelayMinutes(2, WINDOW));
+    const highVolumeSamples = Array.from({ length: 50 }, () => randomizedNextSendDelayMinutes(20, WINDOW));
+
+    const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+    expect(average(lowVolumeSamples)).toBeGreaterThan(average(highVolumeSamples));
+  });
+
+  it("never returns a fixed constant — samples vary", () => {
+    const samples = new Set(Array.from({ length: 30 }, () => randomizedNextSendDelayMinutes(10, WINDOW)));
+    expect(samples.size).toBeGreaterThan(1);
+  });
+
+  it("clamps to the minimum even for a very high daily volume", () => {
+    const delay = randomizedNextSendDelayMinutes(10_000, WINDOW);
+    expect(delay).toBeGreaterThanOrEqual(20);
+  });
+
+  it("clamps to the maximum even for a very low daily volume", () => {
+    const delay = randomizedNextSendDelayMinutes(1, { startHour: 0, endHour: 24 });
+    expect(delay).toBeLessThanOrEqual(240);
   });
 });

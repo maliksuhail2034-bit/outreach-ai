@@ -1434,14 +1434,103 @@ export type Database = {
           },
         ]
       }
+      warmup_messages: {
+        Row: {
+          created_at: string
+          from_mailbox_id: string
+          from_warmup_profile_id: string
+          id: string
+          in_reply_to: string | null
+          message_type: string
+          organization_id: string
+          provider_message_id: string
+          replied_at: string | null
+          reply_decision: string
+          reply_due_at: string | null
+          sent_at: string
+          status: string
+          subject: string
+          to_mailbox_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_mailbox_id: string
+          from_warmup_profile_id: string
+          id?: string
+          in_reply_to?: string | null
+          message_type: string
+          organization_id: string
+          provider_message_id: string
+          replied_at?: string | null
+          reply_decision?: string
+          reply_due_at?: string | null
+          sent_at?: string
+          status?: string
+          subject: string
+          to_mailbox_id: string
+        }
+        Update: {
+          created_at?: string
+          from_mailbox_id?: string
+          from_warmup_profile_id?: string
+          id?: string
+          in_reply_to?: string | null
+          message_type?: string
+          organization_id?: string
+          provider_message_id?: string
+          replied_at?: string | null
+          reply_decision?: string
+          reply_due_at?: string | null
+          sent_at?: string
+          status?: string
+          subject?: string
+          to_mailbox_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_messages_from_mailbox_id_fkey"
+            columns: ["from_mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_to_mailbox_id_fkey"
+            columns: ["to_mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_from_warmup_profile_id_fkey"
+            columns: ["from_warmup_profile_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warmup_profiles: {
         Row: {
+          consecutive_failures: number
           created_at: string
           current_daily_volume: number
           health_score: number
           id: string
+          imap_last_uid: number | null
+          imap_uid_validity: number | null
           last_activity_at: string | null
+          last_ramp_increase_at: string | null
+          locked_until: string | null
           mailbox_id: string
+          next_send_at: string | null
           organization_id: string
           ramp_up_percent: number
           stage: string
@@ -1451,12 +1540,18 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          consecutive_failures?: number
           created_at?: string
           current_daily_volume?: number
           health_score?: number
           id?: string
+          imap_last_uid?: number | null
+          imap_uid_validity?: number | null
           last_activity_at?: string | null
+          last_ramp_increase_at?: string | null
+          locked_until?: string | null
           mailbox_id: string
+          next_send_at?: string | null
           organization_id: string
           ramp_up_percent?: number
           stage?: string
@@ -1466,12 +1561,18 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          consecutive_failures?: number
           created_at?: string
           current_daily_volume?: number
           health_score?: number
           id?: string
+          imap_last_uid?: number | null
+          imap_uid_validity?: number | null
           last_activity_at?: string | null
+          last_ramp_increase_at?: string | null
+          locked_until?: string | null
           mailbox_id?: string
+          next_send_at?: string | null
           organization_id?: string
           ramp_up_percent?: number
           stage?: string
@@ -1617,6 +1718,36 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "leads"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_due_warmup_sends: {
+        Args: { p_organization_id: string; p_limit?: number }
+        Returns: {
+          consecutive_failures: number
+          created_at: string
+          current_daily_volume: number
+          health_score: number
+          id: string
+          imap_last_uid: number | null
+          imap_uid_validity: number | null
+          last_activity_at: string | null
+          last_ramp_increase_at: string | null
+          locked_until: string | null
+          mailbox_id: string
+          next_send_at: string | null
+          organization_id: string
+          ramp_up_percent: number
+          stage: string
+          started_at: string | null
+          status: string
+          target_daily_volume: number
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "warmup_profiles"
           isOneToOne: false
           isSetofReturn: true
         }

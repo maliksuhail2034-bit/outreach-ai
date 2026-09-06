@@ -610,7 +610,7 @@ export default async function AnalyticsPage({
 
       <FadeIn delay={1.25}>
         <InsightsCard
-          title="AI Insights"
+          title="Insights"
           description="Deterministic, rule-based callouts from the reply-rate benchmarks above and the organization's send forecast."
           insights={aiInsights}
         />

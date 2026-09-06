@@ -21,7 +21,7 @@ export default async function VerificationSettingsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Verification</h1>
           <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-            Connect your own MillionVerifier API key to verify lead email addresses before you send. Outreach-ai
+            Connect your own MillionVerifier API key to verify lead email addresses before you send. Polimatiq
             never sees your key in plain text, stores no managed key of its own, and never purchases verification
             credit on your behalf.
           </p>

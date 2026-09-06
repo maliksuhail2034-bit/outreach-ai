@@ -53,7 +53,7 @@ export function VerificationProvidersPanel({ providerKeys }: { providerKeys: Ver
       <CardHeader className="flex-row items-center justify-between gap-4">
         <div>
           <CardTitle>Connected verification providers</CardTitle>
-          <CardDescription>Bring your own API key — outreach-ai never provides managed verification credit.</CardDescription>
+          <CardDescription>Bring your own API key — Polimatiq never provides managed verification credit.</CardDescription>
         </div>
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>

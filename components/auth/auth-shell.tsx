@@ -14,15 +14,15 @@ export function AuthShell({ children }: { children: ReactNode }) {
         />
         <div className="relative z-10 flex items-center gap-2 text-lg font-semibold">
           <span className="flex size-8 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">
-            O
+            P
           </span>
-          OutReach AI
+          Polimatiq
         </div>
         <blockquote className="relative z-10 space-y-2">
-          <p className="text-lg leading-relaxed">
-            &ldquo;Find, qualify, and engage the right leads &mdash; automatically.&rdquo;
-          </p>
-          <footer className="text-sm text-sidebar-foreground/60">Your AI SDR, working around the clock.</footer>
+          <p className="text-lg leading-relaxed">&ldquo;Cold email outreach from one workspace.&rdquo;</p>
+          <footer className="text-sm text-sidebar-foreground/60">
+            Manage mailboxes, leads, campaigns, and replies in one place.
+          </footer>
         </blockquote>
       </div>
       <div className="flex items-center justify-center p-6 sm:p-10">

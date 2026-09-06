@@ -1,7 +1,7 @@
 import { LightbulbIcon } from "lucide-react";
 
 const TIPS = [
-  "Most users launch their first campaign in under 10 minutes.",
+  "Connect a mailbox and import your leads before creating your first campaign.",
   "Personalized subject lines can double your reply rate.",
   "Warm up a new mailbox for 1-2 weeks before sending at full volume.",
 ];

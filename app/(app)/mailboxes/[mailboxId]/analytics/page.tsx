@@ -441,7 +441,7 @@ export default async function MailboxAnalyticsPage({
 
       <FadeIn delay={0.55}>
         <InsightsCard
-          title="AI Insights"
+          title="Insights"
           description="Deterministic, rule-based callouts from this mailbox's trends and send forecast."
           insights={aiInsights}
         />

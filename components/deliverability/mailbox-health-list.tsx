@@ -87,7 +87,7 @@ export function MailboxHealthList({
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <MailIcon className="mx-auto size-6 text-muted-foreground" />
             <p className="mt-2 text-sm font-medium">No mailboxes connected yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">Connect a mailbox to start tracking its health.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Connect a mailbox to see its health score here.</p>
           </div>
         ) : (
           <ul className="divide-y divide-border">
@@ -110,7 +110,7 @@ export function MailboxHealthList({
                       ) : (
                         <Badge variant="outline">{WARMUP_LABEL[warmupStatus] ?? warmupStatus}</Badge>
                       )}
-                      <ScoreBadge score={health?.health_score ?? 0} />
+                      <ScoreBadge score={health?.health_score ?? 0} measured={health != null} />
                     </div>
                     <p className="truncate text-sm text-muted-foreground">
                       {mailbox.daily_limit}/day · Reputation:{" "}

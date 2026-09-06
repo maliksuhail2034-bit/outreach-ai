@@ -21,7 +21,7 @@ export default async function IntegrationsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Integrations</h1>
           <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-            Send your organization&apos;s overview and AI Insights to an external destination on a schedule.
+            Send your organization&apos;s overview and insights to an external destination on a schedule.
           </p>
         </div>
       </FadeIn>

@@ -119,12 +119,16 @@ export function DomainHealthList({
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <GlobeIcon className="mx-auto size-6 text-muted-foreground" />
             <p className="mt-2 text-sm font-medium">No domains added yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">Add a domain to start monitoring its deliverability.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Add a domain to check its SPF, DKIM, DMARC, and MX records.</p>
           </div>
         ) : (
           <ul className="divide-y divide-border">
             {domains.map((domain) => {
               const checks = latestChecksByDomain[domain.id] ?? {};
+              const domainMeasured = DNS_RECORD_TYPES.some((recordType) => {
+                const status = checks[recordType]?.status;
+                return status === "pass" || status === "fail" || status === "error";
+              });
               return (
                 <li key={domain.id} className="space-y-3 py-4 first:pt-0 last:pb-0">
                   <div className="flex items-center justify-between gap-4">
@@ -134,7 +138,7 @@ export function DomainHealthList({
                         <Badge variant={STATUS_VARIANT[domain.status] ?? "outline"}>
                           {statusLabel(domain.status)}
                         </Badge>
-                        <ScoreBadge score={domain.health_score} />
+                        <ScoreBadge score={domain.health_score} measured={domainMeasured} />
                       </div>
                       <p className="truncate text-sm text-muted-foreground">
                         Last checked: {lastCheckedLabel(domain.last_checked_at)}

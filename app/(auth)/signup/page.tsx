@@ -43,7 +43,7 @@ export default function SignupPage() {
       <Card className="border-none shadow-none sm:border sm:shadow-sm">
         <CardHeader>
           <CardTitle className="text-2xl">Create your account</CardTitle>
-          <CardDescription>Start finding and qualifying leads with OutReach AI.</CardDescription>
+          <CardDescription>Start your cold email outreach with Polimatiq.</CardDescription>
         </CardHeader>
         <CardContent>
           <form action={action} className="space-y-4">

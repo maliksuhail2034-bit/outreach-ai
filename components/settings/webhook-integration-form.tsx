@@ -41,7 +41,7 @@ export function WebhookIntegrationForm({ onSuccess }: { onSuccess: () => void })
             <FormItem>
               <FormLabel>Webhook URL</FormLabel>
               <FormControl>
-                <Input placeholder="https://example.com/hooks/outreach-ai" {...field} />
+                <Input placeholder="https://example.com/hooks/polimatiq" {...field} />
               </FormControl>
               <FormDescription>
                 Receives an organization digest (overview metrics and AI Insights) as a JSON POST on a schedule.

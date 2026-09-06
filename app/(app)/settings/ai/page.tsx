@@ -22,7 +22,7 @@ export default async function AiSettingsPage() {
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">AI</h1>
           <p className="mt-1 text-sm text-muted-foreground sm:text-base">
             Connect your own Claude, OpenAI, or Gemini API key to generate AI Recommendations on your analytics
-            pages. Outreach-ai never sees your key in plain text, stores no managed key of its own, and only
+            pages. Polimatiq never sees your key in plain text, stores no managed key of its own, and only
             generates a recommendation when you click &quot;Generate Recommendation.&quot;
           </p>
         </div>

@@ -15,9 +15,32 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// metadataBase derives from the same env var the app already uses to build
+// absolute links (Stripe redirects, OAuth callbacks, unsubscribe links — see
+// lib/email/unsubscribe-token.ts). Keeping it here means the domain migration
+// to polimatiq.com needs one env var change, not a code change.
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+const SITE_TITLE = "Polimatiq | Cold Email Outreach Software";
+const SITE_DESCRIPTION =
+  "Polimatiq is a cold email outreach platform for managing mailboxes, leads, campaigns, sequences, replies, warmup, and analytics in one workspace.";
+
 export const metadata: Metadata = {
-  title: "OutReach AI",
-  description: "AI SDR platform for finding, qualifying, and engaging leads.",
+  metadataBase: new URL(APP_URL),
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
+  openGraph: {
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    siteName: "Polimatiq",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
 };
 
 export default function RootLayout({

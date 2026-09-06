@@ -29,7 +29,7 @@ export default function LoginPage({
       <Card className="border-none shadow-none sm:border sm:shadow-sm">
         <CardHeader>
           <CardTitle className="text-2xl">Welcome back</CardTitle>
-          <CardDescription>Sign in to your OutReach AI account.</CardDescription>
+          <CardDescription>Sign in to your Polimatiq account.</CardDescription>
         </CardHeader>
         <CardContent>
           <form action={action} className="space-y-4">

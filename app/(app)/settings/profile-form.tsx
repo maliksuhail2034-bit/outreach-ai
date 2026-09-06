@@ -43,7 +43,7 @@ export function ProfileForm({ email, defaultValues }: { email: string; defaultVa
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
-            <CardDescription>This is how you appear across OutReach AI.</CardDescription>
+            <CardDescription>This is how you appear across Polimatiq.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/30 p-4">

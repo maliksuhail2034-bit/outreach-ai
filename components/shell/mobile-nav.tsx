@@ -25,9 +25,9 @@ export function MobileNav() {
         <SheetHeader className="border-b border-sidebar-border">
           <SheetTitle className="flex items-center gap-2 text-left text-lg font-semibold">
             <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-primary text-sm text-sidebar-primary-foreground">
-              O
+              P
             </span>
-            OutReach AI
+            Polimatiq
           </SheetTitle>
         </SheetHeader>
         <nav className="flex flex-col gap-1.5 p-3">

@@ -57,7 +57,7 @@ export function AiProvidersPanel({ providerKeys }: { providerKeys: AiProviderKey
       <CardHeader className="flex-row items-center justify-between gap-4">
         <div>
           <CardTitle>Connected AI providers</CardTitle>
-          <CardDescription>Bring your own API key — outreach-ai never provides a managed AI key.</CardDescription>
+          <CardDescription>Bring your own API key — Polimatiq never provides a managed AI key.</CardDescription>
         </div>
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>

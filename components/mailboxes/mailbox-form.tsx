@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import Link from "next/link";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
@@ -394,18 +395,13 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
           />
         )}
 
-        <FormField
-          control={form.control}
-          name="warmupEnabled"
-          render={({ field }) => (
-            <FormItem className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-              <FormLabel className="cursor-pointer">Enable warmup</FormLabel>
-              <FormControl>
-                <Switch checked={field.value} onCheckedChange={field.onChange} />
-              </FormControl>
-            </FormItem>
-          )}
-        />
+        <p className="rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          Mailbox warmup can be configured after connecting your mailbox, from the{" "}
+          <Link href="/warmup" className="font-medium text-foreground hover:underline">
+            Warmup
+          </Link>{" "}
+          page.
+        </p>
 
         {!isOAuthEdit && (
         <div className="space-y-4 rounded-lg border border-border p-4">

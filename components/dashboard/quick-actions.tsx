@@ -26,7 +26,7 @@ const actions: QuickAction[] = [
   },
   {
     title: "Connect mailbox",
-    description: "Link a sending mailbox and start warming it up.",
+    description: "Link a sending mailbox to start sending campaigns.",
     icon: MailPlusIcon,
     href: "/mailboxes",
   },

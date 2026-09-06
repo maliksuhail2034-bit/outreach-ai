@@ -330,7 +330,7 @@ async function TrendsSection({
 
       <FadeIn delay={0.6}>
         <InsightsCard
-          title="AI Insights"
+          title="Insights"
           description="Deterministic, rule-based callouts from this domain's health score, trends, and forecast."
           insights={aiInsights}
         />

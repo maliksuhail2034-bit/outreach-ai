@@ -57,6 +57,31 @@ export async function countEmailEventsByType(supabase: Client, eventType: string
   return count ?? 0;
 }
 
+// Plan-limit helper for lib/billing/limits.ts's isWithinMonthlyEmailLimit —
+// counts actual 'sent' email_events since a given instant, across a
+// specific set of campaign ids. Takes campaignIds rather than a userId
+// because this runs from lib/email/send-worker.ts under the admin client
+// (a cron worker, no RLS/auth.uid() to scope by), same reasoning
+// countEmailEventsByType above is RLS-scoped and therefore NOT safe to
+// reuse here — the caller (lib/billing/limits.ts) resolves the caller's own
+// campaign ids first via lib/db/campaigns.ts's listCampaigns, mirroring
+// assertWithinDailySendLimit's existing shape exactly. Returns 0 for an
+// empty campaignIds list rather than querying with an empty IN() (which
+// PostgREST would otherwise turn into a query matching nothing anyway, but
+// this skips the round trip for a brand-new account with no campaigns yet).
+export async function countEmailsSentSince(supabase: Client, campaignIds: string[], sinceIso: string): Promise<number> {
+  if (campaignIds.length === 0) return 0;
+
+  const { count, error } = await supabase
+    .from("email_events")
+    .select("*", { count: "exact", head: true })
+    .in("campaign_id", campaignIds)
+    .eq("event_type", "sent")
+    .gte("created_at", sinceIso);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 // Reply-tracking helper — used two ways by lib/email/reply-worker.ts: (a)
 // matching, looking up the outbound 'sent' event a reply's In-Reply-To/
 // References header points to, and (b) the idempotency check, looking up

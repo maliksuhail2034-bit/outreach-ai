@@ -1,7 +1,7 @@
 import type { Client } from "@/lib/db/shared";
-import { countCampaigns, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
+import { countCampaigns, countEmailsSentSince, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
 import { getPlanForOrganization } from "./resolve-plan";
-import { UNLIMITED } from "./plans";
+import { UNLIMITED, type Plan } from "./plans";
 
 // Thrown by every assert* below — actions.ts callers let this propagate as
 // a normal thrown Error (same convention as every other validation failure
@@ -23,6 +23,22 @@ async function resolveOrganizationId(supabase: Client, userId: string, userEmail
   return organization.id;
 }
 
+// The leading clause for every PlanLimitError message below, including the
+// "allows up to" that every message shares — so a call site only ever
+// appends the limit number/noun and the closing sentence. PLANS.free's
+// `name` ("No active subscription") reads fine as a standalone status but
+// not stitched into "Your ${name} plan allows..." — that produces "Your No
+// active subscription plan allows...", which is grammatically broken and,
+// worse, still reads like a named plan called "No active subscription".
+// This branches so the fallback reads as an account status, never a named
+// (and never a "Free") plan, while every real paid plan keeps the
+// unchanged "Your Starter/Growth/Pro/Scale plan allows..." wording.
+function planLimitPrefix(plan: Plan): string {
+  return plan.id === "free"
+    ? "Your account has no active subscription. The current limit allows up to"
+    : `Your ${plan.name} plan allows up to`;
+}
+
 export async function assertWithinMailboxLimit(supabase: Client, userId: string, userEmail: string | null | undefined) {
   const organizationId = await resolveOrganizationId(supabase, userId, userEmail);
   const plan = await getPlanForOrganization(supabase, organizationId);
@@ -31,7 +47,7 @@ export async function assertWithinMailboxLimit(supabase: Client, userId: string,
   const count = await countMailboxes(supabase, userId);
   if (count >= plan.limits.mailboxes) {
     throw new PlanLimitError(
-      `Your ${plan.name} plan allows up to ${plan.limits.mailboxes} mailbox${plan.limits.mailboxes === 1 ? "" : "es"}. Upgrade to add more.`,
+      `${planLimitPrefix(plan)} ${plan.limits.mailboxes} mailbox${plan.limits.mailboxes === 1 ? "" : "es"}. Upgrade to add more.`,
     );
   }
 }
@@ -44,7 +60,7 @@ export async function assertWithinCampaignLimit(supabase: Client, userId: string
   const count = await countCampaigns(supabase, userId);
   if (count >= plan.limits.campaigns) {
     throw new PlanLimitError(
-      `Your ${plan.name} plan allows up to ${plan.limits.campaigns} campaign${plan.limits.campaigns === 1 ? "" : "s"}. Upgrade to add more.`,
+      `${planLimitPrefix(plan)} ${plan.limits.campaigns} campaign${plan.limits.campaigns === 1 ? "" : "s"}. Upgrade to add more.`,
     );
   }
 }
@@ -56,7 +72,7 @@ export async function assertWithinLeadLimit(supabase: Client, userId: string, us
 
   const count = await countLeads(supabase, userId);
   if (count >= plan.limits.leads) {
-    throw new PlanLimitError(`Your ${plan.name} plan allows up to ${plan.limits.leads} leads. Upgrade to add more.`);
+    throw new PlanLimitError(`${planLimitPrefix(plan)} ${plan.limits.leads} leads. Upgrade to add more.`);
   }
 }
 
@@ -105,7 +121,38 @@ export async function assertWithinDailySendLimit(
 
   if (currentTotal + newDailyLimit > plan.limits.dailySends) {
     throw new PlanLimitError(
-      `Your ${plan.name} plan allows up to ${plan.limits.dailySends} total daily sends across all campaigns (currently configured: ${currentTotal}). Lower this campaign's daily limit or upgrade.`,
+      `${planLimitPrefix(plan)} ${plan.limits.dailySends} total daily sends across all campaigns (currently configured: ${currentTotal}). Lower this campaign's daily limit or upgrade.`,
     );
   }
+}
+
+// UTC calendar-month boundary — same "derive, don't drift" reasoning
+// lib/warmup/warmup-worker.ts's recordDailyWarmupStats already documents
+// for its own UTC day boundary: a fixed, unambiguous cutover rather than
+// anything tied to a particular org's timezone (this app has no
+// per-org/per-user timezone setting to key it off).
+function startOfCurrentMonthIso(now: Date): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+}
+
+// Called from lib/email/send-worker.ts (the admin client, no interactive
+// user) immediately before a send is attempted — see the plan's isolation
+// checklist: this is the real, send-time-enforced volume cap the launch
+// pricing is built around, distinct from assertWithinDailySendLimit above
+// (which only bounds *configured* capacity at campaign-create/edit time).
+// Returns a boolean rather than throwing PlanLimitError like every
+// assertWithin* above: the send worker needs a decision to skip one lead
+// and move on, not an exception to catch per lead — same reasoning
+// getRemainingLeadQuota below returns a number instead of throwing, for its
+// own different (bulk-import, partial-success) caller shape.
+export async function isWithinMonthlyEmailLimit(supabase: Client, userId: string, now: Date = new Date()): Promise<boolean> {
+  const organizationId = await resolveOrganizationId(supabase, userId, undefined);
+  const plan = await getPlanForOrganization(supabase, organizationId);
+  if (plan.limits.emailsPerMonth === UNLIMITED) return true;
+
+  const campaigns = await listCampaigns(supabase, userId);
+  const campaignIds = (campaigns ?? []).map((campaign) => campaign.id);
+
+  const sentThisMonth = await countEmailsSentSince(supabase, campaignIds, startOfCurrentMonthIso(now));
+  return sentThisMonth < plan.limits.emailsPerMonth;
 }

@@ -18,14 +18,16 @@ const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
 // including future real ones.
 const INTERNAL_UNLIMITED_ORGANIZATION_ID = "7ef89392-80ba-4447-a7b7-ba642ff00a53";
 
-// Unlike PLANS.agency, this has no daily-send cap at all — the highest real
-// paid tier still caps dailySends at 10000, which doesn't fit "unlimited".
+// Unlike PLANS.scale, this has no cap at all on any dimension — the highest
+// real paid tier still caps dailySends/emailsPerMonth at concrete numbers,
+// which doesn't fit "unlimited". Never sold, so no price of any kind.
 const INTERNAL_UNLIMITED_PLAN: Plan = {
-  id: "agency",
+  id: "scale",
   name: "Unlimited (Internal)",
-  limits: { mailboxes: UNLIMITED, leads: UNLIMITED, campaigns: UNLIMITED, dailySends: UNLIMITED },
-  monthlyPriceId: null,
-  yearlyPriceId: null,
+  limits: { mailboxes: UNLIMITED, leads: UNLIMITED, campaigns: UNLIMITED, dailySends: UNLIMITED, emailsPerMonth: UNLIMITED },
+  regularPriceCents: null,
+  launchPriceCents: null,
+  priceIds: { "1_month": null, "3_month": null, "6_month": null, "12_month": null },
 };
 
 // The only place that decides "what plan is this organization actually

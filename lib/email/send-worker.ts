@@ -15,6 +15,7 @@ import {
   recordSendSuccess,
   updateCampaignLead,
 } from "@/lib/db";
+import { isWithinMonthlyEmailLimit } from "@/lib/billing/limits";
 import { getEmailProvider } from "./get-provider";
 import { EmailSendError } from "./provider";
 import { renderMergeTags, type MergeTagLead } from "./merge-tags";
@@ -208,6 +209,29 @@ async function processCampaignLead(
     await updateCampaignLead(supabase, campaignLead.id, {
       status: suppression.reason === "bounced" ? "bounced" : "unsubscribed",
       next_send_at: null,
+      locked_until: null,
+    });
+    return "skipped";
+  }
+
+  // Send-time enforcement of the plan's monthly email volume cap — see
+  // lib/billing/limits.ts's isWithinMonthlyEmailLimit. Checked here, not
+  // just at campaign-create/edit time (assertWithinDailySendLimit only
+  // bounds *configured* daily capacity), so a user genuinely cannot exceed
+  // their plan's real monthly quota after a campaign is already running.
+  // Never marks the lead failed/needs_review — the cap resets next
+  // calendar month, so this pushes next_send_at out to then and releases
+  // the claim lease, rather than leaving it to be immediately reclaimed
+  // and re-checked on every cron tick for the rest of the month.
+  if (!(await isWithinMonthlyEmailLimit(supabase, campaign.user_id))) {
+    console.error("[send-worker] skipped, monthly email limit reached", {
+      campaignLeadId: campaignLead.id,
+      userId: campaign.user_id,
+    });
+    const now = new Date();
+    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    await updateCampaignLead(supabase, campaignLead.id, {
+      next_send_at: nextMonthStart.toISOString(),
       locked_until: null,
     });
     return "skipped";

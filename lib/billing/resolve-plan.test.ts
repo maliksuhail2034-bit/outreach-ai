@@ -31,7 +31,7 @@ async function freshGetPlanForOrganization() {
 
 describe("getPlanForOrganization", () => {
   beforeEach(() => {
-    vi.stubEnv("STRIPE_PRICE_STARTER_MONTHLY", "price_starter_monthly");
+    vi.stubEnv("STRIPE_PRICE_STARTER_1MONTH", "price_starter_1month");
   });
 
   afterEach(() => {
@@ -48,7 +48,7 @@ describe("getPlanForOrganization", () => {
   it("returns the matching paid plan for an active subscription", async () => {
     const getPlanForOrganization = await freshGetPlanForOrganization();
     const { client } = createMockClient({
-      data: { status: "active", stripe_price_id: "price_starter_monthly" },
+      data: { status: "active", stripe_price_id: "price_starter_1month" },
       error: null,
     });
     const plan = await getPlanForOrganization(client, "org-1");
@@ -58,7 +58,7 @@ describe("getPlanForOrganization", () => {
   it("still grants the paid plan while past_due — Stripe's dunning window, not an immediate cutoff", async () => {
     const getPlanForOrganization = await freshGetPlanForOrganization();
     const { client } = createMockClient({
-      data: { status: "past_due", stripe_price_id: "price_starter_monthly" },
+      data: { status: "past_due", stripe_price_id: "price_starter_1month" },
       error: null,
     });
     const plan = await getPlanForOrganization(client, "org-1");
@@ -68,7 +68,7 @@ describe("getPlanForOrganization", () => {
   it("falls back to free once Stripe gives up (canceled)", async () => {
     const getPlanForOrganization = await freshGetPlanForOrganization();
     const { client } = createMockClient({
-      data: { status: "canceled", stripe_price_id: "price_starter_monthly" },
+      data: { status: "canceled", stripe_price_id: "price_starter_1month" },
       error: null,
     });
     const plan = await getPlanForOrganization(client, "org-1");
@@ -78,7 +78,7 @@ describe("getPlanForOrganization", () => {
   it("falls back to free for unpaid", async () => {
     const getPlanForOrganization = await freshGetPlanForOrganization();
     const { client } = createMockClient({
-      data: { status: "unpaid", stripe_price_id: "price_starter_monthly" },
+      data: { status: "unpaid", stripe_price_id: "price_starter_1month" },
       error: null,
     });
     const plan = await getPlanForOrganization(client, "org-1");

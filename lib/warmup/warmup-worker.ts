@@ -10,6 +10,9 @@ import {
   getWarmupMessageByProviderMessageId,
   listDueWarmupReplies,
   countWarmupMessagesSentToday,
+  listWarmupMessagesSentOnDate,
+  countWarmupMessagesReceivedOnDate,
+  upsertWarmupStat,
   listWarmupProfiles,
   getMailboxCredentials,
 } from "@/lib/db";
@@ -21,6 +24,7 @@ import { WARMUP_ENGINE_ORGANIZATION_ID } from "./owner-scope";
 import { forecastNextRamp, randomizedNextSendDelayMinutes } from "./scheduler";
 import { canTransition, nextStageForStatusChange, transition } from "./state-machine";
 import { calculateWarmupScore } from "./scoring";
+import { computeDailyWarmupStats } from "./stats";
 import { INITIAL_TEMPLATES, REPLY_TEMPLATES, pickTemplate } from "./templates";
 import type { WarmupStage } from "./types";
 
@@ -225,7 +229,79 @@ async function processWarmupProfile(
     }
   }
 
+  try {
+    await recordDailyWarmupStats(supabase, profile, now, dryRun);
+  } catch (error) {
+    // Stats aggregation is analytics on top of the real warmup work above,
+    // not core warmup behavior — a transient failure here (DB hiccup,
+    // network blip) must never turn an already-successful send/reply/ramp
+    // cycle into a profile the cron summary reports as skipped. Mirrors
+    // pollInboundWarmupMessages's own per-mailbox soft-skip below: log and
+    // move on, `outcome` (and thus this profile's sent/repliesSent/bounced/
+    // paused tally) is unaffected either way.
+    console.error("[warmup-worker] stats aggregation failed", {
+      warmupProfileId: profile.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   return outcome;
+}
+
+// Final step of a profile's cycle: refresh today's warmup_stats row.
+// Recomputed from
+// warmup_messages on every cycle rather than incremented — same "derive,
+// don't drift" reasoning as countWarmupMessagesSentToday above — so
+// upsertWarmupStat's (warmup_profile_id, stat_date) conflict target always
+// replaces today's row with the correct total instead of double-counting.
+// Runs unconditionally (not just when this cycle sent something): the
+// inbound poll above can flip a reply_decision from 'pending' to 'replied'
+// with no new send of its own, which still changes today's replyRate.
+// Failure here is isolated by the caller (processWarmupProfile) — this
+// function itself still throws on error so dry-run/real-run behavior and
+// the raw failure signal stay intact for whichever caller does the catching.
+async function recordDailyWarmupStats(
+  supabase: Client,
+  profile: Tables<"warmup_profiles">,
+  now: Date,
+  dryRun: boolean,
+): Promise<void> {
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const endOfDay = new Date(now);
+  endOfDay.setUTCHours(23, 59, 59, 999);
+
+  const [sentMessages, emailsReceived] = await Promise.all([
+    listWarmupMessagesSentOnDate(supabase, profile.id, startOfDay.toISOString(), endOfDay.toISOString()),
+    countWarmupMessagesReceivedOnDate(supabase, profile.mailbox_id, startOfDay.toISOString(), endOfDay.toISOString()),
+  ]);
+
+  const stats = computeDailyWarmupStats(sentMessages, emailsReceived);
+  // bounceRate/spamRate are omitted — see lib/warmup/stats.ts's header
+  // comment on why neither has a real signal to average yet.
+  const warmupScore = calculateWarmupScore({
+    stage: profile.stage as WarmupStage,
+    targetDailyVolume: profile.target_daily_volume,
+    currentDailyVolume: profile.current_daily_volume,
+    replyRate: stats.replyRate,
+  });
+  const statDate = startOfDay.toISOString().slice(0, 10);
+
+  if (dryRun) {
+    console.log("[warmup-worker] dry-run: would upsert warmup_stats", { warmupProfileId: profile.id, statDate, ...stats, warmupScore });
+    return;
+  }
+
+  await upsertWarmupStat(supabase, {
+    warmup_profile_id: profile.id,
+    organization_id: profile.organization_id,
+    stat_date: statDate,
+    emails_sent: stats.emailsSent,
+    emails_received: stats.emailsReceived,
+    reply_rate: stats.replyRate,
+    positive_interactions: stats.positiveInteractions,
+    warmup_score: warmupScore,
+  });
 }
 
 function isDue(nextSendAt: string | null, now: Date): boolean {

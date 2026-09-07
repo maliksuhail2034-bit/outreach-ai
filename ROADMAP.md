@@ -1829,6 +1829,77 @@ Planned
     which uses the identical classes and is now confirmed working.
     Commit `8b1d561` is published on `origin/main`; local `HEAD` was
     verified equal to `origin/main` after the push.
+- **Sequence merge-tag placeholder fix (2026-08-14, commit `d5f1837`).**
+  The sequence step editor's example placeholder read `{{firstName}}`
+  (camelCase) while the real merge-tag engine (`lib/email/merge-tags.ts`)
+  only recognizes `{{first_name}}` (snake_case) — corrected the placeholder
+  text in `components/sequences/sequence-step-form.tsx` so what a user sees
+  as an example actually resolves when sent. No merge-tag logic changed.
+- **Unlimited owner account override (2026-08-15, commit `a9f03e0`).**
+  `lib/billing/resolve-plan.ts` now special-cases one hardcoded
+  organization id (`INTERNAL_UNLIMITED_ORGANIZATION_ID` — the operator's own
+  workspace) to an internal plan with no mailbox/lead/campaign/daily-send
+  cap, bypassing the Stripe subscription lookup entirely for that one
+  organization. Exists because this environment has no Stripe price ids
+  configured yet and the operator's own account isn't a paying customer;
+  every other organization's billing/plan-resolution path is unchanged. No
+  schema, RLS, or Stripe change.
+- **Microsoft 365 mailbox connect hidden until OAuth is configured
+  (2026-08-19, commit `ba6fc73`).** `MICROSOFT_OAUTH_CLIENT_ID`/`SECRET`
+  aren't set in production yet (see the Microsoft 365 / Outlook Integration
+  entry above — production validation is still pending on that same gate),
+  so clicking "Connect Microsoft 365" 500'd with an unhandled error.
+  `app/(app)/mailboxes/page.tsx`/`mailbox-list.tsx` now hide that connect
+  option when the env vars are absent, and `app/api/oauth/microsoft/start`
+  redirects back to `/mailboxes` with a friendly error if the route is ever
+  hit directly instead of 500ing. No change to the OAuth flow itself once
+  those env vars are actually configured.
+- **Mailbox Warmup Engine — real send/receive automation, COMPLETE
+  (2026-08-26, commit `aefb7f9`).** The execution layer behind the
+  previously cosmetic `/warmup` UI and state machine (see Mailbox
+  management above): a claim-based cron worker
+  (`lib/warmup/warmup-worker.ts`, `app/api/cron/warmup-cycle`, every 15
+  minutes) that advances each enabled profile's ramp/stage, polls IMAP for
+  inbound peer warmup mail using its own cursor
+  (`warmup_profiles.imap_last_uid`/`imap_uid_validity`, independent of the
+  real reply-sync pipeline's own cursor so the two can never race on the
+  same mailbox), sends templated auto-replies threaded via
+  `In-Reply-To`/`References`, and starts new peer-to-peer conversations
+  among the organization's own enabled mailboxes. Every send is ledgered in
+  a new `warmup_messages` table via a new `claim_due_warmup_sends()` atomic
+  -claim function (`for update skip locked`, mirroring `claim_due_sends()`),
+  both purely additive — never touches `claim_due_sends()`/`campaign_leads`
+  /`send_attempts`/`email_events`. A bounce auto-pauses a profile
+  immediately; three consecutive non-bounce failures auto-pause it too.
+  Scoped to one hardcoded organization id (`WARMUP_ENGINE_ORGANIZATION_ID`,
+  same precedent as the billing override above), not a general product
+  feature yet. Ships with a `WARMUP_DRY_RUN` env var that runs the full
+  cycle and logs what it would do without sending, mutating volume, or
+  advancing IMAP cursors, for safe end-to-end verification before real
+  sending. **Historical warmup volume/reply-rate charts were still an
+  honest empty state at this commit** — nothing wrote to `warmup_stats` yet
+  (see Warmup Stats Aggregation, immediately below).
+- **Warmup Stats Aggregation.** `insertWarmupStat()` (`lib/db/warmup.ts`)
+  had no caller after the Warmup Engine above shipped — a gap surfaced by a
+  read-only codebase audit. Fixed by adding a final step to
+  `processWarmupProfile()` (`recordDailyWarmupStats`) that recomputes
+  today's `emails_sent`/`emails_received`/`reply_rate`/
+  `positive_interactions`/`warmup_score` from `warmup_messages` on every
+  cycle and writes them via a new `upsertWarmupStat()`, upserting on the
+  table's own `(warmup_profile_id, stat_date)` unique constraint — mirrors
+  `upsertDailyRollup()`'s shape exactly, so a re-run within the same day
+  replaces that day's row instead of erroring on a duplicate insert.
+  `bounce_rate`/`spam_rate` are deliberately left `null`: a failed/bounced
+  send is never inserted into `warmup_messages` (`sendWarmupMessage` only
+  inserts a row on success) and nothing detects spam-folder placement, so
+  there is no real signal to average for either — a computed 0% would
+  misreport "not measured" as "measured zero". The mailbox analytics page's
+  "Warmup daily volume" chart needed no change — it already read from
+  `listWarmupStats()`. New pure module `lib/warmup/stats.ts`
+  (`computeDailyWarmupStats`) plus tests; `npm run typecheck`/`lint`/`test`
+  all passed (555 tests, 73 files). **Implemented in this session; not yet
+  committed** — see CHANGELOG.md once it lands, and this entry's status if
+  it changes before then.
 
 ## Current milestone
 
@@ -1891,10 +1962,6 @@ System work is currently approved.
   domain verification results. The reputation-provider seam (inbox
   placement, blacklist, spam testing, reputation score) is architecture
   only — every signal is `null` until a real provider is connected.
-- **Warmup** — state machine, schema, and per-mailbox ramp/forecast
-  analytics exist; scheduled warmup send automation and the stats
-  -aggregation worker (`warmup_stats` has no writer yet) are not built, so
-  historical warmup volume charts render an honest empty state today.
 
 ## Not started
 
@@ -1913,7 +1980,11 @@ System work is currently approved.
   from git history on 2026-08-01 after an earlier session was interrupted
   before either file was written to disk, then backfilled again on
   2026-08-02 to cover nine commits (`10638d1`–`0852ddf`) that had landed
-  without a doc update.
+  without a doc update, and a third time on 2026-09-07 (a read-only audit's
+  finding) to cover five commits (`d5f1837`, `a9f03e0`, `ba6fc73`,
+  `aefb7f9`, `d447f2b`) that had landed since the last doc update
+  (`c6e6984`) without one — see Done and CHANGELOG.md for the backfilled
+  entries.
 
 ## Notes
 

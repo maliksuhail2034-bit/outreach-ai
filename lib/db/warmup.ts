@@ -158,11 +158,11 @@ export async function countWarmupMessagesSentToday(supabase: Client, warmupProfi
 }
 
 // --- Warmup stats ------------------------------------------------------------
-// Architecture only — no pipeline writes these yet (see the migration:
-// warmup_stats has no insert/update/delete policy for the RLS-scoped
-// client). Provided as the ready-made read/write seam for a future
-// stats-aggregation worker, the same way the rest of this file exists
-// before anything in the UI actually calls it.
+// Populated by the warmup-cycle worker itself (lib/warmup/warmup-worker.ts's
+// recordDailyWarmupStats), recomputed from warmup_messages on every cycle
+// rather than incremented — same "derive, don't drift" reasoning
+// countWarmupMessagesSentToday above already documents — so a re-run within
+// the same day converges on the correct total instead of drifting.
 
 export async function listWarmupStats(supabase: Client, organizationId: string, warmupProfileId: string) {
   const { data, error } = await supabase
@@ -175,10 +175,56 @@ export async function listWarmupStats(supabase: Client, organizationId: string, 
   return data ?? [];
 }
 
-// Service-role-only write — warmup_stats has no insert policy for the
-// RLS-scoped client. Reserved for a future stats-aggregation worker;
-// nothing calls this yet.
-export async function insertWarmupStat(supabase: Client, values: TablesInsert<"warmup_stats">) {
-  const result = await supabase.from("warmup_stats").insert(values).select("*").single();
+// The raw rows one day's stats aggregation needs for a single profile —
+// message_type and reply_decision are the only columns
+// computeDailyWarmupStats (lib/warmup/stats.ts) reads. Bounded to
+// [startOfDayIso, endOfDayIso] so the worker can ask for "today" on every
+// cycle without re-scanning the profile's whole history.
+export async function listWarmupMessagesSentOnDate(
+  supabase: Client,
+  warmupProfileId: string,
+  startOfDayIso: string,
+  endOfDayIso: string,
+) {
+  const { data, error } = await supabase
+    .from("warmup_messages")
+    .select("message_type, reply_decision")
+    .eq("from_warmup_profile_id", warmupProfileId)
+    .gte("sent_at", startOfDayIso)
+    .lte("sent_at", endOfDayIso);
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Count-only counterpart for the "received" side of the same day — this
+// mailbox as a peer's recipient, mirroring countWarmupMessagesSentToday's
+// count()-not-fetch shape.
+export async function countWarmupMessagesReceivedOnDate(
+  supabase: Client,
+  mailboxId: string,
+  startOfDayIso: string,
+  endOfDayIso: string,
+) {
+  const { count, error } = await supabase
+    .from("warmup_messages")
+    .select("*", { count: "exact", head: true })
+    .eq("to_mailbox_id", mailboxId)
+    .gte("sent_at", startOfDayIso)
+    .lte("sent_at", endOfDayIso);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// Service-role-only write — warmup_stats has no insert/update policy for the
+// RLS-scoped client. Upserts on the table's own (warmup_profile_id,
+// stat_date) unique constraint, mirroring upsertDailyRollup's shape exactly,
+// so an overlapping or later-that-day cron tick replaces today's row instead
+// of erroring on a duplicate insert.
+export async function upsertWarmupStat(supabase: Client, values: TablesInsert<"warmup_stats">) {
+  const result = await supabase
+    .from("warmup_stats")
+    .upsert(values, { onConflict: "warmup_profile_id,stat_date" })
+    .select("*")
+    .single();
   return unwrap<Tables<"warmup_stats">>(result);
 }

@@ -3,6 +3,145 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-09-06 — Polimatiq Rebrand & Marketing Landing Page (Commit: d447f2b)
+
+- **Public marketing site**: the root route (`app/page.tsx`) now renders a
+  real signed-out landing page instead of unconditionally redirecting to
+  `/login` — new `components/marketing/` components (`SiteHeader`, `Hero`,
+  `ProblemSection`, `Workflow`, `Features`, `ProductShowcase`,
+  `PricingPreview`, `FinalCta`, `SiteFooter`, `Container`). An
+  already-authenticated visitor hitting `/` is unaffected — still
+  redirected straight to `/dashboard`.
+- **`app/layout.tsx`** gains real page metadata: title/description, Open
+  Graph, and Twitter card tags, all built from a `PRODUCT_NAME`-derived
+  `SITE_TITLE`/`SITE_DESCRIPTION`, plus `metadataBase` derived from
+  `NEXT_PUBLIC_APP_URL` — by design, so a future domain change only needs
+  that one env var updated, not a code change.
+- **OutReach AI → Polimatiq rebrand completed** across the authenticated
+  app and auth flow: `components/marketing/product-name.ts`'s
+  `PRODUCT_NAME` constant (already the single source of truth for the
+  marketing site) is now also read by the pages/components that still had
+  a literal `"outreach-ai"`/`"OutReach AI"` string — the analytics pages
+  (organization, campaign, mailbox, domain), `/settings/ai`,
+  `/settings/integrations`, `/settings/verification`, the profile
+  settings form, the login/signup pages, `ai-providers-panel.tsx`,
+  `verification-providers-panel.tsx`, and `webhook-integration-form.tsx`.
+  `components/shell/sidebar.tsx` and `mobile-nav.tsx`'s brand mark also
+  changed (the "O" monogram and "OutReach AI" wordmark → "P" / "Polimatiq").
+- **Launch-readiness UI accuracy fixes**, bundled into the same commit:
+  - `components/mailboxes/mailbox-form.tsx` — removed the "Enable warmup"
+    toggle on the mailbox connect form. It never actually controlled the
+    real warmup engine (`warmup_profiles` is a separate table, keyed by
+    mailbox, only ever written by `/warmup`'s own actions) — replaced with
+    a plain link to the real `/warmup` page.
+  - `components/deliverability/score-badge.tsx` — added a `measured` prop;
+    a domain/mailbox that has never actually been checked now renders "Not
+    yet measured" instead of a destructive-red `0/100`, which previously
+    misrepresented "no data yet" as a failing score. `domain-health-list
+    .tsx`/`mailbox-health-list.tsx` now pass `measured={false}` for
+    unchecked rows.
+  - A couple of dashboard/deliverability copy lines that overstated what
+    the product currently does were corrected (copy only, no logic
+    change).
+- **Verification**: `npm run typecheck` and `npm run lint` per the
+  commit's own standard checks; not independently re-verified as part of
+  this backfill.
+
+## 2026-08-26 — Mailbox Warmup Engine (Commit: aefb7f9)
+
+- **The execution layer behind the previously cosmetic `/warmup` UI and
+  state machine.** New `lib/warmup/warmup-worker.ts`
+  (`runWarmupCycleWorker`) and `app/api/cron/warmup-cycle`
+  (`.github/workflows/cron-warmup-cycle.yml`, every 15 minutes) — same
+  auth/heartbeat/`job_runs` shape as every other cron route, via the
+  existing `runCronJob` wrapper.
+- **One cycle, per claimed profile**: advances ramp/stage (reuses
+  `forecastNextRamp`/`canTransition`/`calculateWarmupScore` exactly as the
+  existing `/warmup` UI actions already did — this only makes the numbers
+  real by finally persisting them on a schedule); polls this mailbox's
+  real IMAP inbox for newly-arrived peer warmup mail using a **new,
+  separate IMAP cursor** (`warmup_profiles.imap_last_uid`/
+  `imap_uid_validity`) so it can never race with the real reply-sync
+  pipeline's own cursor on the same physical mailbox; sends any replies
+  now due (templated, threaded via `In-Reply-To`/`References`); and,
+  volume/schedule permitting, starts one new conversation with a randomly
+  -selected enabled peer mailbox in the same organization.
+- **New `warmup_messages` table** (`supabase/migrations/
+  20260826100000_warmup_engine.sql`) — the send/receive ledger this
+  feature needs, since it doesn't fit `warmup_events` (a closed 4-value
+  audit-log enum) or `warmup_stats` (daily aggregates only). New
+  `claim_due_warmup_sends(organization_id, limit)` function claims due
+  profiles atomically (`for update skip locked`, mirroring
+  `claim_due_sends()`/`claim_mailboxes_for_reply_sync()`) so an
+  overlapping cron invocation can never double-process the same profile.
+  New `warmup_profiles` columns: `locked_until` (claim lease),
+  `next_send_at`, `last_ramp_increase_at` (deliberately kept separate from
+  `last_activity_at`, which is bumped on every message — reusing it would
+  reset the 24h ramp timer on every send and the ramp would never
+  advance), `consecutive_failures`, and this feature's own
+  `imap_uid_validity`/`imap_last_uid`.
+- **Isolation, by design**: nothing here touches `claim_due_sends()`/
+  `campaign_leads`/`send_attempts`/`email_events`, or
+  `mailboxes.imap_last_uid` — a fully separate accounting trail from the
+  real campaign pipeline.
+- **Failure handling**: a bounce auto-pauses the profile immediately (an
+  address-level rejection means something is genuinely wrong, not worth
+  retrying blindly); any other failure auto-pauses once three consecutive
+  failures accumulate. Both log a `warmup_events` warning.
+- **Scoped to one hardcoded organization** — `lib/warmup/owner-scope.ts`'s
+  `WARMUP_ENGINE_ORGANIZATION_ID`, the same organization id as
+  `lib/billing/resolve-plan.ts`'s `INTERNAL_UNLIMITED_ORGANIZATION_ID`
+  (2026-08-15, below) — not a general product feature yet.
+- **`WARMUP_DRY_RUN` env var**: when set to exactly `"true"`, the worker
+  runs the full claim → ramp-check → peer-selection → templating →
+  threading-header logic and logs what it would send/reply, without
+  calling the SMTP/IMAP providers or writing `warmup_messages`/mutating
+  `current_daily_volume`/IMAP cursors/`next_send_at` — used for safe
+  end-to-end verification before any real sending.
+- **Second, small migration** (`20260826110000_job_runs_warmup_cycle.sql`)
+  widens `job_runs.job`'s check constraint to accept the new
+  `'warmup-cycle'` value, same pattern already used for `'analytics
+  -rollup'`/`'retention-cleanup'`.
+- **Gap left behind, found by a later audit**: `warmup_stats` still had no
+  writer at this commit, so historical warmup volume/reply-rate charts
+  kept rendering an honest empty state — see "Warmup Stats Aggregation"
+  once that change lands.
+
+## 2026-08-19 — Hide Microsoft 365 Connect Until OAuth Is Configured (Commit: ba6fc73)
+
+- **Bug**: `MICROSOFT_OAUTH_CLIENT_ID`/`SECRET` aren't set in production,
+  so clicking "Connect Microsoft 365" threw an unhandled error and
+  500'd.
+- **Fix**: `app/(app)/mailboxes/page.tsx` and `components/mailboxes/
+  mailbox-list.tsx` now hide the "Connect Microsoft 365" option when
+  those env vars are absent, and `app/api/oauth/microsoft/start/route.ts`
+  redirects back to `/mailboxes` with a friendly error if the route is
+  ever hit directly instead of 500ing. No change to the OAuth flow
+  itself, Gmail's connect option, or the manual SMTP/IMAP connect path.
+
+## 2026-08-15 — Unlimited Owner Account Override (Commit: a9f03e0)
+
+- **`lib/billing/resolve-plan.ts`** now special-cases one hardcoded
+  organization id — `INTERNAL_UNLIMITED_ORGANIZATION_ID`, the operator's
+  own workspace — to an internal "Unlimited" plan (no mailbox/lead/
+  campaign/daily-send cap), returned before the Stripe subscription
+  lookup runs at all. Exists because this environment has no Stripe price
+  ids configured yet (see `lib/billing/plans.ts`) and the operator's own
+  account isn't a paying customer.
+- Every other organization's plan resolution is unchanged — the override
+  is a single early-return keyed on one literal organization id, not an
+  env var, role, or email check, so it cannot apply to any other account,
+  including future real customers. No schema, RLS, or Stripe change.
+
+## 2026-08-14 — Sequence Merge Tag Placeholder Fix (Commit: d5f1837)
+
+- `components/sequences/sequence-step-form.tsx`'s Body field example
+  placeholder read `Hi {{firstName}}, ...` (camelCase); the real
+  merge-tag engine (`lib/email/merge-tags.ts`) only resolves snake_case
+  tags. Corrected to `Hi {{first_name}}, ...` so the example shown to a
+  user is actually valid once sent. One line changed; no merge-tag logic
+  touched.
+
 ## 2026-08-14 — Design System — Phase 6: Orange → Premium Purple Rebrand, Complete (Commit: 8b1d561)
 
 - **Sixth phase of the same visual-design refinement (Phase 5: Premium

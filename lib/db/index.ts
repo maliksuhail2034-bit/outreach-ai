@@ -1,5 +1,6 @@
 export * from "./shared";
 export * from "./billing";
+export * from "./billing-v2";
 export * from "./profiles";
 export * from "./settings";
 export * from "./domains";

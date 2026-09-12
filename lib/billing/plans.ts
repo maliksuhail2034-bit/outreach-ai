@@ -161,3 +161,42 @@ export function getPlanByPriceId(priceId: string): Plan | null {
 export function getPriceId(planId: PlanId, interval: BillingInterval): string | null {
   return PLANS[planId].priceIds[interval];
 }
+
+// ---------------------------------------------------------------------------
+// Razorpay plan-id configuration (additive — PLANS/Plan above stay exactly
+// as they were, Stripe-only, unchanged). Razorpay Plans are created
+// manually in the Razorpay Dashboard, never provisioned by this app — see
+// RAZORPAY_PLAN_<PLAN>_<INTERVAL> in .env.example, mirroring
+// STRIPE_PRICE_<PLAN>_<INTERVAL> above exactly. Kept as its own separate
+// lookup table (not merged into Plan.priceIds) so this addition can never
+// change Plan's shape, getPlanByPriceId's Stripe-only behavior, or any
+// existing test. A Razorpay plan_id is opaque provider configuration only —
+// see subscriptions_v2.provider_plan_id — never used to determine product
+// access; internal_plan_id/billing_interval (attached to the Razorpay
+// Subscription's own `notes` at checkout time, see
+// app/(app)/billing/razorpay-actions.ts) remain the source of truth.
+function razorpayPlanIdsFor(planEnvPrefix: string): Record<BillingInterval, string | null> {
+  return {
+    "1_month": process.env[`RAZORPAY_PLAN_${planEnvPrefix}_1MONTH`] ?? null,
+    "3_month": process.env[`RAZORPAY_PLAN_${planEnvPrefix}_3MONTH`] ?? null,
+    "6_month": process.env[`RAZORPAY_PLAN_${planEnvPrefix}_6MONTH`] ?? null,
+    "12_month": process.env[`RAZORPAY_PLAN_${planEnvPrefix}_12MONTH`] ?? null,
+  };
+}
+
+const RAZORPAY_PLAN_IDS: Record<PaidPlanId, Record<BillingInterval, string | null>> = {
+  starter: razorpayPlanIdsFor("STARTER"),
+  growth: razorpayPlanIdsFor("GROWTH"),
+  pro: razorpayPlanIdsFor("PRO"),
+  scale: razorpayPlanIdsFor("SCALE"),
+};
+
+// Opaque Razorpay Plan id for a given internal plan + interval, or null if
+// that combination hasn't been created in the Razorpay Dashboard yet — same
+// "not configured yet" degrade-gracefully precedent as getPriceId/Stripe
+// (the checkout action treats null the same way createCheckoutSessionAction
+// treats a missing Stripe price id: a clear "not available yet" error, not
+// a crash).
+export function getRazorpayPlanId(planId: PaidPlanId, interval: BillingInterval): string | null {
+  return RAZORPAY_PLAN_IDS[planId][interval];
+}

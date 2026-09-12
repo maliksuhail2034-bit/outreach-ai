@@ -11,7 +11,7 @@ import {
   listCampaigns,
 } from "@/lib/db";
 import { getPlanForOrganization } from "@/lib/billing/resolve-plan";
-import { UNLIMITED } from "@/lib/billing/plans";
+import { BILLING_INTERVALS, PAID_PLAN_IDS, UNLIMITED, getRazorpayPlanId } from "@/lib/billing/plans";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +56,17 @@ export default async function BillingPage() {
 
   const dailySendTotal = (campaigns ?? []).reduce((sum, campaign) => sum + campaign.daily_limit, 0);
   const isPaidPlan = plan.id !== "free";
+
+  // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is server-only (not NEXT_PUBLIC_), so it
+  // must be resolved here (a Server Component) and passed down as data —
+  // PlanList is a Client Component and calling getRazorpayPlanId() from
+  // there would silently always return null in the browser bundle.
+  const razorpayPlanIds = Object.fromEntries(
+    PAID_PLAN_IDS.map((planId) => [
+      planId,
+      Object.fromEntries(BILLING_INTERVALS.map((interval) => [interval, getRazorpayPlanId(planId, interval)])),
+    ]),
+  ) as Record<(typeof PAID_PLAN_IDS)[number], Record<(typeof BILLING_INTERVALS)[number], string | null>>;
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -121,7 +132,7 @@ export default async function BillingPage() {
 
       <FadeIn delay={0.15} className="space-y-3">
         <h2 className="font-semibold tracking-tight">Plans</h2>
-        <PlanList currentPlanId={plan.id} />
+        <PlanList currentPlanId={plan.id} razorpayPlanIds={razorpayPlanIds} />
       </FadeIn>
     </div>
   );

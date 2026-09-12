@@ -3,12 +3,21 @@
 import { useState } from "react";
 import { CheckIcon } from "lucide-react";
 
-import { BILLING_INTERVALS, PAID_PLAN_IDS, PLANS, UNLIMITED, type BillingInterval, type PlanId } from "@/lib/billing/plans";
+import {
+  BILLING_INTERVALS,
+  PAID_PLAN_IDS,
+  PLANS,
+  UNLIMITED,
+  type BillingInterval,
+  type PaidPlanId,
+  type PlanId,
+} from "@/lib/billing/plans";
 import { calculateIntervalPrice, formatCents } from "@/lib/billing/pricing";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckoutButton } from "./checkout-button";
+import { RazorpayCheckoutButton } from "./razorpay-checkout-button";
 
 function limitLine(label: string, value: number) {
   return value === UNLIMITED ? `Unlimited ${label}` : `${value.toLocaleString()} ${label}`;
@@ -21,7 +30,17 @@ const INTERVAL_LABEL: Record<BillingInterval, string> = {
   "12_month": "12 months",
 };
 
-export function PlanList({ currentPlanId }: { currentPlanId: PlanId }) {
+export function PlanList({
+  currentPlanId,
+  razorpayPlanIds,
+}: {
+  currentPlanId: PlanId;
+  // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is a server-only env var — resolved in
+  // the Server Component (app/(app)/billing/page.tsx) and passed down as
+  // plain data, since this component is a Client Component and reading it
+  // here directly would always see `undefined` in the browser bundle.
+  razorpayPlanIds: Record<PaidPlanId, Record<BillingInterval, string | null>>;
+}) {
   const [interval, setInterval] = useState<BillingInterval>("1_month");
 
   return (
@@ -49,6 +68,7 @@ export function PlanList({ currentPlanId }: { currentPlanId: PlanId }) {
           const plan = PLANS[planId];
           const isCurrent = currentPlanId === planId;
           const priceId = plan.priceIds[interval];
+          const razorpayPlanId = razorpayPlanIds[planId][interval];
           const price = plan.launchPriceCents !== null ? calculateIntervalPrice(plan.launchPriceCents, interval) : null;
 
           return (
@@ -91,15 +111,32 @@ export function PlanList({ currentPlanId }: { currentPlanId: PlanId }) {
                   ))}
                 </ul>
               </CardContent>
-              <CardFooter>
+              <CardFooter className="flex flex-col gap-2">
                 {isCurrent ? (
                   <Button variant="outline" className="w-full" disabled>
                     Current plan
                   </Button>
                 ) : (
-                  <CheckoutButton planId={planId} interval={interval} disabled={!priceId}>
-                    {priceId ? "Upgrade" : "Coming soon"}
-                  </CheckoutButton>
+                  <>
+                    <CheckoutButton planId={planId} interval={interval} disabled={!priceId}>
+                      {priceId ? "Upgrade" : "Coming soon"}
+                    </CheckoutButton>
+                    {/* Razorpay is Test Mode only right now (see
+                        RAZORPAY_PLAN_<PLAN>_<INTERVAL> in .env.example) — this
+                        only renders once a plan/interval actually has a
+                        configured Razorpay plan id, same "degrade gracefully"
+                        precedent as the Stripe button's `disabled={!priceId}`
+                        above. Kept as a second, independent button rather than
+                        a payment-method toggle inside CheckoutButton: the two
+                        providers have genuinely different checkout mechanics
+                        (redirect vs. client-side modal), matching why
+                        RazorpayCheckoutButton is its own component. */}
+                    {razorpayPlanId && (
+                      <RazorpayCheckoutButton planId={planId} interval={interval}>
+                        Pay with Razorpay (test)
+                      </RazorpayCheckoutButton>
+                    )}
+                  </>
                 )}
               </CardFooter>
             </Card>

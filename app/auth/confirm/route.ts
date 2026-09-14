@@ -10,8 +10,11 @@ import { createClient } from "@/lib/supabase/server";
 // point here instead of the default Supabase-hosted confirmation URL:
 //   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/dashboard
 // (type=recovery&next=/reset-password for the "Reset Password" template.)
-// See CLAUDE.md — this is a one-time dashboard configuration step, not
-// something this codebase can set on its own.
+// Locally this is already wired up — see supabase/config.toml's
+// [auth.email.template.confirmation]/[auth.email.template.recovery] and
+// supabase/templates/*.html. For staging/prod this is a one-time manual
+// step in the Supabase Dashboard's Email Templates (see CLAUDE.md) — it
+// cannot be set from this codebase for a project this repo isn't linked to.
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const tokenHash = searchParams.get("token_hash");

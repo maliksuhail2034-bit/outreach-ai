@@ -228,25 +228,36 @@ never hand-edit schema directly against a live project.
 - **Foreign keys** are always explicit with an `on delete` behavior chosen
   deliberately (`cascade` for owned child rows, `restrict`/`set null`
   otherwise) — no implicit orphaned rows.
-- **Auth email confirmation is a two-part setup**, and both parts must stay
-  in sync or the confirmation link 404s on the first click (works on a
-  retry only because the account was actually confirmed server-side before
-  the bad redirect):
-  1. `supabase/config.toml`'s `[auth].site_url`/`additional_redirect_urls`
-     (local) or the Supabase Dashboard's Authentication → URL Configuration
-     (staging/prod) must exactly match `NEXT_PUBLIC_APP_URL` — Supabase
-     matches `emailRedirectTo`/`redirectTo` by exact string against this
-     allow-list and silently falls back to bare `site_url` (dropping the
-     path) if it doesn't match.
-  2. The Supabase Dashboard's Authentication → Email Templates → "Confirm
-     signup" and "Reset Password" templates must link to this app's own
-     `app/auth/confirm/route.ts` — `{{ .SiteURL }}/auth/confirm?token_hash={{
-     .TokenHash }}&type=signup&next=/dashboard` (swap `type=recovery&next=
-     /reset-password` for the reset-password template) — instead of the
-     default `{{ .ConfirmationURL }}`, which points at Supabase's own hosted
-     `/auth/v1/verify` and never reaches this route at all. This is a
-     one-time manual dashboard step per environment; it cannot be set from
-     this codebase or `supabase/config.toml`.
+- **Auth email confirmation depends on the email template linking to
+  `app/auth/confirm/route.ts`, not just URL config.** The confirmation-link
+  "404s on the first click, works on a retry" bug's real root cause: the
+  *default* `{{ .ConfirmationURL }}` template points at Supabase's own hosted
+  `/auth/v1/verify`, which always redirects to bare `site_url` (path
+  stripped) on completion — it never reaches this app's route at all. Fixing
+  `site_url`/`additional_redirect_urls` to match `NEXT_PUBLIC_APP_URL` (both
+  now done in `supabase/config.toml`) does **not** fix this by itself —
+  confirmed by local repro: `additional_redirect_urls` is not consulted by
+  the mailer's default link at all, even for a byte-identical allow-list
+  entry. The actual fix is the email template itself linking directly to
+  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=
+  /dashboard` (swap `type=recovery&next=/reset-password` for the
+  reset-password template), bypassing `{{ .ConfirmationURL }}` entirely.
+  - **Local**: already fixed — `supabase/config.toml`'s
+    `[auth.email.template.confirmation]`/`[auth.email.template.recovery]`
+    point at `supabase/templates/confirmation.html`/`recovery.html`, which
+    use exactly that link shape. Verified end-to-end via a real
+    `/auth/v1/recover` call inspected through Mailpit: the emailed link now
+    lands on `/auth/confirm?token_hash=...&type=recovery&next=/reset-password`
+    and completes with a 307 straight to `/reset-password`, no 404. Takes
+    effect only after `supabase stop && supabase start` (GoTrue reads
+    config.toml once at container start, not live).
+  - **Staging/prod**: this is a one-time manual step per environment in the
+    Supabase Dashboard → Authentication → Email Templates → "Confirm
+    signup" and "Reset Password" — edit each to the link shape above. Cannot
+    be set from this codebase for a remote project; `site_url`/Redirect URLs
+    there should still be kept in sync with that environment's
+    `NEXT_PUBLIC_APP_URL` regardless, for any other flow (magic link, email
+    change) that does still use the default template.
 
 ## 9. Git workflow
 

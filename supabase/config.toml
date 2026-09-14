@@ -154,24 +154,24 @@ max_indexes = 5
 
 [auth]
 enabled = true
-# The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
-# in emails. Must match NEXT_PUBLIC_APP_URL (.env.local) exactly — Supabase
-# matches redirect_to/emailRedirectTo by exact string against this allow-list
-# (see additional_redirect_urls below); a scheme/host mismatch (e.g. this
-# being 127.0.0.1 while the app sends localhost) makes Supabase silently drop
-# the requested redirect and fall back to this bare site_url, stripping the
-# path app/auth/confirm/route.ts depends on — root cause of the "first click
-# 404s, second click works" confirmation bug (confirmed via local repro:
-# admin.generateLink with redirect_to="http://localhost:3000/auth/confirm?..."
-# came back rewritten to "http://127.0.0.1:3000" with no path).
+# The base URL of your website — also what {{ .SiteURL }} resolves to inside
+# email templates (see auth.email.template.confirmation/recovery below, which
+# is the actual fix for the confirmation-link bug). Must match
+# NEXT_PUBLIC_APP_URL (.env.local): a mismatch (e.g. this being 127.0.0.1
+# while the app sends localhost) still matters for any flow that falls back
+# to it (magic_link/email_change use the default {{ .ConfirmationURL }}
+# template, not yet customized below).
 site_url = "http://localhost:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-# Wildcarded and covering both hostnames so emailRedirectTo/redirectTo values
-# built from NEXT_PUBLIC_APP_URL (lib/actions/auth.ts) are always honored,
-# regardless of whether a developer's browser/tooling uses localhost or
-# 127.0.0.1.
+# NOTE: confirmed via local repro that this allow-list is NOT consulted by the
+# mailer's default {{ .ConfirmationURL }} link (redirect_to came back
+# stripped to bare site_url even for a byte-identical entry here) — it does
+# not fix the confirmation-link bug on its own; see the comment above
+# auth.email.template.confirmation below for the actual fix. Kept wildcarded
+# for both local hostnames as a general safety net for whatever *does*
+# consult it (OAuth-style redirects).
 additional_redirect_urls = ["http://localhost:3000/**", "http://127.0.0.1:3000/**"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
@@ -259,6 +259,29 @@ otp_expiry = 3600
 # [auth.email.template.invite]
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
+
+# GOTRUE_URI_ALLOW_LIST (additional_redirect_urls above) is NOT consulted by
+# the mailer's default {{ .ConfirmationURL }} link — confirmed by local repro
+# (admin.generateLink AND a real /auth/v1/recover call both still returned
+# redirect_to stripped to bare site_url even for a byte-identical allow-list
+# entry). {{ .ConfirmationURL }} always points at Supabase's own hosted
+# /auth/v1/verify with redirect_to forced down to site_url, never reaching
+# app/auth/confirm/route.ts at all — this is what actually causes the "first
+# click 404s" bug, not just the site_url/redirect_to mismatch config.toml
+# alone already fixes. The only working fix is what route.ts's own comment
+# already said: link directly to this app's route with token_hash + type,
+# bypassing {{ .ConfirmationURL }} entirely. Verified working locally via
+# supabase/templates/confirmation.html + recovery.html below (real signup/
+# recovery email links now land on /auth/confirm?token_hash=...&type=...).
+# The Supabase Dashboard's own Email Templates must be edited the same way
+# for staging/prod — see CLAUDE.md §8.
+[auth.email.template.confirmation]
+subject = "Confirm your signup"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Reset your password"
+content_path = "./supabase/templates/recovery.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]

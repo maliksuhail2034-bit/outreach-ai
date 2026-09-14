@@ -24,6 +24,12 @@ const PROVIDER = "razorpay";
 // exists. Any event not in this set is acknowledged and recorded (so
 // Razorpay doesn't keep retrying it) but otherwise ignored — see the
 // default branch below.
+//
+// There is deliberately no "subscription.expired" here — confirmed directly
+// against razorpay.com/docs/webhooks/subscriptions and .../subscriptions/
+// states that no such event exists (see lib/billing/razorpay-status.ts's
+// `expired` entry for the full citation and why it's unreachable for this
+// app's subscriptions regardless).
 const HANDLED_EVENTS = new Set([
   "subscription.activated",
   "subscription.charged",

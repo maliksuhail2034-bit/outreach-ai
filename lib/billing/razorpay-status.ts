@@ -40,6 +40,18 @@ const RAZORPAY_STATUS_MAP: Record<string, NormalizedSubscriptionStatus> = {
   halted: "suspended",
   paused: "suspended",
   cancelled: "cancelled",
+  // Confirmed via razorpay.com/docs/payments/subscriptions/states and
+  // razorpay.com/docs/webhooks/subscriptions (checked directly, not from
+  // memory): Razorpay has NO webhook event for a subscription entering
+  // "expired" — the 10 documented subscription webhook events don't include
+  // one (compare invoice.expired/payment_link.expired/payout_link.expired,
+  // which DO exist for other resource types). A subscription only expires
+  // when its create-time `start_at` passes before the customer completes
+  // authentication — this app's own subscriptions.create() call
+  // (razorpay-actions.ts) never sets `start_at`, so no subscription this app
+  // creates can ever reach "expired" in practice. Kept mapped anyway, purely
+  // defensively, in case a status value ever shows up in the entity payload
+  // of an event this app does handle.
   expired: "expired",
   completed: "completed",
 };

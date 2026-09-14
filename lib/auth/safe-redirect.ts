@@ -8,15 +8,30 @@
 // `next` would genuinely send the victim's browser there after a real,
 // successful token verification).
 //
-// Deliberately only allows a same-origin relative path, rejecting the two
-// real bypass shapes browsers resolve as external even though they start
-// with "/": a protocol-relative URL ("//evil.com" -> resolves to
-// "https://evil.com") and its backslash variant ("/\evil.com", which every
-// major browser normalizes to "//evil.com" before navigating).
+// Deliberately only allows a same-origin relative path, rejecting the real
+// bypass shapes browsers resolve as external even though they start with
+// "/": a protocol-relative URL ("//evil.com" -> resolves to
+// "https://evil.com"), its backslash variant ("/\evil.com", which every
+// major browser normalizes to "//evil.com" before navigating), and the same
+// two shapes hidden behind an ASCII tab/newline/CR ("/\t/evil.com",
+// "/\n/evil.com", "/\r/evil.com", anywhere in the string, not just right
+// after the leading slash).
+//
+// The tab/newline/CR case is not theoretical — confirmed exploitable
+// end-to-end against a real Chrome browser with a genuine, valid Supabase
+// recovery token: app/auth/confirm/route.ts's redirect(next) put
+// "/\t/evil.com" verbatim into the Location header, and Chrome navigated to
+// http://evil.com. This is the WHATWG URL Standard's own first parsing
+// step ("remove all ASCII tab or newline") — every browser strips these
+// characters from anywhere in a URL before resolving it, so validation must
+// check the same stripped form the browser will actually see, not the raw
+// string, or a check for a leading "//"/"/\\" is trivially bypassed by
+// splitting it with a stripped character.
 export function isSafeRedirectPath(next: string | null): next is string {
   if (!next) return false;
-  if (!next.startsWith("/")) return false;
-  if (next.startsWith("//") || next.startsWith("/\\")) return false;
+  const stripped = next.replace(/[\t\n\r]/g, "");
+  if (!stripped.startsWith("/")) return false;
+  if (stripped.startsWith("//") || stripped.startsWith("/\\")) return false;
   return true;
 }
 

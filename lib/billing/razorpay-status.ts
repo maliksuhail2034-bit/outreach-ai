@@ -3,10 +3,13 @@
 // (do not scatter `if (status === ...)` checks across the webhook route or
 // anywhere else). This module makes NO access-grant decision itself — it
 // only produces the value subscriptions_v2.normalized_status stores.
-// lib/billing/resolve-plan.ts (deliberately untouched in this phase) is
-// still the only place that decides real product access, and it still
-// reads only the legacy `subscriptions` table — see the Phase boundary
-// notes in app/api/webhooks/razorpay/route.ts.
+// lib/billing/resolve-plan.ts is the only place that decides real product
+// access — as of the provider-agnostic subscription resolution work, it's a
+// thin wrapper around lib/billing/subscription-view.ts's
+// getActiveSubscriptionView(), which reads both the legacy `subscriptions`
+// table and this table (subscriptions_v2) and resolves precedence between
+// them, so a Razorpay subscription genuinely does grant real product
+// access, not just billing-page display.
 
 export type NormalizedSubscriptionStatus =
   | "pending"
@@ -24,8 +27,8 @@ export type NormalizedSubscriptionStatus =
 // retries are in progress — a different concept from this app's normalized
 // "pending" (which means "not yet paid at all") — so it intentionally maps
 // to "past_due" instead, mirroring how the legacy Stripe integration treats
-// past_due as still access-granting (see resolve-plan.ts's ACTIVE_STATUSES
-// comment). "paused" (a merchant/dashboard-initiated pause) and "halted"
+// past_due as still access-granting (see subscription-view.ts's
+// GRANTING_STATUSES). "paused" (a merchant/dashboard-initiated pause) and "halted"
 // (retries exhausted) are semantically different reasons but both result in
 // no access, so both map to "suspended" — the normalized vocabulary doesn't
 // distinguish them further in this phase.

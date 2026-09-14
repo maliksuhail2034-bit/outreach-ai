@@ -46,12 +46,13 @@ export async function upsertBillingCustomerV2(
   return unwrap<Tables<"billing_customers_v2">>(result);
 }
 
-// No row means the organization has no confirmed subscription on any
-// provider yet — callers that need "the current plan" during this phase
-// should keep reading the legacy `subscriptions` table via
-// lib/billing/resolve-plan.ts (untouched); this is only for the Razorpay
-// checkout action's duplicate-prevention check and the webhook's own
-// upsert-by-organization_id below.
+// No row means the organization has no confirmed Razorpay/PayPal
+// subscription yet — callers that need "the current plan" should go through
+// lib/billing/resolve-plan.ts's getPlanForOrganization() (which reads both
+// this table and the legacy Stripe `subscriptions` table via
+// subscription-view.ts), not this function directly. This one is only for
+// the Razorpay checkout action's duplicate-prevention check and the
+// webhook's own upsert-by-organization_id below.
 export async function getSubscriptionV2(supabase: Client, organizationId: string) {
   const { data, error } = await supabase
     .from("subscriptions_v2")

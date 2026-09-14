@@ -228,6 +228,25 @@ never hand-edit schema directly against a live project.
 - **Foreign keys** are always explicit with an `on delete` behavior chosen
   deliberately (`cascade` for owned child rows, `restrict`/`set null`
   otherwise) — no implicit orphaned rows.
+- **Auth email confirmation is a two-part setup**, and both parts must stay
+  in sync or the confirmation link 404s on the first click (works on a
+  retry only because the account was actually confirmed server-side before
+  the bad redirect):
+  1. `supabase/config.toml`'s `[auth].site_url`/`additional_redirect_urls`
+     (local) or the Supabase Dashboard's Authentication → URL Configuration
+     (staging/prod) must exactly match `NEXT_PUBLIC_APP_URL` — Supabase
+     matches `emailRedirectTo`/`redirectTo` by exact string against this
+     allow-list and silently falls back to bare `site_url` (dropping the
+     path) if it doesn't match.
+  2. The Supabase Dashboard's Authentication → Email Templates → "Confirm
+     signup" and "Reset Password" templates must link to this app's own
+     `app/auth/confirm/route.ts` — `{{ .SiteURL }}/auth/confirm?token_hash={{
+     .TokenHash }}&type=signup&next=/dashboard` (swap `type=recovery&next=
+     /reset-password` for the reset-password template) — instead of the
+     default `{{ .ConfirmationURL }}`, which points at Supabase's own hosted
+     `/auth/v1/verify` and never reaches this route at all. This is a
+     one-time manual dashboard step per environment; it cannot be set from
+     this codebase or `supabase/config.toml`.
 
 ## 9. Git workflow
 

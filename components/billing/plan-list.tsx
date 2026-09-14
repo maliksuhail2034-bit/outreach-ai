@@ -116,27 +116,28 @@ export function PlanList({
                   <Button variant="outline" className="w-full" disabled>
                     Current plan
                   </Button>
+                ) : razorpayPlanId ? (
+                  // Razorpay is the active payment provider (Stripe was
+                  // dropped — priceId below is null for every plan/interval
+                  // until Stripe is reconfigured, if ever). A configured
+                  // Razorpay plan id means this plan/interval is genuinely
+                  // purchasable right now, so it gets the real, primary
+                  // action instead of sitting under a misleading "Coming
+                  // soon" Stripe button. Test Mode only right now (see
+                  // NEXT_PUBLIC_RAZORPAY_KEY_ID in .env.local) — labeled
+                  // accordingly rather than implying a live charge.
+                  <RazorpayCheckoutButton planId={planId} interval={interval}>
+                    Upgrade (test mode)
+                  </RazorpayCheckoutButton>
                 ) : (
-                  <>
-                    <CheckoutButton planId={planId} interval={interval} disabled={!priceId}>
-                      {priceId ? "Upgrade" : "Coming soon"}
-                    </CheckoutButton>
-                    {/* Razorpay is Test Mode only right now (see
-                        RAZORPAY_PLAN_<PLAN>_<INTERVAL> in .env.example) — this
-                        only renders once a plan/interval actually has a
-                        configured Razorpay plan id, same "degrade gracefully"
-                        precedent as the Stripe button's `disabled={!priceId}`
-                        above. Kept as a second, independent button rather than
-                        a payment-method toggle inside CheckoutButton: the two
-                        providers have genuinely different checkout mechanics
-                        (redirect vs. client-side modal), matching why
-                        RazorpayCheckoutButton is its own component. */}
-                    {razorpayPlanId && (
-                      <RazorpayCheckoutButton planId={planId} interval={interval}>
-                        Pay with Razorpay (test)
-                      </RazorpayCheckoutButton>
-                    )}
-                  </>
+                  // Neither provider has a plan id configured for this
+                  // plan/interval — nothing to sell yet, so "Coming soon" is
+                  // accurate rather than disabled-with-no-explanation. Stays
+                  // wired to Stripe so it starts working again unmodified if
+                  // STRIPE_PRICE_<PLAN>_<INTERVAL> is ever set.
+                  <CheckoutButton planId={planId} interval={interval} disabled={!priceId}>
+                    {priceId ? "Upgrade" : "Coming soon"}
+                  </CheckoutButton>
                 )}
               </CardFooter>
             </Card>

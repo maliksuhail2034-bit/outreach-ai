@@ -13,10 +13,12 @@ import { checkoutSchema, type CheckoutInput } from "@/lib/validations/billing";
 // "any row exists") lets an org whose old subscription genuinely ended
 // (cancelled/expired/completed) start a fresh checkout instead of being
 // permanently blocked by a stale row. Kept local rather than importing
-// lib/billing/resolve-plan.ts's ACTIVE_STATUSES: that set is explicitly
-// Stripe-status-shaped (its own comment says so) and this phase must not
-// couple the new Razorpay path to it — see the Phase boundary notes in
-// app/api/webhooks/razorpay/route.ts.
+// subscription-view.ts's GRANTING_STATUSES: that set is normalized-status
+// vocabulary for deciding product access (includes "trialing", which
+// Razorpay never produces per razorpay-status.ts), a different question
+// from "is there a non-terminal row to check a duplicate checkout against"
+// — the two happen to overlap but aren't the same concept, so keeping this
+// local avoids coupling a future change to one silently changing the other.
 const NON_TERMINAL_STATUSES = new Set(["pending", "active", "past_due"]);
 
 // Server Functions are reachable directly via POST regardless of which UI

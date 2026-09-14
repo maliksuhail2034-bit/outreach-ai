@@ -26,11 +26,24 @@ export function ManageRazorpaySubscriptionButton() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
+  // Cancellation is confirmed by the *Razorpay API call* succeeding, not by
+  // subscriptions_v2 reflecting it — that only happens once the
+  // subscription.cancelled webhook round-trips back to this app, which is
+  // not instant. router.refresh() right after a successful cancel can very
+  // plausibly re-render this button from the still-"active" row that
+  // existed before the webhook landed, inviting a confusing second
+  // cancel-on-an-already-cancelled-subscription attempt (Razorpay itself
+  // rejects that — not a data-integrity risk — but a bad, unnecessary
+  // error toast for a user who already succeeded). Tracked purely
+  // client-side, independent of whatever the refreshed server data says,
+  // for the rest of this component's lifetime.
+  const [cancelled, setCancelled] = useState(false);
 
   function handleCancel() {
     startTransition(async () => {
       try {
         await cancelRazorpaySubscriptionAction();
+        setCancelled(true);
         toast.success("Subscription cancelled.");
         setOpen(false);
         router.refresh();
@@ -38,6 +51,14 @@ export function ManageRazorpaySubscriptionButton() {
         toast.error(error instanceof Error ? error.message : "Couldn't cancel the subscription.");
       }
     });
+  }
+
+  if (cancelled) {
+    return (
+      <Button variant="outline" disabled>
+        Cancellation requested
+      </Button>
+    );
   }
 
   return (

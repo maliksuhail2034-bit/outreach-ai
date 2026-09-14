@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { ManageSubscriptionButton } from "@/components/billing/manage-subscription-button";
+import { ManageRazorpaySubscriptionButton } from "@/components/billing/manage-razorpay-subscription-button";
 import { PlanList } from "@/components/billing/plan-list";
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: "long", day: "numeric", year: "numeric" });
@@ -90,7 +91,13 @@ export default async function BillingPage() {
                 <Badge variant="secondary">{STATUS_LABEL[subscriptionView.normalizedStatus] ?? subscriptionView.normalizedStatus}</Badge>
               )}
             </div>
-            {isPaidPlan && <ManageSubscriptionButton />}
+            {isPaidPlan && subscriptionView.provider === "stripe" && <ManageSubscriptionButton />}
+            {isPaidPlan && subscriptionView.provider === "razorpay" && <ManageRazorpaySubscriptionButton />}
+            {/* provider === "paypal" (or null, which isPaidPlan already rules
+                out) renders no management action — PayPal has no
+                implementation in this codebase yet, and a subscriber on a
+                provider this app can't actually act on must never be shown
+                an action that looks like it would work. */}
           </CardHeader>
           {subscriptionView.currentPeriodEnd && (
             <CardContent className="flex items-center gap-2 text-sm text-muted-foreground">

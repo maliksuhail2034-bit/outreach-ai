@@ -91,3 +91,48 @@ export async function createRazorpaySubscriptionAction(
     throw new Error("Couldn't start checkout. Try again shortly or contact support.");
   }
 }
+
+// Provider-aware counterpart to app/(app)/billing/actions.ts's
+// createPortalSessionAction: Razorpay has no hosted customer portal to
+// redirect to (unlike Stripe), so "manage subscription" for a Razorpay
+// subscriber means cancelling directly through this app instead. Calls
+// Razorpay's own subscriptions.cancel API (a real, SDK-documented
+// capability — not fabricated) and deliberately does NOT write
+// subscriptions_v2 itself: per the same "only the webhook is authoritative"
+// architecture createRazorpaySubscriptionAction above already follows, the
+// subscription.cancelled event this call triggers is what
+// syncSubscriptionFromRazorpay (already wired in app/api/webhooks/razorpay/
+// route.ts) uses to update normalized_status — one writer, no drift between
+// what this action assumes happened and what actually did.
+//
+// Always cancels immediately (cancelAtCycleEnd=false), not at period end.
+// subscriptions_v2.cancel_at_period_end is hardcoded false for Razorpay
+// (see sync-subscription-v2.ts's own comment: Razorpay's Subscription
+// entity has no persistent "scheduled cancellation" field to read back, and
+// cancel_at_cycle_end=true doesn't fire subscription.cancelled until the
+// cycle genuinely ends) — a scheduled cancellation would leave this UI
+// silently showing "Active" for up to a full billing period with no way to
+// reflect that a cancellation is pending, which is worse than the
+// confirmation dialog this pairs with (ManageRazorpaySubscriptionButton)
+// being explicit that cancelling takes effect now.
+export async function cancelRazorpaySubscriptionAction(): Promise<void> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const organization = await getUserOrganization(supabase, user);
+
+  const subscription = await getSubscriptionV2(supabase, organization.id);
+  if (!subscription || subscription.provider !== "razorpay") {
+    throw new Error("No active Razorpay subscription found.");
+  }
+  if (!NON_TERMINAL_STATUSES.has(subscription.normalized_status)) {
+    throw new Error("This subscription is already cancelled or inactive.");
+  }
+
+  try {
+    await getRazorpayClient().subscriptions.cancel(subscription.provider_subscription_id, false);
+  } catch (error) {
+    console.error("[razorpay] failed to cancel subscription", error);
+    throw new Error("Couldn't cancel the subscription. Try again shortly or contact support.");
+  }
+}

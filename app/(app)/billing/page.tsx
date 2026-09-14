@@ -2,15 +2,9 @@ import { CalendarClockIcon, MailIcon, MegaphoneIcon, SendIcon, UsersIcon } from 
 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import {
-  countCampaigns,
-  countLeads,
-  countMailboxes,
-  getUserOrganization,
-  getSubscription,
-  listCampaigns,
-} from "@/lib/db";
+import { countCampaigns, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
 import { getPlanForOrganization } from "@/lib/billing/resolve-plan";
+import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, UNLIMITED, getRazorpayPlanId } from "@/lib/billing/plans";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
@@ -21,15 +15,20 @@ import { PlanList } from "@/components/billing/plan-list";
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: "long", day: "numeric", year: "numeric" });
 
+// Keyed on the canonical, provider-agnostic vocabulary from
+// lib/billing/subscription-view.ts — the only vocabulary this page ever
+// renders, whether the underlying subscription is legacy Stripe or
+// subscriptions_v2 (Razorpay). Note the canonical spelling is "cancelled",
+// not legacy's "canceled" — the display copy itself is unchanged.
 const STATUS_LABEL: Record<string, string> = {
+  pending: "Pending",
   active: "Active",
   trialing: "Trialing",
   past_due: "Payment past due",
-  canceled: "Canceled",
-  incomplete: "Incomplete",
-  incomplete_expired: "Expired",
-  unpaid: "Unpaid",
-  paused: "Paused",
+  suspended: "Suspended",
+  cancelled: "Canceled",
+  expired: "Expired",
+  completed: "Completed",
 };
 
 function usageValue(count: number, limit: number) {
@@ -45,9 +44,9 @@ export default async function BillingPage() {
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  const [plan, subscription, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
+  const [plan, subscriptionView, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
     getPlanForOrganization(supabase, organization.id),
-    getSubscription(supabase, organization.id),
+    getActiveSubscriptionView(supabase, organization.id),
     countMailboxes(supabase, user.id),
     countCampaigns(supabase, user.id),
     countLeads(supabase, user.id),
@@ -87,16 +86,18 @@ export default async function BillingPage() {
                 <CardTitle>Current plan</CardTitle>
                 <CardDescription>{plan.name}</CardDescription>
               </div>
-              {subscription && <Badge variant="secondary">{STATUS_LABEL[subscription.status] ?? subscription.status}</Badge>}
+              {subscriptionView.normalizedStatus && (
+                <Badge variant="secondary">{STATUS_LABEL[subscriptionView.normalizedStatus] ?? subscriptionView.normalizedStatus}</Badge>
+              )}
             </div>
             {isPaidPlan && <ManageSubscriptionButton />}
           </CardHeader>
-          {subscription?.current_period_end && (
+          {subscriptionView.currentPeriodEnd && (
             <CardContent className="flex items-center gap-2 text-sm text-muted-foreground">
               <CalendarClockIcon className="size-4" />
-              {subscription.cancel_at_period_end
-                ? `Cancels on ${dateFormatter.format(new Date(subscription.current_period_end))}`
-                : `Renews on ${dateFormatter.format(new Date(subscription.current_period_end))}`}
+              {subscriptionView.cancelAtPeriodEnd
+                ? `Cancels on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))}`
+                : `Renews on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))}`}
             </CardContent>
           )}
         </Card>

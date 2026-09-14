@@ -17,6 +17,7 @@ import {
 // covered by lib/db/organizations.test.ts).
 function createMockClient(overrides: {
   subscription?: { status: string; stripe_price_id: string } | null;
+  subscriptionV2?: Record<string, unknown> | null;
   countResult?: { count: number };
   campaigns?: { id: string; daily_limit: number }[];
   emailsSentCount?: number;
@@ -28,6 +29,7 @@ function createMockClient(overrides: {
     organization_members: { data: membership, error: null },
     organizations: { data: organization, error: null },
     subscriptions: { data: overrides.subscription ?? null, error: null },
+    subscriptions_v2: { data: overrides.subscriptionV2 ?? null, error: null },
     mailboxes: { count: overrides.countResult?.count ?? 0, error: null, data: null },
     campaigns: overrides.campaigns
       ? { data: overrides.campaigns, error: null }
@@ -92,6 +94,29 @@ describe("assertWithinMailboxLimit", () => {
       countResult: { count: 1 }, // over the free limit, under starter's
     });
     await expect(freshAssert(client, "user-1", "user@example.com")).resolves.toBeUndefined();
+  });
+
+  // Phase 2 coverage: proves limits.ts needed zero code changes to benefit
+  // from a Razorpay (subscriptions_v2) subscription — it only ever calls
+  // getPlanForOrganization(), which as of Phase 2 resolves through
+  // lib/billing/subscription-view.ts's getActiveSubscriptionView() and
+  // reads subscriptions_v2 directly, with no stripe_price_id/env
+  // involvement at all.
+  it("allows more mailboxes on a paid plan resolved from a Razorpay (subscriptions_v2) subscription, with no legacy subscription present", async () => {
+    const { client } = createMockClient({
+      subscription: null,
+      subscriptionV2: {
+        provider: "razorpay",
+        internal_plan_id: "starter",
+        normalized_status: "active",
+        current_period_end: null,
+        cancel_at_period_end: false,
+        updated_at: "2026-09-14T00:00:00.000Z",
+        id: "sub-v2-1",
+      },
+      countResult: { count: 1 }, // over the free limit, under starter's
+    });
+    await expect(assertWithinMailboxLimit(client, "user-1", "user@example.com")).resolves.toBeUndefined();
   });
 });
 

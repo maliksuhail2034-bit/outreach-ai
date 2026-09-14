@@ -7,6 +7,7 @@ import { getBillingCustomer, getUserOrganization } from "@/lib/db";
 import { getPriceId } from "@/lib/billing/plans";
 import { getStripeClient } from "@/lib/billing/stripe";
 import { checkoutSchema, type CheckoutInput } from "@/lib/validations/billing";
+import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client only ever offers
@@ -34,6 +35,7 @@ export async function createCheckoutSessionAction(input: CheckoutInput) {
   const supabase = await createClient();
 
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("billing:checkout", organization.id);
 
   const priceId = getPriceId(parsed.planId, parsed.interval);
   if (!priceId) {
@@ -70,6 +72,7 @@ export async function createPortalSessionAction() {
   const supabase = await createClient();
 
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("billing:manage", organization.id);
 
   const customer = await getBillingCustomer(supabase, organization.id);
   if (!customer) {

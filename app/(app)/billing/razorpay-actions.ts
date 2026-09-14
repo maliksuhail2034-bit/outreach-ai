@@ -7,6 +7,7 @@ import { getSubscriptionV2 } from "@/lib/db/billing-v2";
 import { getRazorpayPlanId } from "@/lib/billing/plans";
 import { getRazorpayClient, totalCountForInterval } from "@/lib/billing/razorpay";
 import { checkoutSchema, type CheckoutInput } from "@/lib/validations/billing";
+import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
 // Statuses that indicate the organization already has a confirmed,
 // non-terminal Razorpay subscription — checking against these (not just
@@ -45,6 +46,7 @@ export async function createRazorpaySubscriptionAction(
   const supabase = await createClient();
 
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("billing:checkout", organization.id);
 
   const razorpayPlanId = getRazorpayPlanId(parsed.planId, parsed.interval);
   if (!razorpayPlanId) {
@@ -122,6 +124,7 @@ export async function cancelRazorpaySubscriptionAction(): Promise<void> {
   const supabase = await createClient();
 
   const organization = await getUserOrganization(supabase, user);
+  await checkRateLimit("billing:manage", organization.id);
 
   const subscription = await getSubscriptionV2(supabase, organization.id);
   if (!subscription || subscription.provider !== "razorpay") {

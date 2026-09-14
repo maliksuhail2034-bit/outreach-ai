@@ -16,7 +16,9 @@ export type RateLimitScope =
   | "campaign:launch"
   | "campaign:enroll"
   | "campaign:resolve_send_attempt"
-  | "leads:import";
+  | "leads:import"
+  | "billing:checkout"
+  | "billing:manage";
 
 interface ScopeConfig {
   windowSeconds: number;
@@ -53,4 +55,17 @@ export const RATE_LIMIT_CONFIG: Record<RateLimitScope, ScopeConfig> = {
   "campaign:enroll": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
   "campaign:resolve_send_attempt": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
   "leads:import": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
+  // Starting a new subscription checkout — shared across both providers
+  // (createCheckoutSessionAction/Stripe, createRazorpaySubscriptionAction/
+  // Razorpay): each calls out to the provider's own create-session/
+  // create-subscription API, so an unthrottled org could otherwise hammer
+  // that provider's API with no benefit to a legitimate user, who only ever
+  // needs this a handful of times (initial purchase, a couple of retries
+  // after a failed/abandoned payment).
+  "billing:checkout": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
+  // Managing an existing subscription — shared across both providers
+  // (createPortalSessionAction/Stripe, cancelRazorpaySubscriptionAction/
+  // Razorpay). Same reasoning as billing:checkout; cancelling in particular
+  // is a real state-changing provider API call, not just a redirect.
+  "billing:manage": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
 };

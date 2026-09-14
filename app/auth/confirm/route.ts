@@ -2,6 +2,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 
 // Handles every email-link flow (signup confirmation, password recovery,
 // invites) via Supabase's token_hash + type OTP verification.
@@ -19,7 +20,10 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const tokenHash = searchParams.get("token_hash");
   const type = searchParams.get("type") as EmailOtpType | null;
-  const next = searchParams.get("next") ?? "/dashboard";
+  // `next` is attacker-controlled (an incoming query param, not something
+  // only this app ever sets) — see lib/auth/safe-redirect.ts for why an
+  // unvalidated value here is a real open redirect, not a theoretical one.
+  const next = resolveSafeRedirectPath(searchParams.get("next"), "/dashboard");
 
   if (tokenHash && type) {
     const supabase = await createClient();

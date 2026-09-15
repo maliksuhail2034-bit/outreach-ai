@@ -2,8 +2,20 @@ import type { Client } from "@/lib/db/shared";
 import { upsertBillingCustomerV2, upsertSubscriptionV2 } from "@/lib/db/billing-v2";
 import { normalizeRazorpaySubscriptionStatus } from "./razorpay-status";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, type BillingInterval, type PaidPlanId } from "./plans";
+import { ROUTE_CURRENCY } from "./currency";
 
 const PROVIDER = "razorpay";
+
+// This webhook handler is exclusively the Razorpay India payment route —
+// see the Razorpay architecture investigation: Indian payment rails
+// (UPI/Indian cards/netbanking) can only ever charge INR, and this
+// account's Razorpay Plans are always INR-denominated (see
+// lib/billing/currency.ts's ROUTE_CURRENCY). Hardcoded, not inferred from
+// any field on the webhook payload or user input — a future
+// Razorpay-International or PayPal sync function would hardcode its own
+// route's currency ("international" -> USD) the same way, in its own
+// module, rather than this one branching on provider/currency at runtime.
+const CURRENCY = ROUTE_CURRENCY.razorpay_india;
 
 // The subset of Razorpay's Subscription entity this webhook handler
 // actually reads — not the SDK's own Subscriptions.RazorpaySubscription
@@ -92,6 +104,7 @@ export async function syncSubscriptionFromRazorpay(
     provider_plan_id: subscription.plan_id,
     internal_plan_id: internalPlanId,
     billing_interval: billingInterval,
+    currency: CURRENCY,
     provider_status: subscription.status,
     normalized_status: normalizedStatus,
     current_period_start: unixToIso(subscription.current_start),

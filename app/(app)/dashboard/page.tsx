@@ -20,7 +20,9 @@ import {
   getSettings,
   listCampaigns,
   listSendAttempts,
+  type CampaignLeadActivitySummary,
 } from "@/lib/db";
+import { anyFailed, firstError, optionalRead } from "@/lib/db/resilient-read";
 import { getDisplayName } from "@/lib/user";
 import { getGreeting } from "@/lib/greeting";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -32,6 +34,13 @@ import { RecentCampaignsTable, type RecentCampaignRow } from "@/components/dashb
 import { RecentSendingActivity } from "@/components/dashboard/recent-sending-activity";
 import { DashboardTips } from "@/components/dashboard/dashboard-tips";
 import { WidgetErrorBoundary } from "@/components/ui/widget-error-boundary";
+import { ThrowIfFailed } from "@/components/ui/throw-if-failed";
+
+const EMPTY_ACTIVITY_SUMMARY: CampaignLeadActivitySummary = {
+  leadsCount: 0,
+  nextSendAt: null,
+  lastActivityAt: null,
+};
 
 const RECENT_CAMPAIGNS_LIMIT = 5;
 const RECENT_ACTIVITY_LIMIT = 8;
@@ -43,27 +52,47 @@ export default async function DashboardPage() {
   if (!user) return null;
 
   const supabase = await createClient();
+  // Every one of these is independent widget data, not something the page
+  // itself needs to function (unlike, say, app/(app)/campaigns/[campaignId]/
+  // page.tsx's core enrolled-leads read) — this is exactly the set of
+  // sections WidgetErrorBoundary below already isolates at render time. Each
+  // is wrapped in optionalRead so a single transient Supabase/PostgREST/
+  // network failure degrades just that section instead of rejecting this
+  // Promise.all and crashing the whole page (the "Something went wrong
+  // loading this page" production issue this fixes). A non-transient error —
+  // a real application/data bug — still propagates and fails the page, same
+  // as before.
   const [
-    profile,
-    settings,
-    leadCount,
-    campaigns,
-    mailboxCount,
-    emailsSentCount,
-    repliedCount,
-    failedSendsCount,
-    recentAttempts,
+    profileResult,
+    settingsResult,
+    leadCountResult,
+    campaignsResult,
+    mailboxCountResult,
+    emailsSentCountResult,
+    repliedCountResult,
+    failedSendsCountResult,
+    recentAttemptsResult,
   ] = await Promise.all([
-    getProfile(supabase, user.id),
-    getSettings(supabase, user.id),
-    countLeads(supabase, user.id),
-    listCampaigns(supabase, user.id),
-    countMailboxes(supabase, user.id),
-    countEmailEventsByType(supabase, "sent"),
-    countEmailEventsByType(supabase, "replied"),
-    countSendAttemptsByStatus(supabase, "failed"),
-    listSendAttempts(supabase, RECENT_ACTIVITY_LIMIT),
+    optionalRead(() => getProfile(supabase, user.id), null),
+    optionalRead(() => getSettings(supabase, user.id), null),
+    optionalRead(() => countLeads(supabase, user.id), 0),
+    optionalRead(() => listCampaigns(supabase, user.id), []),
+    optionalRead(() => countMailboxes(supabase, user.id), 0),
+    optionalRead(() => countEmailEventsByType(supabase, "sent"), 0),
+    optionalRead(() => countEmailEventsByType(supabase, "replied"), 0),
+    optionalRead(() => countSendAttemptsByStatus(supabase, "failed"), 0),
+    optionalRead(() => listSendAttempts(supabase, RECENT_ACTIVITY_LIMIT), []),
   ]);
+
+  const profile = profileResult.data;
+  const settings = settingsResult.data;
+  const leadCount = leadCountResult.data;
+  const campaigns = campaignsResult.data;
+  const mailboxCount = mailboxCountResult.data;
+  const emailsSentCount = emailsSentCountResult.data;
+  const repliedCount = repliedCountResult.data;
+  const failedSendsCount = failedSendsCountResult.data;
+  const recentAttempts = recentAttemptsResult.data;
 
   const displayName = getDisplayName(user, profile);
   const greeting = getGreeting(profile?.timezone);
@@ -78,21 +107,31 @@ export default async function DashboardPage() {
   // per campaign, not every enrolled lead row — getCampaignLeadActivitySummary
   // (Performance audit's P8) derives them via three small, already-indexed
   // lookups instead of fetching every campaign_leads row per campaign here.
-  const recentCampaignRows: RecentCampaignRow[] = await Promise.all(
+  // Each campaign's summary is fetched independently (optionalRead, not a
+  // bare Promise.all): before this fix, one campaign's summary failing
+  // transiently rejected the whole array and crashed the page, even though
+  // the other campaigns' summaries had already succeeded.
+  const recentCampaignRowResults = await Promise.all(
     campaignList.slice(0, RECENT_CAMPAIGNS_LIMIT).map(async (campaign) => {
-      const summary = await getCampaignLeadActivitySummary(supabase, campaign.id);
+      const summaryResult = await optionalRead(
+        () => getCampaignLeadActivitySummary(supabase, campaign.id),
+        EMPTY_ACTIVITY_SUMMARY,
+      );
+      const summary = summaryResult.data;
       const lastActivityCandidates = [campaign.updated_at, summary.lastActivityAt].filter(
         (value): value is string => value !== null,
       ).sort();
 
-      return {
+      const row: RecentCampaignRow = {
         campaign,
         leadsCount: summary.leadsCount,
         nextSendAt: summary.nextSendAt,
         lastActivity: lastActivityCandidates[lastActivityCandidates.length - 1],
       };
+      return { row, failed: summaryResult.failed, error: summaryResult.error };
     }),
   );
+  const recentCampaignRows = recentCampaignRowResults.map((result) => result.row);
 
   const checklistItems: ChecklistItem[] = [
     { id: "profile", label: "Complete your profile", done: Boolean(profile?.full_name), href: "/settings" },
@@ -111,6 +150,8 @@ export default async function DashboardPage() {
       description: "Campaigns you've created",
       emptyHint: "Create your first campaign.",
       isEmpty: campaignCount === 0,
+      failed: campaignsResult.failed,
+      error: campaignsResult.error,
     },
     {
       title: "Total leads",
@@ -119,6 +160,8 @@ export default async function DashboardPage() {
       description: "Total leads in your account",
       emptyHint: "Import your first lead list.",
       isEmpty: leadCount === 0,
+      failed: leadCountResult.failed,
+      error: leadCountResult.error,
     },
     {
       title: "Connected mailboxes",
@@ -127,6 +170,8 @@ export default async function DashboardPage() {
       description: "Sending inboxes connected",
       emptyHint: "Connect a sending mailbox.",
       isEmpty: mailboxCount === 0,
+      failed: mailboxCountResult.failed,
+      error: mailboxCountResult.error,
     },
     {
       title: "Emails sent",
@@ -135,6 +180,8 @@ export default async function DashboardPage() {
       description: "Successful sends across all campaigns",
       emptyHint: "Will appear once a campaign starts sending.",
       isEmpty: emailsSentCount === 0,
+      failed: emailsSentCountResult.failed,
+      error: emailsSentCountResult.error,
     },
     {
       title: "Replies",
@@ -143,6 +190,8 @@ export default async function DashboardPage() {
       description: "Replies detected across all campaigns",
       emptyHint: "Will appear once a lead replies.",
       isEmpty: repliedCount === 0,
+      failed: repliedCountResult.failed,
+      error: repliedCountResult.error,
     },
     {
       title: "Failed sends",
@@ -152,6 +201,8 @@ export default async function DashboardPage() {
       emptyHint: "No failed sends — nice.",
       isEmpty: failedSendsCount === 0,
       tone: "danger" as const,
+      failed: failedSendsCountResult.failed,
+      error: failedSendsCountResult.error,
     },
     {
       title: "Active campaigns",
@@ -160,8 +211,22 @@ export default async function DashboardPage() {
       description: "Campaigns currently sending",
       emptyHint: "Activate a campaign to start sending.",
       isEmpty: activeCampaignCount === 0,
+      // Derived from the same campaigns fetch as "Total campaigns" above.
+      failed: campaignsResult.failed,
+      error: campaignsResult.error,
     },
   ];
+
+  const checklistFailure = firstError(
+    profileResult,
+    settingsResult,
+    mailboxCountResult,
+    leadCountResult,
+    campaignsResult,
+  );
+  const recentCampaignsFailed =
+    campaignsResult.failed || anyFailed(...recentCampaignRowResults);
+  const recentCampaignsError = campaignsResult.error ?? recentCampaignRowResults.find((r) => r.failed)?.error;
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -171,16 +236,16 @@ export default async function DashboardPage() {
         <div className="space-y-6 lg:col-span-2">
           <FadeIn delay={0.05}>
             <WidgetErrorBoundary label="Setup checklist">
-              <SetupChecklist items={checklistItems} />
+              {checklistFailure ? <ThrowIfFailed error={checklistFailure} /> : <SetupChecklist items={checklistItems} />}
             </WidgetErrorBoundary>
           </FadeIn>
 
           <div className="@container">
             <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
-              {stats.map((stat, index) => (
+              {stats.map(({ failed, error, ...stat }, index) => (
                 <FadeIn key={stat.title} delay={0.1 + index * 0.05}>
                   <WidgetErrorBoundary label={stat.title}>
-                    <StatCard {...stat} />
+                    {failed ? <ThrowIfFailed error={error} /> : <StatCard {...stat} />}
                   </WidgetErrorBoundary>
                 </FadeIn>
               ))}
@@ -189,7 +254,11 @@ export default async function DashboardPage() {
 
           <FadeIn delay={0.4}>
             <WidgetErrorBoundary label="Recent campaigns">
-              <RecentCampaignsTable rows={recentCampaignRows} />
+              {recentCampaignsFailed ? (
+                <ThrowIfFailed error={recentCampaignsError} />
+              ) : (
+                <RecentCampaignsTable rows={recentCampaignRows} />
+              )}
             </WidgetErrorBoundary>
           </FadeIn>
 
@@ -209,7 +278,11 @@ export default async function DashboardPage() {
 
         <FadeIn delay={0.15} className="lg:col-span-1">
           <WidgetErrorBoundary label="Recent sending activity">
-            <RecentSendingActivity attempts={recentAttempts ?? []} />
+            {recentAttemptsResult.failed ? (
+              <ThrowIfFailed error={recentAttemptsResult.error} />
+            ) : (
+              <RecentSendingActivity attempts={recentAttempts ?? []} />
+            )}
           </WidgetErrorBoundary>
         </FadeIn>
       </div>

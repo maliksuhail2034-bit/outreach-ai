@@ -1,4 +1,5 @@
 import { BILLING_INTERVALS, type BillingInterval } from "./plans";
+import { usdCentsToInrPaise } from "./currency";
 
 // Pure pricing math — no database access, no Stripe call, nothing that
 // depends on which plan/interval combinations actually have a configured
@@ -88,4 +89,18 @@ export function calculateAllIntervalPrices(launchPriceCents: number): IntervalPr
 // every other price in this codebase today (no multi-currency support yet).
 export function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+// The exact INR paise amount Razorpay will charge for this plan/interval —
+// derived from the SAME totalCents calculateIntervalPrice() produces for
+// the USD price, converted once via lib/billing/currency.ts's fixed
+// USD_TO_INR_RATE. This is deliberately the only path to an INR amount
+// anywhere in the app: whatever this function returns for a given
+// (launchPriceCents, interval) is both what the checkout UI must disclose
+// to an Indian customer before payment AND what a Razorpay INR Plan for
+// that same plan/interval must be created with — a single source makes
+// "displayed INR amount != Razorpay Plan amount" structurally impossible
+// rather than something to keep in sync by hand.
+export function calculateIntervalPriceInrPaise(launchPriceCents: number, interval: BillingInterval): number {
+  return usdCentsToInrPaise(calculateIntervalPrice(launchPriceCents, interval).totalCents);
 }

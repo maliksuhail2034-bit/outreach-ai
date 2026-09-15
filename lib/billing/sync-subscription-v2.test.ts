@@ -70,11 +70,32 @@ describe("syncSubscriptionFromRazorpay", () => {
         provider_plan_id: "plan_test_starter_1m",
         internal_plan_id: "starter",
         billing_interval: "1_month",
+        currency: "INR",
         provider_status: "active",
         normalized_status: "active",
         cancel_at_period_end: false,
       }),
     );
+  });
+
+  it("always persists currency as INR — this sync path is exclusively the Razorpay India payment route", async () => {
+    // Not inferred from the webhook payload, notes, or any other input —
+    // Razorpay's Indian payment rails (UPI/Indian cards/netbanking) cannot
+    // charge anything but INR, so this is hardcoded at the source
+    // (lib/billing/currency.ts's ROUTE_CURRENCY.razorpay_india), same as
+    // `provider: "razorpay"` already is. Exercised across several distinct
+    // statuses/plans to confirm nothing about the specific subscription
+    // ever changes the persisted currency.
+    for (const overrides of [
+      {},
+      { status: "halted" },
+      { notes: { organization_id: "org-2", internal_plan_id: "scale", billing_interval: "12_month" } },
+    ] as const) {
+      const { client, upsertCallsByTable } = createMockClient();
+      await syncSubscriptionFromRazorpay(client, fakeSubscription(overrides));
+      const values = upsertCallsByTable.subscriptions_v2[0][0] as { currency: string };
+      expect(values.currency).toBe("INR");
+    }
   });
 
   it("converts current_start/current_end from unix seconds to ISO timestamps", async () => {

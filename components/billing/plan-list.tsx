@@ -12,7 +12,8 @@ import {
   type PaidPlanId,
   type PlanId,
 } from "@/lib/billing/plans";
-import { calculateIntervalPrice, formatCents } from "@/lib/billing/pricing";
+import { calculateIntervalPrice, calculateIntervalPriceInrPaise, formatCents } from "@/lib/billing/pricing";
+import { formatMoney } from "@/lib/billing/currency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -123,12 +124,33 @@ export function PlanList({
                   // Razorpay plan id means this plan/interval is genuinely
                   // purchasable right now, so it gets the real, primary
                   // action instead of sitting under a misleading "Coming
-                  // soon" Stripe button. Test Mode only right now (see
-                  // NEXT_PUBLIC_RAZORPAY_KEY_ID in .env.local) — labeled
-                  // accordingly rather than implying a live charge.
-                  <RazorpayCheckoutButton planId={planId} interval={interval}>
-                    Upgrade (test mode)
-                  </RazorpayCheckoutButton>
+                  // soon" Stripe button. No test/live wording here by
+                  // design — NEXT_PUBLIC_RAZORPAY_KEY_ID's rzp_test_/
+                  // rzp_live_ prefix determines what actually happens when
+                  // this button is pressed; the label doesn't try to track
+                  // that env-configured mode, so it can never say "test
+                  // mode" while a live key is quietly charging someone.
+                  <>
+                    {/* The site's canonical price stays USD everywhere else
+                        (see calculateIntervalPrice above) — Razorpay's
+                        Indian payment rails (UPI/Indian cards/netbanking)
+                        cannot charge a USD amount at all, so an Indian
+                        customer must see the real INR amount before paying.
+                        calculateIntervalPriceInrPaise() derives this from
+                        the SAME totalCents this card's USD price uses, so
+                        it can never disagree with what a Razorpay INR Plan
+                        for this plan/interval is configured to charge. */}
+                    {plan.launchPriceCents !== null && (
+                      <p className="text-center text-xs text-muted-foreground">
+                        Charged as{" "}
+                        {formatMoney(calculateIntervalPriceInrPaise(plan.launchPriceCents, interval), "INR")} via
+                        Razorpay (UPI, cards, netbanking)
+                      </p>
+                    )}
+                    <RazorpayCheckoutButton planId={planId} interval={interval}>
+                      Upgrade
+                    </RazorpayCheckoutButton>
+                  </>
                 ) : (
                   // Neither provider has a plan id configured for this
                   // plan/interval — nothing to sell yet, so "Coming soon" is

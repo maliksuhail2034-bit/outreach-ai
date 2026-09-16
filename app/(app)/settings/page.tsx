@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { BadgeCheckIcon, KeyRoundIcon, ShieldCheckIcon, WebhookIcon } from "lucide-react";
 
-import { getUser } from "@/lib/supabase/auth";
+import { getUser, getCachedProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getProfile, getSettings } from "@/lib/db";
+import { getSettings } from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,7 @@ export default async function SettingsPage() {
   if (!user) return null;
 
   const supabase = await createClient();
-  const [profile, settings] = await Promise.all([getProfile(supabase, user.id), getSettings(supabase, user.id)]);
+  const [profile, settings] = await Promise.all([getCachedProfile(user.id), getSettings(supabase, user.id)]);
 
   return (
     <div className="max-w-2xl space-y-6 sm:space-y-8">

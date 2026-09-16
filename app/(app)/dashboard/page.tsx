@@ -8,7 +8,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 
-import { getUser } from "@/lib/supabase/auth";
+import { getUser, getCachedProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   countEmailEventsByType,
@@ -16,7 +16,6 @@ import {
   countMailboxes,
   countSendAttemptsByStatus,
   getCampaignLeadActivitySummary,
-  getProfile,
   getSettings,
   listCampaigns,
   listSendAttempts,
@@ -62,6 +61,57 @@ export default async function DashboardPage() {
   // loading this page" production issue this fixes). A non-transient error —
   // a real application/data bug — still propagates and fails the page, same
   // as before.
+  //
+  // Each is kicked off immediately (assigned, not awaited) rather than
+  // awaited one at a time, plus a 10th derived promise below for the
+  // per-campaign activity summaries, which only actually depends on
+  // campaignsPromise. Chaining that off campaignsPromise directly — instead
+  // of awaiting this whole batch first and only starting it after — means
+  // the summary fan-out begins the moment campaigns resolves and runs
+  // concurrently with whichever of the other 9 reads are still in flight,
+  // instead of always waiting for the slowest of the 9 first.
+  const profilePromise = optionalRead(() => getCachedProfile(user.id), null);
+  const settingsPromise = optionalRead(() => getSettings(supabase, user.id), null);
+  const leadCountPromise = optionalRead(() => countLeads(supabase, user.id), 0);
+  const campaignsPromise = optionalRead(() => listCampaigns(supabase, user.id), []);
+  const mailboxCountPromise = optionalRead(() => countMailboxes(supabase, user.id), 0);
+  const emailsSentCountPromise = optionalRead(() => countEmailEventsByType(supabase, "sent"), 0);
+  const repliedCountPromise = optionalRead(() => countEmailEventsByType(supabase, "replied"), 0);
+  const failedSendsCountPromise = optionalRead(() => countSendAttemptsByStatus(supabase, "failed"), 0);
+  const recentAttemptsPromise = optionalRead(() => listSendAttempts(supabase, RECENT_ACTIVITY_LIMIT), []);
+
+  // Recent Campaigns table needs a lead count plus two extremal timestamps
+  // per campaign, not every enrolled lead row — getCampaignLeadActivitySummary
+  // (Performance audit's P8) derives them via three small, already-indexed
+  // lookups instead of fetching every campaign_leads row per campaign here.
+  // Each campaign's summary is fetched independently (optionalRead, not a
+  // bare Promise.all): before this fix, one campaign's summary failing
+  // transiently rejected the whole array and crashed the page, even though
+  // the other campaigns' summaries had already succeeded. Bounded to
+  // RECENT_CAMPAIGNS_LIMIT campaigns — never unbounded concurrency.
+  const recentCampaignRowsPromise = campaignsPromise.then((campaignsResult) =>
+    Promise.all(
+      (campaignsResult.data ?? []).slice(0, RECENT_CAMPAIGNS_LIMIT).map(async (campaign) => {
+        const summaryResult = await optionalRead(
+          () => getCampaignLeadActivitySummary(supabase, campaign.id),
+          EMPTY_ACTIVITY_SUMMARY,
+        );
+        const summary = summaryResult.data;
+        const lastActivityCandidates = [campaign.updated_at, summary.lastActivityAt].filter(
+          (value): value is string => value !== null,
+        ).sort();
+
+        const row: RecentCampaignRow = {
+          campaign,
+          leadsCount: summary.leadsCount,
+          nextSendAt: summary.nextSendAt,
+          lastActivity: lastActivityCandidates[lastActivityCandidates.length - 1],
+        };
+        return { row, failed: summaryResult.failed, error: summaryResult.error };
+      }),
+    ),
+  );
+
   const [
     profileResult,
     settingsResult,
@@ -72,16 +122,18 @@ export default async function DashboardPage() {
     repliedCountResult,
     failedSendsCountResult,
     recentAttemptsResult,
+    recentCampaignRowResults,
   ] = await Promise.all([
-    optionalRead(() => getProfile(supabase, user.id), null),
-    optionalRead(() => getSettings(supabase, user.id), null),
-    optionalRead(() => countLeads(supabase, user.id), 0),
-    optionalRead(() => listCampaigns(supabase, user.id), []),
-    optionalRead(() => countMailboxes(supabase, user.id), 0),
-    optionalRead(() => countEmailEventsByType(supabase, "sent"), 0),
-    optionalRead(() => countEmailEventsByType(supabase, "replied"), 0),
-    optionalRead(() => countSendAttemptsByStatus(supabase, "failed"), 0),
-    optionalRead(() => listSendAttempts(supabase, RECENT_ACTIVITY_LIMIT), []),
+    profilePromise,
+    settingsPromise,
+    leadCountPromise,
+    campaignsPromise,
+    mailboxCountPromise,
+    emailsSentCountPromise,
+    repliedCountPromise,
+    failedSendsCountPromise,
+    recentAttemptsPromise,
+    recentCampaignRowsPromise,
   ]);
 
   const profile = profileResult.data;
@@ -103,34 +155,6 @@ export default async function DashboardPage() {
     (campaign) => campaign.status === "active" || campaign.status === "completed",
   );
 
-  // Recent Campaigns table needs a lead count plus two extremal timestamps
-  // per campaign, not every enrolled lead row — getCampaignLeadActivitySummary
-  // (Performance audit's P8) derives them via three small, already-indexed
-  // lookups instead of fetching every campaign_leads row per campaign here.
-  // Each campaign's summary is fetched independently (optionalRead, not a
-  // bare Promise.all): before this fix, one campaign's summary failing
-  // transiently rejected the whole array and crashed the page, even though
-  // the other campaigns' summaries had already succeeded.
-  const recentCampaignRowResults = await Promise.all(
-    campaignList.slice(0, RECENT_CAMPAIGNS_LIMIT).map(async (campaign) => {
-      const summaryResult = await optionalRead(
-        () => getCampaignLeadActivitySummary(supabase, campaign.id),
-        EMPTY_ACTIVITY_SUMMARY,
-      );
-      const summary = summaryResult.data;
-      const lastActivityCandidates = [campaign.updated_at, summary.lastActivityAt].filter(
-        (value): value is string => value !== null,
-      ).sort();
-
-      const row: RecentCampaignRow = {
-        campaign,
-        leadsCount: summary.leadsCount,
-        nextSendAt: summary.nextSendAt,
-        lastActivity: lastActivityCandidates[lastActivityCandidates.length - 1],
-      };
-      return { row, failed: summaryResult.failed, error: summaryResult.error };
-    }),
-  );
   const recentCampaignRows = recentCampaignRowResults.map((result) => result.row);
 
   const checklistItems: ChecklistItem[] = [

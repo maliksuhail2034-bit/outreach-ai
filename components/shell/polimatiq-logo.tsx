@@ -1,15 +1,17 @@
 import { useId } from "react";
 
-// Official brand mark — SVG paths, gradient stops, typography, and viewBox
-// are the exact source provided by the brand owner and must not be edited
-// here. The only addition on top of that source is useId()-scoped
-// gradient/filter ids: the sidebar and mobile nav can both render this at
-// once, and a hardcoded id="polimatiqPurple"/"polimatiqGlow" would collide
-// across those two simultaneous instances (the second instance's <defs>
-// would win, but both <path>/<circle> "url(#...)" references end up
-// pointing at whichever one is currently in the DOM — visually harmless
-// today since both defs are identical, but fragile) — unique ids remove
-// that footgun without changing anything visual.
+// Official brand mark — SVG paths, gradient stops, glow, viewBox, and every
+// wordmark metric (fontSize/fontWeight/letterSpacing/x/y) are the exact
+// source provided by the brand owner and must not be edited here. Two
+// deliberate adaptations on top of that source, both confirmed necessary by
+// live inspection (see git history for the diagnosis) rather than redesign:
+//
+// - useId()-scoped gradient/filter ids: the sidebar and mobile nav can both
+//   render this at once, and a hardcoded id="polimatiqPurple"/"polimatiqGlow"
+//   would collide across those two simultaneous instances — unique ids
+//   remove that footgun without changing anything visual.
+// - The wordmark's fill and fontFamily (see below) are theme/mechanism
+//   adaptations, not design changes — see their own comments.
 export function PolimatiqLogo({
   width = 180,
   className = "",
@@ -93,14 +95,29 @@ export function PolimatiqLogo({
       {/* WORDMARK */}
       {/* ========================= */}
 
+      {/* Font: the source design specifies Satoshi, but this project never
+          loads it (no next/font import, no @font-face, no asset) — confirmed
+          by grepping the repo and by document.fonts on the live page.
+          Falling through a 'Satoshi','Geist','Inter' stack left the actual
+          rendered font an accident of which of those three happened to be
+          registered (only Geist was). Referencing the app's real Geist
+          variable directly makes that an intentional choice instead. */}
+      {/* Fill: the source design hardcodes #F7F7F8 (near-white), which reads
+          fine on the app's dark-mode sidebar but is nearly invisible against
+          the light-mode sidebar background (--sidebar ~99% lightness in
+          light mode) — confirmed visually. --color-sidebar-foreground is the
+          existing token this app already uses for "text on the sidebar
+          background" in both themes (0 0% 98%, ~equivalent to the original
+          #F7F7F8, in dark mode; 240 10% 3.9% in light mode), so it fixes
+          contrast without inventing a new color. */}
       <text
         x="170"
         y="132"
-        fontFamily="'Satoshi', 'Geist', 'Inter', sans-serif"
+        fontFamily="var(--font-geist-sans), sans-serif"
         fontSize="92"
         fontWeight="500"
         letterSpacing="-4"
-        fill="#F7F7F8"
+        fill="var(--color-sidebar-foreground)"
       >
         olimati
       </text>

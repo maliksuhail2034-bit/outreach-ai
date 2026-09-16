@@ -6,17 +6,15 @@ import { motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 import { navItems } from "./nav-items";
+import { PolimatiqLogo } from "./polimatiq-logo";
 
 export function Sidebar() {
   const pathname = usePathname();
 
   return (
     <aside className="fixed inset-y-0 z-40 hidden w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex">
-      <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-6 text-lg font-semibold">
-        <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-primary text-sm text-sidebar-primary-foreground">
-          P
-        </span>
-        Polimatiq
+      <div className="flex h-16 items-center border-b border-sidebar-border px-6">
+        <PolimatiqLogo width={120} />
       </div>
       <nav className="flex flex-1 flex-col gap-1.5 px-3 py-4">
         {navItems.map((item) => {

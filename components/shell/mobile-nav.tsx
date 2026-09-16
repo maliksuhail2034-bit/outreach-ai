@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { navItems } from "./nav-items";
+import { PolimatiqLogo } from "./polimatiq-logo";
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -23,11 +24,8 @@ export function MobileNav() {
       </SheetTrigger>
       <SheetContent side="left" className="w-64 gap-0 bg-sidebar p-0 text-sidebar-foreground">
         <SheetHeader className="border-b border-sidebar-border">
-          <SheetTitle className="flex items-center gap-2 text-left text-lg font-semibold">
-            <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-primary text-sm text-sidebar-primary-foreground">
-              P
-            </span>
-            Polimatiq
+          <SheetTitle className="flex items-center text-left">
+            <PolimatiqLogo width={120} />
           </SheetTitle>
         </SheetHeader>
         <nav className="flex flex-col gap-1.5 p-3">

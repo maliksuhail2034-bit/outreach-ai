@@ -89,6 +89,15 @@ export function CampaignSetupWizard({
     review: false,
   };
 
+  // Full lead rows (with actual first_name/company/etc. field data) for the
+  // leads already enrolled in this campaign — `leads` is the account's
+  // whole lead list (see the CampaignSetupWizard caller), so it's filtered
+  // down here the same way CampaignQueueView already does, purely so
+  // CampaignReviewStep's merge-tag "missing data" check has real data to
+  // reason about without a second query.
+  const enrolledLeadIds = new Set(campaignLeads.map((campaignLead) => campaignLead.lead_id));
+  const enrolledLeadDetails = leads.filter((lead) => enrolledLeadIds.has(lead.id));
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
@@ -146,6 +155,7 @@ export function CampaignSetupWizard({
         <CampaignReviewStep
           campaign={campaign}
           campaignLeads={campaignLeads}
+          leads={enrolledLeadDetails}
           mailboxes={mailboxes}
           sequenceSteps={sequenceSteps}
           sendingWindow={sendingWindow}

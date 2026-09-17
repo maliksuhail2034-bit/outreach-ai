@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useMemo, useTransition } from "react";
 import { toast } from "sonner";
 import { AlertTriangleIcon, InfoIcon } from "lucide-react";
 
@@ -10,12 +10,16 @@ import type { MailboxSafe } from "@/lib/db";
 import type { CampaignReadinessResult } from "@/lib/campaigns/readiness";
 import type { SendingWindow } from "@/lib/validations/sending-window";
 import { launchCampaignAction } from "@/app/(app)/campaigns/[campaignId]/actions";
+import { validateSequenceTemplates } from "@/lib/email/validate-template";
+import type { MergeTagLead } from "@/lib/email/merge-tags";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { TemplateValidationList } from "@/components/sequences/template-validation-list";
 
 type Campaign = Tables<"campaigns">;
 type CampaignLead = Tables<"campaign_leads">;
+type Lead = Tables<"leads">;
 type SequenceStep = Tables<"sequence_steps">;
 
 const DAY_LABEL: Record<string, string> = {
@@ -36,6 +40,7 @@ function delayLabel(dayDelay: number) {
 export function CampaignReviewStep({
   campaign,
   campaignLeads,
+  leads,
   mailboxes,
   sequenceSteps,
   sendingWindow,
@@ -43,6 +48,7 @@ export function CampaignReviewStep({
 }: {
   campaign: Campaign;
   campaignLeads: CampaignLead[];
+  leads: Lead[];
   mailboxes: MailboxSafe[];
   sequenceSteps: SequenceStep[];
   sendingWindow: SendingWindow;
@@ -56,6 +62,28 @@ export function CampaignReviewStep({
     : undefined;
   const sortedSteps = [...sequenceSteps].sort((a, b) => a.step_order - b.step_order);
   const windowDays = sendingWindow.days.map((day) => DAY_LABEL[day]).join(", ");
+
+  // Non-blocking template quality hints (unsupported/malformed merge tags,
+  // and — since this step has the actual enrolled leads' data — tags with
+  // no value for some of them). Deliberately separate from `readiness`:
+  // this never affects readiness.ready or the launch button below it, only
+  // what's shown above it. See lib/email/validate-template.ts (Batch 2).
+  const mergeTagLeads: MergeTagLead[] = useMemo(
+    () =>
+      leads.map((lead) => ({
+        first_name: lead.first_name,
+        last_name: lead.last_name,
+        email: lead.email,
+        company: lead.company,
+        title: lead.title,
+        custom_fields: lead.custom_fields as Record<string, unknown> | null,
+      })),
+    [leads],
+  );
+  const templateIssues = useMemo(
+    () => validateSequenceTemplates(sequenceSteps, mergeTagLeads),
+    [sequenceSteps, mergeTagLeads],
+  );
 
   function handleLaunch() {
     startTransition(async () => {
@@ -110,6 +138,13 @@ export function CampaignReviewStep({
             ))}
           </ul>
         </div>
+
+        {templateIssues.length > 0 && (
+          <div>
+            <p className="mb-2 text-sm text-muted-foreground">Template checks</p>
+            <TemplateValidationList issues={templateIssues} />
+          </div>
+        )}
 
         {readiness.errors.length > 0 && (
           <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">

@@ -134,6 +134,67 @@ describe("renderEmailContent", () => {
     });
   });
 
+  describe("clickable links", () => {
+    it("turns a bare https URL into a clickable, safe anchor", () => {
+      const result = renderEmailContent("Subject", "Check out https://example.com for details.", lead);
+      expect(result.html).toBe(
+        `<p>Check out <a href="https://example.com" target="_blank" rel="noopener noreferrer">https://example.com</a> for details.</p>`,
+      );
+    });
+
+    it("turns a bare http URL into a clickable, safe anchor", () => {
+      const result = renderEmailContent("Subject", "http://example.com", lead);
+      expect(result.html).toBe(
+        `<p><a href="http://example.com" target="_blank" rel="noopener noreferrer">http://example.com</a></p>`,
+      );
+    });
+
+    it("trims trailing sentence punctuation out of the link", () => {
+      const result = renderEmailContent("Subject", "Visit https://example.com/path, then reply.", lead);
+      expect(result.html).toBe(
+        `<p>Visit <a href="https://example.com/path" target="_blank" rel="noopener noreferrer">https://example.com/path</a>, then reply.</p>`,
+      );
+    });
+
+    it("preserves a query string's ampersand correctly as an escaped, still-functional href", () => {
+      const result = renderEmailContent("Subject", "https://example.com?a=1&b=2", lead);
+      expect(result.html).toBe(
+        `<p><a href="https://example.com?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">https://example.com?a=1&amp;b=2</a></p>`,
+      );
+    });
+
+    it("links a URL substituted in from lead data the same way", () => {
+      const leadWithUrlCompany: MergeTagLead = { ...lead, company: "https://acme.example.com" };
+      const result = renderEmailContent("Subject", "Learn more: {{company}}", leadWithUrlCompany);
+      expect(result.html).toBe(
+        `<p>Learn more: <a href="https://acme.example.com" target="_blank" rel="noopener noreferrer">https://acme.example.com</a></p>`,
+      );
+    });
+
+    it("never turns a javascript: URL into a link — it stays plain, escaped text", () => {
+      const result = renderEmailContent("Subject", "click javascript:alert(1) now", lead);
+      expect(result.html).not.toContain("<a ");
+      expect(result.html).toContain("javascript:alert(1)");
+    });
+
+    it("never turns a data: URL into a link — it stays plain, escaped text", () => {
+      const result = renderEmailContent("Subject", "data:text/html,<script>alert(1)</script>", lead);
+      expect(result.html).not.toContain("<a ");
+      expect(result.html).not.toContain("<script>");
+    });
+
+    it("does not linkify a bare domain with no protocol", () => {
+      const result = renderEmailContent("Subject", "visit example.com today", lead);
+      expect(result.html).not.toContain("<a ");
+      expect(result.html).toContain("example.com");
+    });
+
+    it("does not linkify a URL in the plain-text output", () => {
+      const result = renderEmailContent("Subject", "https://example.com", lead);
+      expect(result.text).toBe("https://example.com");
+    });
+  });
+
   describe("plain-text output", () => {
     it("preserves the sender's intended line breaks unescaped", () => {
       const result = renderEmailContent("Subject", "First paragraph.\n\nSecond paragraph.\nStill second.", lead);

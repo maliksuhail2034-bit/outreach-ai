@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, EyeIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import { deleteSequenceStepAction, moveSequenceStepAction } from "@/app/(app)/campaigns/[campaignId]/actions";
@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { SequenceStepForm } from "./sequence-step-form";
+import { EmailPreviewDialog } from "./email-preview-dialog";
 
 type SequenceStep = Tables<"sequence_steps">;
 
@@ -118,6 +119,15 @@ export function SequenceStepsPanel({
                     {step.body && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{step.body}</p>}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    <EmailPreviewDialog
+                      subject={step.subject ?? ""}
+                      body={step.body ?? ""}
+                      trigger={
+                        <Button variant="ghost" size="icon" aria-label="Preview step">
+                          <EyeIcon className="size-4" />
+                        </Button>
+                      }
+                    />
                     <Button
                       variant="ghost"
                       size="icon"

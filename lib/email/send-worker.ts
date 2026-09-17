@@ -18,7 +18,9 @@ import {
 import { isWithinMonthlyEmailLimit } from "@/lib/billing/limits";
 import { getEmailProvider } from "./get-provider";
 import { EmailSendError } from "./provider";
-import { renderMergeTags, type MergeTagLead } from "./merge-tags";
+import { escapeHtml } from "./merge-tags";
+import { renderEmailContent } from "./render-email";
+import type { MergeTagLead } from "./merge-tags";
 import { computeNextSchedule, computeRetryDelay } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
@@ -297,18 +299,42 @@ async function processCampaignLead(
     unsubscribeUrl,
   };
 
-  const subject = renderMergeTags(targetStep.subject ?? "", mergeTagLead).text;
-  let body = renderMergeTags(targetStep.body ?? "", mergeTagLead, { escapeHtml: true }).text;
+  // The one canonical rendering path (lib/email/render-email.ts) — same
+  // function a future preview feature and the rendering tests use, so
+  // there's exactly one definition of how a template + lead becomes an
+  // outgoing email. Produces both the HTML body and a plain-text body from
+  // the same merge-tag-substituted source, per Phase render requirements.
+  const rendered = renderEmailContent(targetStep.subject ?? "", targetStep.body ?? "", mergeTagLead);
+  const subject = rendered.subject;
+  let html = rendered.html;
+  let text = rendered.text;
+
+  // Non-fatal — the send still proceeds with the configured fallback (empty
+  // string) in place of each unresolved tag. Logged so a template typo (an
+  // unsupported tag name) or a lead missing expected data doesn't silently
+  // ship blanks with nothing in the logs to explain why.
+  if (rendered.missingTags.length > 0) {
+    console.warn("[send-worker] merge tag(s) did not resolve to a value", {
+      campaignLeadId: campaignLead.id,
+      sequenceStepId: targetStep.id,
+      missingTags: rendered.missingTags,
+      unsupportedTags: rendered.unsupportedTags,
+    });
+  }
 
   // Every outgoing email needs a working unsubscribe mechanism (CAN-SPAM/
   // GDPR) regardless of whether the sequence step's own template remembered
   // to include {{unsubscribe_link}} — append a default footer whenever the
   // rendered body doesn't already contain the link, so compliance never
-  // depends on the user remembering a merge tag.
-  if (!body.includes(unsubscribeUrl)) {
+  // depends on the user remembering a merge tag. Checked against the
+  // plain-text body: {{unsubscribe_link}} resolves to the raw URL there,
+  // while the HTML body has it (and every other character) entity-escaped,
+  // so a literal `&`-containing URL would never match against `html`.
+  if (!text.includes(unsubscribeUrl)) {
     const settings = await getSettings(supabase, campaign.user_id);
     const footerText = settings?.unsubscribe_text || DEFAULT_UNSUBSCRIBE_FOOTER_TEXT;
-    body += `<hr/><p style="font-size:12px;color:#666;">${footerText} <a href="${unsubscribeUrl}">Unsubscribe</a></p>`;
+    html += `<hr/><p style="font-size:12px;color:#666;">${escapeHtml(footerText)} <a href="${unsubscribeUrl}">Unsubscribe</a></p>`;
+    text += `\n\n${footerText}: ${unsubscribeUrl}`;
   }
 
   const provider = getEmailProvider(mailbox);
@@ -321,7 +347,8 @@ async function processCampaignLead(
         email: lead.email,
       },
       subject,
-      html: body,
+      html,
+      text,
     });
 
     // Immediately followed by the success-recording call — nothing else

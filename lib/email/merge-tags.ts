@@ -35,7 +35,25 @@ const MERGE_TAG_RESOLVERS: Record<string, MergeTagResolver> = {
 
 export const SUPPORTED_MERGE_TAGS = Object.keys(MERGE_TAG_RESOLVERS);
 
-const MERGE_TAG_PATTERN = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
+// User-facing spellings that don't match a canonical key verbatim but should
+// still resolve — e.g. a lead export or a user typing what they see in the
+// UI copy ("Company Name") rather than the backend's internal name
+// ("company"). Keyed by the tag after normalizeAlias() below (lowercased,
+// interior whitespace collapsed to "_"); most variants ("First Name" ->
+// "first_name", "Email" -> "email") already land on a real resolver key
+// without needing an entry here — this map only carries the cases where the
+// normalized spelling still doesn't match the canonical name.
+const MERGE_TAG_ALIASES: Record<string, string> = {
+  company_name: "company",
+};
+
+// Anything but literal braces, trimmed of surrounding whitespace by the
+// \s* outside the capture group — deliberately permissive (unlike the old
+// [a-zA-Z0-9_.]+ charset) so user-facing variants with spaces, e.g.
+// {{First Name}} or {{Company Name}}, are captured at all. Whether a
+// captured tag actually resolves is decided by resolveTag below, not by
+// this pattern.
+const MERGE_TAG_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
 function getByPath(value: unknown, path: string[]): unknown {
   let current = value;
@@ -46,22 +64,46 @@ function getByPath(value: unknown, path: string[]): unknown {
   return current;
 }
 
+// Maps a raw tag as typed (e.g. "First Name", "  Email ") onto a canonical
+// resolver key, or null if it doesn't match any known tag/alias. Only used
+// as a fallback after an exact match fails, so it never changes the
+// case-sensitive behavior of an exact canonical tag or a custom_fields.*
+// path (see resolveTag).
+function normalizeAlias(tag: string): string | null {
+  const key = tag.trim().toLowerCase().replace(/\s+/g, "_");
+  if (key in MERGE_TAG_RESOLVERS) return key;
+  if (key in MERGE_TAG_ALIASES) return MERGE_TAG_ALIASES[key];
+  return null;
+}
+
+interface TagResolution {
+  value: string | null | undefined;
+  // false means the tag name itself isn't recognized as any built-in tag,
+  // alias, or custom_fields.* path — distinct from a recognized tag that
+  // simply has no value for this lead (see missingTags vs. unsupportedTags
+  // on RenderMergeTagsResult below).
+  supported: boolean;
+}
+
 // custom_fields is arbitrary per-lead enrichment data (see
 // supabase/migrations/20260728100050_leads.sql) — {{custom_fields.role}}
 // resolves without needing a resolver entry above, so a fully custom merge
 // tag never requires a code change at all, not even here.
-function resolveTag(tag: string, lead: MergeTagLead): string | null | undefined {
+function resolveTag(tag: string, lead: MergeTagLead): TagResolution {
   const resolver = MERGE_TAG_RESOLVERS[tag];
-  if (resolver) return resolver(lead);
+  if (resolver) return { value: resolver(lead), supported: true };
 
   if (tag.startsWith("custom_fields.")) {
     const path = tag.split(".").slice(1);
     const value = getByPath(lead.custom_fields ?? {}, path);
-    if (value === null || value === undefined) return null;
-    return typeof value === "string" ? value : String(value);
+    if (value === null || value === undefined) return { value: null, supported: true };
+    return { value: typeof value === "string" ? value : String(value), supported: true };
   }
 
-  return undefined;
+  const aliasKey = normalizeAlias(tag);
+  if (aliasKey) return { value: MERGE_TAG_RESOLVERS[aliasKey](lead), supported: true };
+
+  return { value: undefined, supported: false };
 }
 
 // Phase 3B Enterprise Readiness (security audit, item 2): lead data (company,
@@ -79,13 +121,25 @@ const HTML_ESCAPES: Record<string, string> = {
   "'": "&#39;",
 };
 
-function escapeHtml(value: string): string {
+// Exported for lib/email/render-email.ts, which escapes a whole rendered
+// body (template text and substituted values alike) in one pass rather than
+// per-substitution — see that module for why. Same escaping rules either
+// way, one definition.
+export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
 }
 
 export interface RenderMergeTagsResult {
   text: string;
+  // Every tag that didn't produce a non-empty value — both "recognized tag,
+  // no data for this lead" and "not a recognized tag at all". Kept as the
+  // superset for callers that only care that *something* didn't resolve.
   missingTags: string[];
+  // Subset of missingTags: tags whose name isn't a known built-in tag,
+  // alias, or custom_fields.* path. Separated out so a caller can log/flag
+  // "someone typo'd a merge tag" distinctly from "this lead just has no
+  // company on file".
+  unsupportedTags: string[];
 }
 
 // Replaces every {{tag}} occurrence in `text`. Unknown tags and tags that
@@ -94,11 +148,14 @@ export interface RenderMergeTagsResult {
 // missingTags so a caller can log the gap without this module touching any
 // storage itself.
 //
-// `escapeHtml` defaults to false — the same call renders both a sequence
-// step's subject (plain text, shown verbatim in a mail client's Subject
-// header — escaping it would literally show "&amp;" to the recipient) and
-// its body (rendered as HTML). Callers rendering into an HTML context must
-// opt in explicitly; see lib/email/send-worker.ts.
+// `escapeHtml` defaults to false — a sequence step's subject is plain text,
+// shown verbatim in a mail client's Subject header (escaping it would
+// literally show "&amp;" to the recipient), so no caller should ever pass
+// escapeHtml: true for a subject. Body HTML rendering does not use this
+// option — see lib/email/render-email.ts, the canonical body renderer, which
+// escapes the whole merged body in one pass instead (see its module comment
+// for why per-substitution escaping isn't enough once the body itself is
+// plain text rather than pre-authored HTML).
 export function renderMergeTags(
   text: string,
   lead: MergeTagLead,
@@ -107,9 +164,16 @@ export function renderMergeTags(
   const fallback = options?.fallback ?? "";
   const shouldEscape = options?.escapeHtml ?? false;
   const missingTags: string[] = [];
+  const unsupportedTags: string[] = [];
 
   const rendered = text.replace(MERGE_TAG_PATTERN, (_match, rawTag: string) => {
-    const value = resolveTag(rawTag, lead);
+    const resolution = resolveTag(rawTag, lead);
+    if (!resolution.supported) {
+      missingTags.push(rawTag);
+      unsupportedTags.push(rawTag);
+      return fallback;
+    }
+    const { value } = resolution;
     if (value === null || value === undefined || value === "") {
       missingTags.push(rawTag);
       return fallback;
@@ -117,5 +181,5 @@ export function renderMergeTags(
     return shouldEscape ? escapeHtml(value) : value;
   });
 
-  return { text: rendered, missingTags };
+  return { text: rendered, missingTags, unsupportedTags };
 }

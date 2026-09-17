@@ -80,6 +80,64 @@ describe("renderMergeTags", () => {
     );
   });
 
+  describe("user-facing tag aliases", () => {
+    it("resolves {{First Name}} the same as {{first_name}}", () => {
+      expect(renderMergeTags("{{First Name}}", lead).text).toBe("Jane");
+    });
+
+    it("resolves {{Full Name}} the same as {{full_name}}", () => {
+      expect(renderMergeTags("{{Full Name}}", lead).text).toBe("Jane Cooper");
+    });
+
+    it("resolves {{Company Name}} the same as {{company}}", () => {
+      expect(renderMergeTags("{{Company Name}}", lead).text).toBe("Acme");
+    });
+
+    it("resolves {{Email}} the same as {{email}}", () => {
+      expect(renderMergeTags("{{Email}}", lead).text).toBe("jane@example.com");
+    });
+
+    it("resolves {{Job Title}} the same as {{job_title}}", () => {
+      expect(renderMergeTags("{{Job Title}}", lead).text).toBe("VP Sales");
+    });
+
+    it("does not report an alias as missing or unsupported once resolved", () => {
+      const result = renderMergeTags("{{First Name}} at {{Company Name}}", lead);
+      expect(result.missingTags).toEqual([]);
+      expect(result.unsupportedTags).toEqual([]);
+    });
+
+    it("aliases still report a missing value the same as the canonical tag would", () => {
+      const noCompany: MergeTagLead = { ...lead, company: null };
+      const result = renderMergeTags("{{Company Name}}", noCompany);
+      expect(result.text).toBe("");
+      expect(result.missingTags).toEqual(["Company Name"]);
+      expect(result.unsupportedTags).toEqual([]);
+    });
+  });
+
+  describe("unsupportedTags", () => {
+    it("reports a tag that matches no known tag or alias as unsupported, and still falls back safely", () => {
+      const result = renderMergeTags("Hello {{not_a_real_tag}}!", lead);
+      expect(result.text).toBe("Hello !");
+      expect(result.missingTags).toEqual(["not_a_real_tag"]);
+      expect(result.unsupportedTags).toEqual(["not_a_real_tag"]);
+    });
+
+    it("does not treat a known tag with no value for this lead as unsupported", () => {
+      const noCompany: MergeTagLead = { ...lead, company: null };
+      const result = renderMergeTags("{{company}}", noCompany);
+      expect(result.missingTags).toEqual(["company"]);
+      expect(result.unsupportedTags).toEqual([]);
+    });
+
+    it("does not treat an unresolved custom_fields.* path as unsupported", () => {
+      const result = renderMergeTags("{{custom_fields.does_not_exist}}", lead);
+      expect(result.missingTags).toEqual(["custom_fields.does_not_exist"]);
+      expect(result.unsupportedTags).toEqual([]);
+    });
+  });
+
   describe("escapeHtml option", () => {
     const maliciousLead: MergeTagLead = {
       ...lead,

@@ -164,10 +164,22 @@ export async function processClaimedLeads(
 // the only place send-worker.ts talks to Storage. Runs on the admin client
 // (see runSendWorker/runCronJob), so listAttachmentsForStepScoped's explicit
 // userId filter — not RLS — is what actually keeps this scoped to the
-// campaign's owner. A download failure or a re-validation failure (handled
-// by buildAttachmentPayload) drops that one attachment and logs a warning;
-// it never fails the send outright.
-async function loadAttachmentsForSend(
+// campaign's owner.
+//
+// A configured attachment is not optional: if this step has any attachments
+// at all and even one of them can't be downloaded, is missing from Storage,
+// or fails re-validation, the whole send is aborted (thrown as an
+// EmailSendError, "retry") rather than silently going out without it. Called
+// from inside processCampaignLead's try block, before provider.send(), so
+// this throw is caught by the exact same failure/retry/backoff path as any
+// other send failure — see that catch block for the attempt-cap and
+// recordSendFailure wiring this reuses unchanged.
+// Exported only for lib/email/send-worker.test.ts — processCampaignLead
+// itself (like before this batch) has no direct unit test, since exercising
+// it needs every one of its DB/provider dependencies mocked; this function
+// is the one piece of Batch 3's new behavior small enough to test on its
+// own the same way this file's other pure/near-pure helpers are.
+export async function loadAttachmentsForSend(
   supabase: Client,
   stepId: string,
   userId: string,
@@ -193,7 +205,14 @@ async function loadAttachmentsForSend(
 
   const { attachments, warnings } = buildAttachmentPayload(downloaded);
   if (warnings.length > 0) {
-    console.warn("[send-worker] attachment issue(s)", { ...logContext, warnings });
+    // Logged with the attachment id/file name/reason (already the shape
+    // buildAttachmentPayload's warnings use) — never raw file bytes or a
+    // storage URL — plus the campaign lead/step this send belongs to.
+    console.warn("[send-worker] attachment issue(s), aborting send", { ...logContext, warnings });
+    throw new EmailSendError(
+      `${warnings.length} of ${rows.length} configured attachment(s) could not be safely sent.`,
+      "retry",
+    );
   }
   return attachments;
 }
@@ -378,19 +397,21 @@ async function processCampaignLead(
     text += `\n\n${footerText}: ${unsubscribeUrl}`;
   }
 
-  // Batch 3: attached after everything above (suppression, monthly limit,
-  // idempotency claim, rendering) and before the provider call — same send,
-  // no separate path. A problem with an individual attachment never blocks
-  // this send (see loadAttachmentsForSend/buildAttachmentPayload); it's
-  // simply left out and logged.
-  const attachments = await loadAttachmentsForSend(supabase, targetStep.id, campaign.user_id, {
-    campaignLeadId: campaignLead.id,
-    sequenceStepId: targetStep.id,
-  });
-
   const provider = getEmailProvider(mailbox);
 
   try {
+    // Batch 3: resolved after everything above (suppression, monthly limit,
+    // idempotency claim, rendering) and inside this try, before
+    // provider.send() — same send, no separate path. If this step has
+    // configured attachments and any of them can't be safely turned into a
+    // provider payload, loadAttachmentsForSend throws before provider.send()
+    // is ever called, and the catch block below handles it exactly like any
+    // other send failure (classification, attempt cap, recordSendFailure).
+    const attachments = await loadAttachmentsForSend(supabase, targetStep.id, campaign.user_id, {
+      campaignLeadId: campaignLead.id,
+      sequenceStepId: targetStep.id,
+    });
+
     const result = await provider.send({
       from: { name: mailbox.display_name ?? undefined, email: mailbox.email },
       to: {

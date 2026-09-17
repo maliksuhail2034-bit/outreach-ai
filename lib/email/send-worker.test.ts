@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
-import { processClaimedLeads, type ProcessOutcome, type SendWorkerSummary } from "./send-worker";
+import { processClaimedLeads, loadAttachmentsForSend, type ProcessOutcome, type SendWorkerSummary } from "./send-worker";
+import { EmailSendError } from "./provider";
 
 function makeLead(id: string, mailboxId: string | null): Tables<"campaign_leads"> {
   return {
@@ -162,5 +163,162 @@ describe("processClaimedLeads", () => {
     await expect(processClaimedLeads(supabaseStub, leads, 1, Date.now(), summary, processOne)).rejects.toThrow(
       "boom",
     );
+  });
+});
+
+// Batch 3 micro-fix: a configured attachment that can't be safely turned
+// into a provider payload must abort the send (throw before provider.send()
+// is ever called), not silently go out without it. loadAttachmentsForSend is
+// awaited as the very first statement inside processCampaignLead's try block,
+// directly before provider.send() — a thrown rejection here means the rest
+// of that try block, including provider.send(), never runs (plain JS
+// control flow, not something a mock needs to separately prove) and control
+// passes straight to the existing catch/retry/recordSendFailure path,
+// unchanged by this fix. See that catch block for the classification logic
+// these EmailSendError("retry") throws feed into.
+describe("loadAttachmentsForSend", () => {
+  const PDF_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+
+  function makeAttachmentRow(overrides: Partial<Tables<"email_attachments">> = {}): Tables<"email_attachments"> {
+    return {
+      id: "attachment-1",
+      user_id: "user-1",
+      sequence_step_id: "step-1",
+      file_name: "proposal.pdf",
+      mime_type: "application/pdf",
+      size_bytes: PDF_BYTES.byteLength,
+      storage_path: "user-1/uuid-proposal.pdf",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  // Mirrors the fake-Client pattern already used across lib/db/*.test.ts
+  // (e.g. lib/db/attachments.test.ts) — every query-builder method returns
+  // the same chainable object, which resolves via `.then` however many
+  // `.eq()`/`.order()` calls precede the await.
+  function createAttachmentSendClient(options: {
+    rows: Tables<"email_attachments">[];
+    downloads?: Record<string, { data: Blob | null; error: { message: string } | null }>;
+  }) {
+    const chainable = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      order: vi.fn(),
+      then: (resolve: (value: { data: unknown; error: unknown }) => void) =>
+        resolve({ data: options.rows, error: null }),
+    };
+    for (const method of ["select", "eq", "order"] as const) {
+      chainable[method].mockReturnValue(chainable);
+    }
+    const from = vi.fn(() => chainable);
+
+    const download = vi.fn((path: string) => {
+      const result = options.downloads?.[path];
+      return Promise.resolve(result ?? { data: null, error: { message: "Object not found" } });
+    });
+    const storage = { from: vi.fn(() => ({ download })) };
+
+    const client = { from, storage } as unknown as Client;
+    return { client, download };
+  }
+
+  it("returns no attachments and never touches Storage when the step has none configured", async () => {
+    const { client, download } = createAttachmentSendClient({ rows: [] });
+
+    const result = await loadAttachmentsForSend(client, "step-1", "user-1", {
+      campaignLeadId: "cl-1",
+      sequenceStepId: "step-1",
+    });
+
+    expect(result).toEqual([]);
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("returns the provider-ready payload when every configured attachment downloads and validates cleanly", async () => {
+    const row = makeAttachmentRow();
+    const { client } = createAttachmentSendClient({
+      rows: [row],
+      downloads: { [row.storage_path]: { data: new Blob([PDF_BYTES]), error: null } },
+    });
+
+    const result = await loadAttachmentsForSend(client, "step-1", "user-1", {
+      campaignLeadId: "cl-1",
+      sequenceStepId: "step-1",
+    });
+
+    expect(result).toEqual([
+      { filename: "proposal.pdf", content: Buffer.from(PDF_BYTES), contentType: "application/pdf" },
+    ]);
+  });
+
+  it("aborts the send (throws) when a configured attachment fails to download", async () => {
+    const row = makeAttachmentRow();
+    const { client } = createAttachmentSendClient({
+      rows: [row],
+      downloads: { [row.storage_path]: { data: null, error: { message: "network error" } } },
+    });
+
+    await expect(
+      loadAttachmentsForSend(client, "step-1", "user-1", { campaignLeadId: "cl-1", sequenceStepId: "step-1" }),
+    ).rejects.toThrow(EmailSendError);
+  });
+
+  it("aborts the send (throws) when a configured attachment is missing from storage (no data, no error)", async () => {
+    const row = makeAttachmentRow();
+    const { client } = createAttachmentSendClient({
+      rows: [row],
+      downloads: { [row.storage_path]: { data: null, error: null } },
+    });
+
+    await expect(
+      loadAttachmentsForSend(client, "step-1", "user-1", { campaignLeadId: "cl-1", sequenceStepId: "step-1" }),
+    ).rejects.toThrow(EmailSendError);
+  });
+
+  it("aborts the send (throws) when a configured attachment fails server-side re-validation", async () => {
+    const row = makeAttachmentRow();
+    const notActuallyAPdf = new TextEncoder().encode("not actually a pdf");
+    const { client } = createAttachmentSendClient({
+      rows: [row],
+      downloads: { [row.storage_path]: { data: new Blob([notActuallyAPdf]), error: null } },
+    });
+
+    await expect(
+      loadAttachmentsForSend(client, "step-1", "user-1", { campaignLeadId: "cl-1", sequenceStepId: "step-1" }),
+    ).rejects.toThrow(EmailSendError);
+  });
+
+  it("classifies the abort as retryable, matching the existing retry/backoff path for other send failures", async () => {
+    const row = makeAttachmentRow();
+    const { client } = createAttachmentSendClient({
+      rows: [row],
+      downloads: { [row.storage_path]: { data: null, error: { message: "network error" } } },
+    });
+
+    try {
+      await loadAttachmentsForSend(client, "step-1", "user-1", { campaignLeadId: "cl-1", sequenceStepId: "step-1" });
+      expect.unreachable("expected loadAttachmentsForSend to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(EmailSendError);
+      expect((error as EmailSendError).outcome).toBe("retry");
+    }
+  });
+
+  it("aborts the whole send when only some of several configured attachments fail — never a partial send", async () => {
+    const good = makeAttachmentRow({ id: "good", storage_path: "user-1/uuid-good.pdf" });
+    const bad = makeAttachmentRow({ id: "bad", storage_path: "user-1/uuid-bad.pdf" });
+    const { client } = createAttachmentSendClient({
+      rows: [good, bad],
+      downloads: {
+        [good.storage_path]: { data: new Blob([PDF_BYTES]), error: null },
+        [bad.storage_path]: { data: null, error: { message: "network error" } },
+      },
+    });
+
+    await expect(
+      loadAttachmentsForSend(client, "step-1", "user-1", { campaignLeadId: "cl-1", sequenceStepId: "step-1" }),
+    ).rejects.toThrow(EmailSendError);
   });
 });

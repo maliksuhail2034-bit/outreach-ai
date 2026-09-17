@@ -5,6 +5,13 @@
 // import) so this is unit-testable without a DB or a storage mock:
 // send-worker.ts owns fetching the metadata row and downloading the bytes,
 // this module only judges the result.
+//
+// This function itself never fails a send — it only filters and reports via
+// `warnings`. Whether a non-empty `warnings` means "send anyway, minus that
+// attachment" or "abort the whole send" is the caller's call: today,
+// send-worker.ts's loadAttachmentsForSend treats any warning as fatal (a
+// configured attachment is not optional — see that function's doc comment),
+// throwing before provider.send() is ever reached.
 import type { Tables } from "@/types/database.types";
 import { MAX_TOTAL_ATTACHMENT_BYTES_PER_STEP, validateAttachmentBytes } from "./attachment-validation";
 
@@ -23,9 +30,9 @@ export interface ProviderAttachment {
 
 export interface AttachmentPayloadResult {
   attachments: ProviderAttachment[];
-  // Human-readable, safe to log — never surfaced to the recipient or (today)
-  // to the sending user; a problem with one attachment is logged and that
-  // attachment is dropped, but never fails the whole send (see module doc).
+  // Human-readable, safe to log — never surfaced to the recipient. A
+  // non-empty warnings list means at least one attachment was dropped; see
+  // the module doc for who decides what that means for the send.
   warnings: string[];
 }
 
@@ -33,9 +40,9 @@ export interface AttachmentPayloadResult {
 // enforced at upload time (lib/email/attachment-validation.ts) before it's
 // allowed anywhere near an outgoing send — defense in depth against a row
 // whose stored metadata no longer matches reality (a missing/corrupted
-// object, a limit lowered after upload). A problem with one attachment never
-// fails the whole send: it's dropped and reported in `warnings`, and the
-// email still goes out with whatever attachments did pass, or with none.
+// object, a limit lowered after upload). A problem with one attachment
+// drops it from `attachments` and reports it in `warnings`; this function
+// does not decide whether that should stop the send (see module doc).
 export function buildAttachmentPayload(downloaded: DownloadedAttachment[]): AttachmentPayloadResult {
   const attachments: ProviderAttachment[] = [];
   const warnings: string[] = [];

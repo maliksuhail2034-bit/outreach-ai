@@ -394,6 +394,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 ) : (
                   <CampaignLeadTable
                     campaignId={campaignId}
+                    campaignStatus={campaign.status}
                     campaignLeads={campaignLeads ?? []}
                     leads={allLeads}
                     availableLeads={availableLeads}

@@ -576,6 +576,71 @@ export async function resolveSendAttemptAction(
   });
 }
 
+// --- Send Now (Batch 4) -----------------------------------------------------
+// "Send now" for one enrolled lead's next pending step. Deliberately does
+// NOT talk to the provider, claim a send_attempt, or otherwise short-circuit
+// the real send path: it only pulls this one campaign_lead's next_send_at
+// forward to "now," making it eligible for the very next claim_due_sends()
+// tick — the exact same queue every scheduled send already goes through.
+// Every existing safety check downstream is therefore untouched and still
+// applies: mailbox daily/hourly/cooldown limits and campaign.status =
+// 'active' (claim_due_sends(), see supabase/migrations/20260804100000_sending_limits.sql),
+// suppression (processCampaignLead's getSuppression re-check, see
+// lib/email/send-worker.ts), and send_attempts idempotency
+// (claimSendAttempt). The only thing this bypasses is *waiting for the
+// sending window* — which is the entire point of "now" instead of "at the
+// next scheduled window," not a safety check.
+//
+// Only ever writes next_send_at. Never touches mailbox_id (mailbox-per-lead
+// stickiness), status, or current_step_id (follow-up sequencing) — so this
+// can't create a duplicate queue entry, move a lead to a different mailbox,
+// or skip a step.
+export async function sendNowAction(campaignId: string, campaignLeadId: string) {
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:send_now", organization.id);
+
+    // Paused campaign protection: claim_due_sends() already only ever claims
+    // for campaigns.status = 'active', so this alone would make a paused
+    // campaign's "Send now" a silent no-op rather than an honest error —
+    // reject it up front instead, matching "must not bypass paused campaign
+    // protection."
+    if (campaign.status !== "active") {
+      throw new UserFacingError("Only an active campaign can send now.");
+    }
+
+    const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+    assertCampaignLeadInCampaign(campaignLead, campaignId);
+
+    if (campaignLead.status !== "active") {
+      throw new UserFacingError("This lead isn't currently active in the sequence.");
+    }
+    if (!campaignLead.current_step_id) {
+      throw new UserFacingError("This lead has no pending step to send.");
+    }
+    if (!campaignLead.mailbox_id) {
+      throw new UserFacingError("This lead has no assigned mailbox to send from.");
+    }
+    // Currently claimed by an in-flight send (claim_due_sends() sets
+    // locked_until ~10 minutes out — see that function). Forcing next_send_at
+    // now would race the worker that already has this row; reject instead of
+    // risking two lanes touching the same lead.
+    if (campaignLead.locked_until && new Date(campaignLead.locked_until) > new Date()) {
+      throw new UserFacingError("This lead is already being sent — try again in a moment.");
+    }
+
+    await updateCampaignLead(supabase, campaignLeadId, {
+      next_send_at: new Date().toISOString(),
+    });
+
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
+}
+
 // --- Attachments (Batch 3) --------------------------------------------------
 // PDF/image files a sequence step sends alongside its HTML/plain-text body
 // (lib/email/render-email.ts). Metadata lives in email_attachments

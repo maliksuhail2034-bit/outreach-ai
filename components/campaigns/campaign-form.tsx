@@ -19,17 +19,32 @@ import { SendingWindowEditor } from "./sending-window-editor";
 
 const NO_MAILBOX = "none";
 
-// Matches lib/email/scheduling.ts's DEFAULT_SENDING_WINDOW values (all 7
-// days, 9-17, UTC). Not imported directly to avoid pulling that module
-// (and luxon) into the client bundle — a new campaign has nothing to
-// resolve, so this is a plain starting value, not a re-implementation of
-// resolveSendingWindow's fallback logic.
-const DEFAULT_FORM_SENDING_WINDOW: SendingWindow = {
-  days: [...SENDING_WINDOW_DAYS],
-  startHour: 9,
-  endHour: 17,
-  timezone: "UTC",
-};
+// Days/hours match lib/email/scheduling.ts's DEFAULT_SENDING_WINDOW (all 7
+// days, 9-17) — not imported directly, to avoid pulling that module (and
+// luxon) into the client bundle for a brand-new campaign that has nothing to
+// resolve yet. The *timezone* deliberately does NOT match that constant's
+// "UTC": DEFAULT_SENDING_WINDOW's UTC is a legacy-data fallback for
+// malformed/empty stored windows (see resolveSendingWindow) and must stay
+// stable for existing campaigns, but silently pre-filling a brand-new
+// campaign with UTC is exactly the "sends at 5am local time without anyone
+// choosing that" bug this batch fixes — so new campaigns start from the
+// browser's own detected zone instead, an explicit, visible, correct-by-
+// default guess the user can still change before ever saving.
+function defaultFormSendingWindow(): SendingWindow {
+  let timezone = "UTC";
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    // Keep the UTC fallback — an unusual runtime that can't resolve its own
+    // timezone shouldn't crash campaign creation.
+  }
+  return {
+    days: [...SENDING_WINDOW_DAYS],
+    startHour: 9,
+    endHour: 17,
+    timezone,
+  };
+}
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -57,7 +72,7 @@ export function CampaignForm({ mode, campaign, sendingWindow, mailboxes, onSucce
             name: "",
             dailyLimit: 50,
             defaultMailboxId: "",
-            sendingWindow: DEFAULT_FORM_SENDING_WINDOW,
+            sendingWindow: defaultFormSendingWindow(),
           },
   });
 

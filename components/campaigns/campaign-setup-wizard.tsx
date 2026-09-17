@@ -125,6 +125,7 @@ export function CampaignSetupWizard({
       {selected === "leads" && (
         <CampaignLeadTable
           campaignId={campaign.id}
+          campaignStatus={campaign.status}
           campaignLeads={campaignLeads}
           leads={leads}
           availableLeads={availableLeads}

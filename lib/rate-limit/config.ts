@@ -16,6 +16,7 @@ export type RateLimitScope =
   | "campaign:launch"
   | "campaign:enroll"
   | "campaign:resolve_send_attempt"
+  | "campaign:send_now"
   | "leads:import"
   | "billing:checkout"
   | "billing:manage";
@@ -54,6 +55,13 @@ export const RATE_LIMIT_CONFIG: Record<RateLimitScope, ScopeConfig> = {
   "campaign:launch": { windowSeconds: HOUR, maxAttempts: 20, failClosed: false },
   "campaign:enroll": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
   "campaign:resolve_send_attempt": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
+  // Batch 4: manually pulling one lead's next send forward — an occasional,
+  // per-lead action a user might click several times in a session, not a
+  // hot path. Same shape as campaign:resolve_send_attempt; this never talks
+  // to a provider itself (it only nudges next_send_at — see sendNowAction),
+  // so the limit exists to stop button-mashing, not to protect an external
+  // API.
+  "campaign:send_now": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
   "leads:import": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
   // Starting a new subscription checkout — shared across both providers
   // (createCheckoutSessionAction/Stripe, createRazorpaySubscriptionAction/

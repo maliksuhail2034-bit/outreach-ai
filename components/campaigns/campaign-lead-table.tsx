@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { MoreVerticalIcon, Trash2Icon, UserMinusIcon } from "lucide-react";
+import { MoreVerticalIcon, SendIcon, Trash2Icon, UserMinusIcon } from "lucide-react";
 
 import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
@@ -12,6 +12,7 @@ import {
   deleteLeadPermanentlyAction,
   removeCampaignLeadAction,
   resolveSendAttemptAction,
+  sendNowAction,
   updateCampaignLeadAction,
 } from "@/app/(app)/campaigns/[campaignId]/actions";
 import { Badge } from "@/components/ui/badge";
@@ -75,6 +76,7 @@ function formatDateTime(value: string | null) {
 
 export function CampaignLeadTable({
   campaignId,
+  campaignStatus,
   campaignLeads,
   leads,
   availableLeads,
@@ -84,6 +86,7 @@ export function CampaignLeadTable({
   suppressions,
 }: {
   campaignId: string;
+  campaignStatus: string;
   campaignLeads: CampaignLead[];
   leads: Lead[];
   availableLeads: Lead[];
@@ -117,6 +120,8 @@ export function CampaignLeadTable({
   const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [isResolving, startResolveTransition] = useTransition();
+  const [sendingNowId, setSendingNowId] = useState<string | null>(null);
+  const [isSendingNow, startSendNowTransition] = useTransition();
 
   const filteredLeads = campaignLeads.filter((row) => {
     if (statusFilter !== ALL_STATUSES && row.status !== statusFilter) return false;
@@ -181,6 +186,24 @@ export function CampaignLeadTable({
         toast.error(error instanceof Error ? error.message : "Couldn't resolve this lead.");
       } finally {
         setResolvingId(null);
+      }
+    });
+  }
+
+  // Only pulls this lead's next_send_at forward — every existing safety
+  // check (mailbox limits/cooldowns, suppression, idempotency, pause state)
+  // still applies at the next claim, unchanged. See sendNowAction's own
+  // comment for the full reasoning.
+  function handleSendNow(row: CampaignLead) {
+    setSendingNowId(row.id);
+    startSendNowTransition(async () => {
+      try {
+        await sendNowAction(campaignId, row.id);
+        toast.success("Queued to send as soon as possible, subject to your mailbox limits.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Couldn't send this lead now.");
+      } finally {
+        setSendingNowId(null);
       }
     });
   }
@@ -417,8 +440,25 @@ export function CampaignLeadTable({
                                   Next send {formatDateTime(row.next_send_at)}
                                 </p>
                               )}
-                              {row.locked_until && new Date(row.locked_until) > new Date() && (
+                              {row.locked_until && new Date(row.locked_until) > new Date() ? (
                                 <Badge variant="secondary">Sending…</Badge>
+                              ) : (
+                                campaignStatus === "active" &&
+                                row.status === "active" &&
+                                row.current_step_id &&
+                                row.mailbox_id && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    disabled={isSendingNow && sendingNowId === row.id}
+                                    onClick={() => handleSendNow(row)}
+                                  >
+                                    <SendIcon className="size-3" />
+                                    {isSendingNow && sendingNowId === row.id ? "Queuing…" : "Send now"}
+                                  </Button>
+                                )
                               )}
                               {row.last_error && (
                                 <p className="truncate text-xs text-destructive" title={row.last_error}>

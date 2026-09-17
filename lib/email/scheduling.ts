@@ -77,6 +77,26 @@ export function computeNextSendTime(params: { from: Date; dayDelay: number; wind
   return nextTimeWithinWindow(target, params.window).toJSDate();
 }
 
+// Re-snaps an already-computed, not-yet-sent next_send_at into a *new*
+// sending window — used when a campaign's schedule is edited while leads are
+// still queued (see updateCampaignAction in app/(app)/campaigns/actions.ts).
+// Deliberately reuses nextTimeWithinWindow instead of recomputing from
+// scratch via computeNextSendTime: there is no new day_delay/"from" to add
+// here, only "is this already-scheduled instant still valid under the new
+// window, and if not, what's the next valid one" — the exact question
+// nextTimeWithinWindow already answers. Same DST-safe Luxon arithmetic as
+// every other function in this module; no second scheduling engine.
+//
+// Idempotent and side-effect-free: if `currentNextSendAt` already falls
+// inside the new window, it comes back unchanged. Never touches
+// current_step_id, status, or mailbox_id — the caller updates only
+// next_send_at, so this can never create a duplicate queue entry or move a
+// lead to a different mailbox.
+export function recomputeNextSendAt(currentNextSendAt: Date, newWindow: SendingWindow): Date {
+  const zoned = DateTime.fromJSDate(currentNextSendAt).setZone(newWindow.timezone);
+  return nextTimeWithinWindow(zoned, newWindow).toJSDate();
+}
+
 export interface SequenceStepLike {
   id: string;
   step_order: number;

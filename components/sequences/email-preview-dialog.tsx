@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { EyeIcon } from "lucide-react";
+import { EyeIcon, FileTextIcon, ImageIcon, PaperclipIcon } from "lucide-react";
 
 import { renderEmailContent } from "@/lib/email/render-email";
 import { SAMPLE_LEAD, SAMPLE_LEAD_FIELDS } from "@/lib/email/sample-lead";
+import { formatBytes } from "@/lib/email/attachment-validation";
+import type { AttachmentSummary } from "./attachment-manager";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,8 +21,20 @@ import {
 // Renders through the exact same canonical path production sends use
 // (lib/email/render-email.ts, Batch 1) — no second renderer, so what a user
 // sees here is what actually goes out, right down to paragraph spacing,
-// line breaks, and clickable links.
-export function EmailPreviewDialog({ subject, body, trigger }: { subject: string; body: string; trigger?: ReactNode }) {
+// line breaks, and clickable links. `attachments` (Batch 3) is metadata
+// only — filename/type/size — never rendered inline; this stays a fast,
+// safe preview rather than a PDF/image viewer.
+export function EmailPreviewDialog({
+  subject,
+  body,
+  attachments = [],
+  trigger,
+}: {
+  subject: string;
+  body: string;
+  attachments?: AttachmentSummary[];
+  trigger?: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   // Only rendered while the dialog can be open — no cost paid on every
   // keystroke of the composer this is embedded in.
@@ -79,6 +93,28 @@ export function EmailPreviewDialog({ subject, body, trigger }: { subject: string
                 )}
               </div>
             </div>
+
+            {attachments.length > 0 && (
+              <div className="rounded-lg border border-border p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <PaperclipIcon className="size-3.5" />
+                  {attachments.length} attachment{attachments.length === 1 ? "" : "s"}
+                </p>
+                <ul className="space-y-1">
+                  {attachments.map((attachment) => (
+                    <li key={attachment.id} className="flex items-center gap-2 text-xs">
+                      {attachment.mimeType === "application/pdf" ? (
+                        <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ImageIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate font-medium text-foreground">{attachment.fileName}</span>
+                      <span className="shrink-0 text-muted-foreground">{formatBytes(attachment.sizeBytes)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {rendered.unsupportedTags.length > 0 && (
               <p className="text-xs text-destructive">

@@ -17,6 +17,13 @@ export interface OutboundEmailMessage {
   // replies under the original warmup message.
   inReplyTo?: string;
   references?: string[];
+  // Batch 3: PDF/image files attached to a sequence step (see
+  // lib/email/attachment-validation.ts for the type/size limits already
+  // enforced before content ever reaches here — this interface trusts its
+  // caller the same way `html`/`text` already do). `content` is the actual
+  // file bytes, already downloaded from Storage — never a path/URL, so no
+  // EmailProvider implementation needs its own storage access.
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
 }
 
 export interface SendResult {

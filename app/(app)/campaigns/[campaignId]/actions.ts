@@ -9,9 +9,12 @@ import {
   addLeadsToCampaign,
   addLeadToCampaign,
   cancelActiveCampaignLeads,
+  createAttachment,
   createSequenceStep,
+  deleteAttachments,
   deleteLead,
   deleteSequenceStep,
+  getAttachment,
   getCampaign,
   getCampaignLead,
   getLead,
@@ -21,10 +24,12 @@ import {
   getSequenceStep,
   getSuppressedEmails,
   getUserOrganization,
+  linkAttachmentsToStep,
   listCampaignLeads,
   listDomains,
   listLeads,
   listMailboxes,
+  listOwnedAttachmentsByIds,
   listSequences,
   listSequenceSteps,
   removeCampaignLead,
@@ -36,6 +41,15 @@ import {
 } from "@/lib/db";
 import { computeNextSchedule } from "@/lib/email/scheduling";
 import { checkCampaignReadiness, resolveLeadMailboxId } from "@/lib/campaigns/readiness";
+import {
+  ATTACHMENTS_BUCKET,
+  MAX_ATTACHMENTS_PER_STEP,
+  MAX_TOTAL_ATTACHMENT_BYTES_PER_STEP,
+  buildAttachmentStoragePath,
+  formatBytes,
+  sanitizeAttachmentFileName,
+  validateAttachmentBytes,
+} from "@/lib/email/attachment-validation";
 import { campaignLeadSchema, type CampaignLeadInput } from "@/lib/validations/campaign-leads";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
@@ -436,7 +450,11 @@ export async function createSequenceStepAction(campaignId: string, input: Sequen
   const steps = await listSequenceSteps(supabase, sequence.id);
   const nextOrder = steps.length > 0 ? Math.max(...steps.map((step) => step.step_order)) + 1 : 0;
 
-  await createSequenceStep(supabase, {
+  // Returns the new step's id (Batch 3) so the composer can link any
+  // just-uploaded attachments to it right after — a brand-new step has no
+  // id until this insert completes, and attachments are uploaded before
+  // Save is even clicked (see linkAttachmentsToStepAction).
+  const step = await createSequenceStep(supabase, {
     sequence_id: sequence.id,
     day_delay: parsed.dayDelay,
     subject: parsed.subject || null,
@@ -445,6 +463,8 @@ export async function createSequenceStepAction(campaignId: string, input: Sequen
   });
 
   revalidatePath(`/campaigns/${campaignId}`);
+
+  return { id: step.id };
 }
 
 export async function updateSequenceStepAction(campaignId: string, stepId: string, input: SequenceStepInput) {
@@ -554,4 +574,183 @@ export async function resolveSendAttemptAction(
 
     revalidatePath(`/campaigns/${campaignId}`);
   });
+}
+
+// --- Attachments (Batch 3) --------------------------------------------------
+// PDF/image files a sequence step sends alongside its HTML/plain-text body
+// (lib/email/render-email.ts). Metadata lives in email_attachments
+// (supabase/migrations/20260917100000_email_attachments.sql); file bytes
+// live in the private "attachments" Storage bucket the same migration
+// creates. Every action here runs on the session-scoped client — RLS is the
+// real ownership boundary on both email_attachments and storage.objects,
+// same as every other table in this file — with the same explicit
+// app-level checks (ownership, limits) this file already layers on top of
+// RLS everywhere else, since a Server Function is reachable directly by
+// anyone who can POST to it regardless of what the composer UI already
+// validated client-side.
+
+// Uploaded before the owning sequence_step_id is known: a brand-new "Add
+// step" dialog has no step id until Save. The returned row is linked to a
+// step later, by linkAttachmentsToStepAction, once that step actually
+// exists. Never trusts the browser's File.type or declared size — the real
+// bytes are sniffed here regardless of what the upload claims (see
+// lib/email/attachment-validation.ts's validateAttachmentBytes).
+export async function uploadAttachmentAction(formData: FormData) {
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      throw new UserFacingError("No file was provided.");
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const validation = validateAttachmentBytes(bytes);
+    if (!validation.ok) {
+      throw new UserFacingError(validation.reason);
+    }
+
+    const safeName = sanitizeAttachmentFileName(file.name || "attachment");
+    const storagePath = buildAttachmentStoragePath(user.id, safeName);
+
+    const { error: uploadError } = await supabase.storage
+      .from(ATTACHMENTS_BUCKET)
+      .upload(storagePath, bytes, { contentType: validation.mimeType, upsert: false });
+    if (uploadError) {
+      console.error("[attachments] upload failed", uploadError);
+      throw new UserFacingError("Couldn't upload this file. Try again.");
+    }
+
+    try {
+      const attachment = await createAttachment(supabase, {
+        user_id: user.id,
+        sequence_step_id: null,
+        file_name: safeName,
+        mime_type: validation.mimeType,
+        size_bytes: bytes.byteLength,
+        storage_path: storagePath,
+      });
+      // Shaped to exactly what the composer renders — never the raw row —
+      // per the Server Functions guide's "constrain return values."
+      return {
+        id: attachment.id,
+        fileName: attachment.file_name,
+        mimeType: attachment.mime_type,
+        sizeBytes: attachment.size_bytes,
+      };
+    } catch (dbError) {
+      // The DB row is the source of truth for "this attachment exists" — if
+      // the insert fails, the object just uploaded would otherwise be an
+      // orphaned file nothing ever references again. Best-effort: a cleanup
+      // failure is only logged, so the real error (the DB failure) is what
+      // reaches the caller.
+      await supabase.storage
+        .from(ATTACHMENTS_BUCKET)
+        .remove([storagePath])
+        .catch((cleanupError) => console.error("[attachments] rollback cleanup failed", cleanupError));
+      throw dbError;
+    }
+  });
+}
+
+// Links a set of already-uploaded attachments (each still owned by the
+// caller, verified below) to a saved sequence step. Called right after
+// createSequenceStepAction/updateSequenceStepAction succeeds — see
+// SequenceStepForm. Re-validates ownership and the count/size limits
+// server-side rather than trusting whatever the client already checked:
+// this Server Function is reachable directly via POST with any attachment
+// ids at all, not just ones the composer UI actually uploaded for this step.
+export async function linkAttachmentsToStepAction(campaignId: string, stepId: string, attachmentIds: string[]) {
+  return runUserFacing(async () => {
+    if (attachmentIds.length === 0) return;
+
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    await getCampaign(supabase, user.id, campaignId);
+    const step = await getSequenceStep(supabase, stepId);
+    await assertSequenceInCampaign(supabase, step.sequence_id, campaignId);
+
+    const owned = await listOwnedAttachmentsByIds(supabase, user.id, attachmentIds);
+    if (owned.length !== attachmentIds.length) {
+      throw new UserFacingError("One or more attachments could not be found.");
+    }
+    if (owned.length > MAX_ATTACHMENTS_PER_STEP) {
+      throw new UserFacingError(`A step can have at most ${MAX_ATTACHMENTS_PER_STEP} attachments.`);
+    }
+    const totalBytes = owned.reduce((sum, attachment) => sum + attachment.size_bytes, 0);
+    if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES_PER_STEP) {
+      throw new UserFacingError(
+        `These attachments total ${formatBytes(totalBytes)}, over the ${formatBytes(MAX_TOTAL_ATTACHMENT_BYTES_PER_STEP)} limit per step.`,
+      );
+    }
+
+    await linkAttachmentsToStep(supabase, user.id, attachmentIds, stepId);
+
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
+}
+
+// Hard delete — both the storage object and the metadata row. Used for both
+// an unlinked (never-saved) attachment and an already-linked one being
+// removed from a saved step; ownership scoping is identical either way
+// (RLS plus the explicit .eq("user_id", ...) getAttachment/deleteAttachments
+// already carry — see lib/db/attachments.ts).
+export async function removeAttachmentAction(attachmentId: string) {
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const attachment = await getAttachment(supabase, user.id, attachmentId);
+
+    const { error: storageError } = await supabase.storage
+      .from(ATTACHMENTS_BUCKET)
+      .remove([attachment.storage_path]);
+    if (storageError) {
+      // Logged, not thrown: the DB row is what the UI/send worker actually
+      // treat as "this attachment exists" — a now-unreferenced object left
+      // behind in a private bucket is a harmless leftover, and strictly
+      // better than leaving the DB row (and the UI showing it as attached)
+      // when the user explicitly asked to remove it.
+      console.error("[attachments] storage removal failed", storageError);
+    }
+
+    await deleteAttachments(supabase, user.id, [attachmentId]);
+
+    if (attachment.sequence_step_id) {
+      const step = await getSequenceStep(supabase, attachment.sequence_step_id).catch(() => null);
+      if (step) {
+        const sequence = await getSequence(supabase, step.sequence_id).catch(() => null);
+        if (sequence) revalidatePath(`/campaigns/${sequence.campaign_id}`);
+      }
+    }
+  });
+}
+
+// Cleanup for the "uploaded a file, then closed the dialog without saving"
+// case — see SequenceStepForm's unmount effect. Only ever removes rows that
+// are (a) owned by the caller and (b) still unlinked
+// (sequence_step_id is null): an id that got linked by a real save that
+// raced with this call is left alone, never deleted out from under a saved
+// step. Best-effort by design — a client that never calls this (e.g. the
+// tab was closed rather than the dialog) simply leaves an unlinked
+// attachment behind; see this batch's known limitations.
+export async function discardUnlinkedAttachmentsAction(attachmentIds: string[]) {
+  if (attachmentIds.length === 0) return;
+
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const owned = await listOwnedAttachmentsByIds(supabase, user.id, attachmentIds);
+  const unlinkedIds = owned.filter((attachment) => attachment.sequence_step_id === null).map((a) => a.id);
+  if (unlinkedIds.length === 0) return;
+
+  const paths = owned.filter((attachment) => unlinkedIds.includes(attachment.id)).map((a) => a.storage_path);
+  await supabase.storage
+    .from(ATTACHMENTS_BUCKET)
+    .remove(paths)
+    .catch((error) => console.error("[attachments] discard cleanup failed", error));
+
+  await deleteAttachments(supabase, user.id, unlinkedIds);
 }

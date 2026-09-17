@@ -186,6 +186,11 @@ export class SmtpEmailProvider implements EmailProvider {
         // no-op for the send path that already works.
         inReplyTo: message.inReplyTo,
         references: message.references?.join(" "),
+        // nodemailer accepts this exact {filename, content, contentType}
+        // shape natively — no transformation needed. undefined for every
+        // caller that doesn't set it (unchanged behavior for warmup/reply
+        // sends, which never do).
+        attachments: message.attachments,
       });
 
       return { providerMessageId: normalizeMessageId(info.messageId) ?? info.messageId };

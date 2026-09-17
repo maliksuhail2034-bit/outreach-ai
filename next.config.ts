@@ -25,6 +25,17 @@ const nextConfig: NextConfig = {
   logging: {
     serverFunctions: false,
   },
+  experimental: {
+    serverActions: {
+      // Server Function request bodies default to 1MB — too small for
+      // uploadAttachmentAction (app/(app)/campaigns/[campaignId]/actions.ts),
+      // which accepts a file up to MAX_ATTACHMENT_SIZE_BYTES (8MiB — see
+      // lib/email/attachment-validation.ts). Sized for that limit plus
+      // multipart/form-data overhead (boundaries/part headers — the docs'
+      // own rule of thumb is 10-20KB), rounded up.
+      bodySizeLimit: "9mb",
+    },
+  },
   async headers() {
     return [
       {

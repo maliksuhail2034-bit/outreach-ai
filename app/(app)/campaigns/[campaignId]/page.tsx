@@ -13,10 +13,12 @@ import {
 } from "lucide-react";
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { Tables } from "@/types/database.types";
 import {
   getCampaign,
   getUserOrganization,
   listAnalyticsEvents,
+  listAttachmentsForSteps,
   listCampaignLeads,
   listDomains,
   listEmailEvents,
@@ -171,6 +173,21 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   const sequenceSteps = sequenceStepsResult.data;
   const sendingWindow = resolveSendingWindow(campaign.sending_window);
 
+  // Batch 3: attachment metadata for every step in this sequence, fetched
+  // once and grouped by step id — reused by the Sequence panel (badges +
+  // preloading the edit dialog) and the Review step (aggregate display), so
+  // neither has to query for itself. Session-scoped client (RLS), same as
+  // every other read on this page.
+  const attachmentsResult = await optionalRead(
+    () => listAttachmentsForSteps(supabase, (sequenceSteps ?? []).map((step) => step.id)),
+    [],
+  );
+  const attachmentsByStep: Record<string, Tables<"email_attachments">[]> = {};
+  for (const attachment of attachmentsResult.data ?? []) {
+    if (!attachment.sequence_step_id) continue;
+    (attachmentsByStep[attachment.sequence_step_id] ??= []).push(attachment);
+  }
+
   // --- Failure gates for the widget-level boundaries below — see
   // lib/db/resilient-read.ts. Grouped by which section of the page they
   // actually affect, at roughly the same granularity as this page's
@@ -187,8 +204,8 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     firstError(leadsResult, availableLeadsRead, leadListsResult, mailboxesResult, suppressionsResult) ??
     firstError(sequencesResult, sequenceStepsResult);
   const settingsFormFailed = mailboxesResult.failed;
-  const sequencePanelFailed = sequenceDataFailed || templatesResult.failed;
-  const sequencePanelError = firstError(sequencesResult, sequenceStepsResult, templatesResult);
+  const sequencePanelFailed = sequenceDataFailed || templatesResult.failed || attachmentsResult.failed;
+  const sequencePanelError = firstError(sequencesResult, sequenceStepsResult, templatesResult, attachmentsResult);
   const setupWizardFailed =
     anyFailed(
       leadsResult,
@@ -198,6 +215,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       templatesResult,
       suppressionsResult,
       domainsResult,
+      attachmentsResult,
     ) || sequenceDataFailed;
   const setupWizardError =
     firstError(
@@ -208,6 +226,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       templatesResult,
       suppressionsResult,
       domainsResult,
+      attachmentsResult,
     ) ?? firstError(sequencesResult, sequenceStepsResult);
 
   // --- Readiness (Phase 2E) — same check launchCampaignAction enforces,
@@ -294,6 +313,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 sequenceId={sequence?.id ?? null}
                 sequenceSteps={sequenceSteps ?? []}
                 templates={templates ?? []}
+                attachmentsByStep={attachmentsByStep}
                 sendingWindow={sendingWindow}
                 suppressions={suppressions ?? []}
                 readiness={readiness}
@@ -415,6 +435,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                   sequenceId={sequence?.id ?? null}
                   steps={sequenceSteps ?? []}
                   templates={templates ?? []}
+                  attachmentsByStep={attachmentsByStep}
                 />
               )}
             </WidgetErrorBoundary>

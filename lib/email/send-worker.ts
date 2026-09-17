@@ -9,6 +9,7 @@ import {
   getSendAttempt,
   getSettings,
   getSuppression,
+  listAttachmentsForStepScoped,
   listSequenceSteps,
   listSequences,
   recordSendFailure,
@@ -21,6 +22,8 @@ import { EmailSendError } from "./provider";
 import { escapeHtml } from "./merge-tags";
 import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
+import { buildAttachmentPayload, type DownloadedAttachment } from "./attachment-payload";
+import { ATTACHMENTS_BUCKET } from "./attachment-validation";
 import { computeNextSchedule, computeRetryDelay } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
@@ -155,6 +158,44 @@ export async function processClaimedLeads(
   }
 
   await Promise.all(Array.from({ length: Math.max(concurrency, 1) }, () => lane()));
+}
+
+// Retrieves, re-validates, and downloads a step's attachments for one send —
+// the only place send-worker.ts talks to Storage. Runs on the admin client
+// (see runSendWorker/runCronJob), so listAttachmentsForStepScoped's explicit
+// userId filter — not RLS — is what actually keeps this scoped to the
+// campaign's owner. A download failure or a re-validation failure (handled
+// by buildAttachmentPayload) drops that one attachment and logs a warning;
+// it never fails the send outright.
+async function loadAttachmentsForSend(
+  supabase: Client,
+  stepId: string,
+  userId: string,
+  logContext: { campaignLeadId: string; sequenceStepId: string },
+) {
+  const rows = await listAttachmentsForStepScoped(supabase, stepId, userId);
+  if (rows.length === 0) return [];
+
+  const downloaded: DownloadedAttachment[] = await Promise.all(
+    rows.map(async (row) => {
+      const { data, error } = await supabase.storage.from(ATTACHMENTS_BUCKET).download(row.storage_path);
+      if (error || !data) {
+        console.warn("[send-worker] attachment download failed", {
+          ...logContext,
+          attachmentId: row.id,
+          error: error?.message,
+        });
+        return { metadata: row, bytes: null };
+      }
+      return { metadata: row, bytes: new Uint8Array(await data.arrayBuffer()) };
+    }),
+  );
+
+  const { attachments, warnings } = buildAttachmentPayload(downloaded);
+  if (warnings.length > 0) {
+    console.warn("[send-worker] attachment issue(s)", { ...logContext, warnings });
+  }
+  return attachments;
 }
 
 async function processCampaignLead(
@@ -337,6 +378,16 @@ async function processCampaignLead(
     text += `\n\n${footerText}: ${unsubscribeUrl}`;
   }
 
+  // Batch 3: attached after everything above (suppression, monthly limit,
+  // idempotency claim, rendering) and before the provider call — same send,
+  // no separate path. A problem with an individual attachment never blocks
+  // this send (see loadAttachmentsForSend/buildAttachmentPayload); it's
+  // simply left out and logged.
+  const attachments = await loadAttachmentsForSend(supabase, targetStep.id, campaign.user_id, {
+    campaignLeadId: campaignLead.id,
+    sequenceStepId: targetStep.id,
+  });
+
   const provider = getEmailProvider(mailbox);
 
   try {
@@ -349,6 +400,7 @@ async function processCampaignLead(
       subject,
       html,
       text,
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
 
     // Immediately followed by the success-recording call — nothing else

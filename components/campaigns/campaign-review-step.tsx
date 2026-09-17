@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useTransition } from "react";
 import { toast } from "sonner";
-import { AlertTriangleIcon, InfoIcon } from "lucide-react";
+import { AlertTriangleIcon, InfoIcon, PaperclipIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
@@ -12,6 +12,7 @@ import type { SendingWindow } from "@/lib/validations/sending-window";
 import { launchCampaignAction } from "@/app/(app)/campaigns/[campaignId]/actions";
 import { validateSequenceTemplates } from "@/lib/email/validate-template";
 import type { MergeTagLead } from "@/lib/email/merge-tags";
+import { formatBytes } from "@/lib/email/attachment-validation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,6 +44,7 @@ export function CampaignReviewStep({
   leads,
   mailboxes,
   sequenceSteps,
+  attachmentsByStep,
   sendingWindow,
   readiness,
 }: {
@@ -51,6 +53,7 @@ export function CampaignReviewStep({
   leads: Lead[];
   mailboxes: MailboxSafe[];
   sequenceSteps: SequenceStep[];
+  attachmentsByStep: Record<string, Tables<"email_attachments">[]>;
   sendingWindow: SendingWindow;
   readiness: CampaignReadinessResult;
 }) {
@@ -130,12 +133,25 @@ export function CampaignReviewStep({
         <div>
           <p className="mb-2 text-sm text-muted-foreground">Sequence ({sortedSteps.length} step{sortedSteps.length === 1 ? "" : "s"})</p>
           <ul className="space-y-1">
-            {sortedSteps.map((step, index) => (
-              <li key={step.id} className="flex items-center gap-2 text-sm">
-                <Badge variant="outline">{delayLabel(step.day_delay)}</Badge>
-                <span className="truncate">{step.subject || `Step ${index + 1} (no subject)`}</span>
-              </li>
-            ))}
+            {sortedSteps.map((step, index) => {
+              const stepAttachments = attachmentsByStep[step.id] ?? [];
+              const totalAttachmentBytes = stepAttachments.reduce((sum, a) => sum + a.size_bytes, 0);
+              return (
+                <li key={step.id} className="flex items-center gap-2 text-sm">
+                  <Badge variant="outline">{delayLabel(step.day_delay)}</Badge>
+                  <span className="truncate">{step.subject || `Step ${index + 1} (no subject)`}</span>
+                  {stepAttachments.length > 0 && (
+                    <span
+                      className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
+                      title={stepAttachments.map((a) => a.file_name).join(", ")}
+                    >
+                      <PaperclipIcon className="size-3.5" />
+                      {stepAttachments.length} ({formatBytes(totalAttachmentBytes)})
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
 

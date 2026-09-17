@@ -16,6 +16,7 @@ export * from "./campaigns";
 export * from "./campaign-leads";
 export * from "./sequences";
 export * from "./sequence-steps";
+export * from "./attachments";
 export * from "./templates";
 export * from "./email-events";
 export * from "./suppressions";

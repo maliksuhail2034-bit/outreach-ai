@@ -50,6 +50,7 @@ export function CampaignSetupWizard({
   sequenceId,
   sequenceSteps,
   templates,
+  attachmentsByStep,
   sendingWindow,
   suppressions,
   readiness,
@@ -63,6 +64,7 @@ export function CampaignSetupWizard({
   sequenceId: string | null;
   sequenceSteps: SequenceStep[];
   templates: Tables<"templates">[];
+  attachmentsByStep: Record<string, Tables<"email_attachments">[]>;
   sendingWindow: SendingWindow;
   suppressions: Tables<"suppressions">[];
   readiness: CampaignReadinessResult;
@@ -148,6 +150,7 @@ export function CampaignSetupWizard({
           sequenceId={sequenceId}
           steps={sequenceSteps}
           templates={templates}
+          attachmentsByStep={attachmentsByStep}
         />
       )}
 
@@ -158,6 +161,7 @@ export function CampaignSetupWizard({
           leads={enrolledLeadDetails}
           mailboxes={mailboxes}
           sequenceSteps={sequenceSteps}
+          attachmentsByStep={attachmentsByStep}
           sendingWindow={sendingWindow}
           readiness={readiness}
         />

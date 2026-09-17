@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
 import type { Tables } from "@/types/database.types";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
-import { createSequenceStepAction, updateSequenceStepAction } from "@/app/(app)/campaigns/[campaignId]/actions";
+import {
+  createSequenceStepAction,
+  discardUnlinkedAttachmentsAction,
+  linkAttachmentsToStepAction,
+  updateSequenceStepAction,
+} from "@/app/(app)/campaigns/[campaignId]/actions";
 import { insertAtCursor, mergeTagSyntax } from "@/lib/email/merge-tag-options";
 import { findMalformedTags, findUnsupportedTags } from "@/lib/email/validate-template";
 import { Button } from "@/components/ui/button";
@@ -19,16 +24,69 @@ import { TemplatePicker } from "./template-picker";
 import { MergeTagPicker } from "./merge-tag-picker";
 import { TemplateValidationList } from "./template-validation-list";
 import { EmailPreviewDialog } from "./email-preview-dialog";
+import { AttachmentManager, type AttachmentSummary } from "./attachment-manager";
 
 type SequenceStepFormProps = (
   | { mode: "create"; campaignId: string; step?: undefined; onSuccess?: () => void }
   | { mode: "edit"; campaignId: string; step: Tables<"sequence_steps">; onSuccess?: () => void }
-) & { templates: Tables<"templates">[] };
+) & { templates: Tables<"templates">[]; existingAttachments?: AttachmentSummary[] };
 
 type ActiveField = "subject" | "body";
 
-export function SequenceStepForm({ mode, campaignId, step, templates, onSuccess }: SequenceStepFormProps) {
+export function SequenceStepForm({
+  mode,
+  campaignId,
+  step,
+  templates,
+  existingAttachments = [],
+  onSuccess,
+}: SequenceStepFormProps) {
   const [isPending, startTransition] = useTransition();
+
+  // Attachments upload immediately (see AttachmentManager/uploadAttachmentAction)
+  // and are only linked to this step on a successful Save — this list is the
+  // current set of attachment ids/metadata for the step being edited,
+  // starting from whatever was already linked (edit mode) plus anything
+  // uploaded during this session.
+  const [attachments, setAttachments] = useState<AttachmentSummary[]>(existingAttachments);
+  // Ids uploaded during this dialog session that are NOT yet linked to a
+  // step — if the dialog closes without a successful save, these are
+  // discarded (see the unmount effect below) so an uploaded-then-abandoned
+  // file doesn't sit around forever with nothing referencing it. Ids that
+  // were already linked when the form opened (existingAttachments) are
+  // never in this set, so they're never at risk of this cleanup.
+  const uploadedThisSessionRef = useRef<Set<string>>(new Set());
+
+  // Whether the save-and-link sequence below completed. A plain ref write
+  // inside the submit handler itself (passed to form.handleSubmit) trips
+  // React Compiler's ref-safety check — "may read/write a ref during
+  // render" — since the compiler can't prove handleSubmit won't invoke it
+  // synchronously. So the submit handler only ever calls the state setter
+  // below; a separate effect mirrors that state into this ref, which the
+  // unmount-only cleanup effect (further down) reads. Both ref accesses
+  // happen inside effects, never inside a function passed to handleSubmit.
+  const [saveSucceeded, setSaveSucceeded] = useState(false);
+  const saveSucceededRef = useRef(false);
+  useEffect(() => {
+    saveSucceededRef.current = saveSucceeded;
+  }, [saveSucceeded]);
+
+  useEffect(() => {
+    return () => {
+      if (saveSucceededRef.current) return;
+      // uploadedThisSessionRef.current is a long-lived accumulator Set
+      // (mutated in place via .add(), never reassigned) — reading it here
+      // at cleanup time reflects every upload from this session, not a
+      // stale snapshot, so there's nothing to copy into a local variable.
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
+      const idsToDiscard = [...uploadedThisSessionRef.current];
+      if (idsToDiscard.length > 0) {
+        void discardUnlinkedAttachmentsAction(idsToDiscard).catch(() => {});
+      }
+    };
+    // Intentionally empty deps — this must run its cleanup exactly once, on
+    // unmount (dialog close), not on every re-render.
+  }, []);
 
   const form = useForm<SequenceStepInput>({
     resolver: zodResolver(sequenceStepSchema),
@@ -87,16 +145,35 @@ export function SequenceStepForm({ mode, campaignId, step, templates, onSuccess 
   function onSubmit(values: SequenceStepInput) {
     startTransition(async () => {
       try {
-        if (mode === "create") {
-          await createSequenceStepAction(campaignId, values);
-          toast.success("Step added.");
-        } else {
+        const stepId = mode === "create" ? (await createSequenceStepAction(campaignId, values)).id : step.id;
+        if (mode === "edit") {
           await updateSequenceStepAction(campaignId, step.id, values);
-          toast.success("Step updated.");
         }
+
+        // Links whatever's currently attached (existing survivors + this
+        // session's uploads) to the now-guaranteed-to-exist step. Removed
+        // attachments are already gone (removeAttachmentAction deletes
+        // immediately — see AttachmentManager), so `attachments` here is
+        // exactly the step's final attachment set, not a diff.
+        if (attachments.length > 0) {
+          await linkAttachmentsToStepAction(
+            campaignId,
+            stepId,
+            attachments.map((attachment) => attachment.id),
+          );
+        }
+        setSaveSucceeded(true);
+
+        toast.success(mode === "create" ? "Step added." : "Step updated.");
         onSuccess?.();
-      } catch {
-        toast.error(mode === "create" ? "Couldn't add the step. Try again." : "Couldn't update the step. Try again.");
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : mode === "create"
+              ? "Couldn't add the step. Try again."
+              : "Couldn't update the step. Try again.",
+        );
       }
     });
   }
@@ -156,7 +233,7 @@ export function SequenceStepForm({ mode, campaignId, step, templates, onSuccess 
             <FormItem>
               <div className="flex items-center justify-between gap-2">
                 <FormLabel>Body</FormLabel>
-                <EmailPreviewDialog subject={subjectValue} body={bodyValue} />
+                <EmailPreviewDialog subject={subjectValue} body={bodyValue} attachments={attachments} />
               </div>
               <MergeTagPicker onInsert={insertMergeTag} />
               <FormControl>
@@ -178,6 +255,13 @@ export function SequenceStepForm({ mode, campaignId, step, templates, onSuccess 
               <FormMessage />
             </FormItem>
           )}
+        />
+
+        <AttachmentManager
+          attachments={attachments}
+          onChange={setAttachments}
+          onUploaded={(id) => uploadedThisSessionRef.current.add(id)}
+          disabled={isPending}
         />
 
         <TemplateValidationList issues={validationIssues} />

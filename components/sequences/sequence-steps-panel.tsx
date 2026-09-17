@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { ArrowDownIcon, ArrowUpIcon, EyeIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, EyeIcon, PaperclipIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import { deleteSequenceStepAction, moveSequenceStepAction } from "@/app/(app)/campaigns/[campaignId]/actions";
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { SequenceStepForm } from "./sequence-step-form";
 import { EmailPreviewDialog } from "./email-preview-dialog";
+import type { AttachmentSummary } from "./attachment-manager";
 
 type SequenceStep = Tables<"sequence_steps">;
 
@@ -27,16 +28,27 @@ function delayLabel(dayDelay: number) {
   return `+${dayDelay} day${dayDelay === 1 ? "" : "s"}`;
 }
 
+function toAttachmentSummaries(rows: Tables<"email_attachments">[] | undefined): AttachmentSummary[] {
+  return (rows ?? []).map((row) => ({
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes,
+  }));
+}
+
 export function SequenceStepsPanel({
   campaignId,
   sequenceId,
   steps,
   templates,
+  attachmentsByStep,
 }: {
   campaignId: string;
   sequenceId: string | null;
   steps: SequenceStep[];
   templates: Tables<"templates">[];
+  attachmentsByStep: Record<string, Tables<"email_attachments">[]>;
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<SequenceStep | null>(null);
@@ -108,7 +120,9 @@ export function SequenceStepsPanel({
           </div>
         ) : (
           <ol className="space-y-3">
-            {steps.map((step, index) => (
+            {steps.map((step, index) => {
+              const stepAttachments = toAttachmentSummaries(attachmentsByStep[step.id]);
+              return (
               <li key={step.id} className="rounded-lg border border-border p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -117,11 +131,18 @@ export function SequenceStepsPanel({
                     </p>
                     <p className="mt-1 truncate font-medium">{step.subject || "(No subject)"}</p>
                     {step.body && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{step.body}</p>}
+                    {stepAttachments.length > 0 && (
+                      <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                        <PaperclipIcon className="size-3" />
+                        {stepAttachments.length} attachment{stepAttachments.length === 1 ? "" : "s"}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <EmailPreviewDialog
                       subject={step.subject ?? ""}
                       body={step.body ?? ""}
+                      attachments={stepAttachments}
                       trigger={
                         <Button variant="ghost" size="icon" aria-label="Preview step">
                           <EyeIcon className="size-4" />
@@ -155,7 +176,8 @@ export function SequenceStepsPanel({
                   </div>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ol>
         )}
       </CardContent>
@@ -171,6 +193,7 @@ export function SequenceStepsPanel({
               campaignId={campaignId}
               step={editing}
               templates={templates}
+              existingAttachments={toAttachmentSummaries(attachmentsByStep[editing.id])}
               onSuccess={() => setEditing(null)}
             />
           )}

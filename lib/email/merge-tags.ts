@@ -129,6 +129,27 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
 }
 
+// Inverse of escapeHtml, exported for lib/email/send-worker.ts's
+// click-tracking link rewriter (Batch 9B): a URL captured out of an
+// already-escaped href="..." attribute (see render-email.ts's
+// linkifyEscapedText) still has entities like "&amp;" in place of the
+// original "&" — that's correct HTML, but wrong the moment it's used as a
+// literal HTTP redirect target or signed into a token, neither of which
+// HTML-decodes anything. "&amp;" is decoded last, deliberately, so a
+// literal "&lt;" in the source (itself encoded as "&amp;lt;") round-trips
+// back to "&lt;" instead of being double-decoded into "<".
+const HTML_UNESCAPE_ORDER: [RegExp, string][] = [
+  [/&lt;/g, "<"],
+  [/&gt;/g, ">"],
+  [/&quot;/g, '"'],
+  [/&#39;/g, "'"],
+  [/&amp;/g, "&"],
+];
+
+export function unescapeHtml(value: string): string {
+  return HTML_UNESCAPE_ORDER.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), value);
+}
+
 export interface RenderMergeTagsResult {
   text: string;
   // Every tag that didn't produce a non-empty value — both "recognized tag,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderMergeTags, SUPPORTED_MERGE_TAGS, type MergeTagLead } from "./merge-tags";
+import { renderMergeTags, SUPPORTED_MERGE_TAGS, escapeHtml, unescapeHtml, type MergeTagLead } from "./merge-tags";
 
 const lead: MergeTagLead = {
   first_name: "Jane",
@@ -174,5 +174,29 @@ describe("renderMergeTags", () => {
       const result = renderMergeTags("{{not_a_real_tag}}", lead, { fallback: "<default>", escapeHtml: true });
       expect(result.text).toBe("<default>");
     });
+  });
+});
+
+// Batch 9B: exported for lib/email/send-worker.ts's click-tracking link
+// rewriter, which needs the real destination URL out of an
+// already-HTML-escaped href="..." attribute.
+describe("unescapeHtml", () => {
+  it("round-trips every character escapeHtml escapes", () => {
+    const original = `<p>"quoted" & 'single' </p>`;
+    expect(unescapeHtml(escapeHtml(original))).toBe(original);
+  });
+
+  it("decodes a URL's escaped ampersand back to a real one", () => {
+    expect(unescapeHtml("https://example.com/page?a=1&amp;b=2")).toBe("https://example.com/page?a=1&b=2");
+  });
+
+  it("decodes &amp; last, so a literal '&lt;' round-trips correctly instead of double-decoding into '<'", () => {
+    // escapeHtml("&lt;") -> "&amp;lt;" ; unescaping must reverse that exactly.
+    const original = "&lt;";
+    expect(unescapeHtml(escapeHtml(original))).toBe(original);
+  });
+
+  it("leaves a string with no entities unchanged", () => {
+    expect(unescapeHtml("https://example.com/plain")).toBe("https://example.com/plain");
   });
 });

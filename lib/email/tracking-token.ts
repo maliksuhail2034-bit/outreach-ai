@@ -127,3 +127,165 @@ export function buildOpenTrackingUrl(context: OpenTrackingContext): string {
   }
   return `${appUrl.replace(/\/$/, "")}/api/track/open/${signOpenTrackingToken(context)}`;
 }
+
+// Batch 9B: click tracking. Same base pattern as the open-tracking token
+// above (base64url payload + HMAC-SHA256 signature, no storage, no
+// expiry — same reasoning), but with two differences:
+//
+// 1. A DIFFERENT secret (CLICK_TRACKING_TOKEN_SECRET, not
+//    TRACKING_TOKEN_SECRET) — same "separate blast radius per secret"
+//    convention this file's own header comment documents for
+//    MAILBOX_ENCRYPTION_KEY/AI_PROVIDER_KEY_ENCRYPTION_KEY/etc., but for a
+//    concretely different reason here: a leaked open-tracking secret can
+//    only forge fake "opened" rows, while a leaked click-tracking secret
+//    could additionally be used to mint a polimatiq.com URL that redirects
+//    anywhere the holder chooses (an open-redirect-as-a-service off this
+//    app's own trusted domain) — a meaningfully worse blast radius, so it
+//    gets its own key rather than reusing the pixel's.
+//
+// 2. The payload carries a 6th field, destinationUrl — the exact original
+//    href this click must redirect to. Binding it into the SIGNED payload
+//    (never as a separate, unsigned query param) is what prevents an open
+//    redirect via a tampered link: destinationUrl can't be swapped for a
+//    different URL without invalidating the whole signature, exactly like
+//    swapping mailboxId/sequenceStepId on the open-tracking token can't
+//    (see tracking-token.test.ts). verifyClickTrackingToken additionally
+//    enforces that destinationUrl is a real http(s) absolute URL as part
+//    of what "verified" means — see isSafeHttpUrl below — so a caller
+//    holding a non-null result from that function never has to re-check
+//    the scheme itself; that guarantee is the actual thing preventing
+//    javascript:/data:/other unsafe redirect targets from ever reaching
+//    app/api/track/click/[token]/route.ts's NextResponse.redirect call.
+export interface ClickTrackingContext {
+  campaignId: string;
+  campaignLeadId: string;
+  leadId: string;
+  mailboxId: string;
+  sequenceStepId: string;
+  destinationUrl: string;
+}
+
+function getClickSecret(): string {
+  const secret = process.env.CLICK_TRACKING_TOKEN_SECRET;
+  if (!secret) {
+    throw new Error(
+      "CLICK_TRACKING_TOKEN_SECRET is not set. Generate one with `openssl rand -hex 32` and add it to .env.local — see .env.example.",
+    );
+  }
+  return secret;
+}
+
+function signClick(payload: string): string {
+  return createHmac("sha256", getClickSecret()).update(payload).digest("base64url");
+}
+
+// Raw ASCII control characters (0x00-0x1F, plus DEL 0x7F) — checked BEFORE
+// handing the string to URL() below. The WHATWG URL Standard silently
+// strips tab/newline/CR while parsing (new URL("https://x/\r\nY").protocol
+// is still "https:"), so a naive protocol-only check would accept a string
+// that still contains those raw bytes even though the check itself only
+// ever "saw" the stripped form — the same class of parse/validate mismatch
+// this codebase already got burned by once (see the safe-redirect
+// tab/newline/CR fix). Rejecting here means the string that gets
+// validated and the string that later goes into a Location header
+// (app/api/track/click/[token]/route.ts) are always the same bytes.
+const CONTROL_CHARACTER_PATTERN = /[\x00-\x1F\x7F]/;
+
+// Only http:// and https:// are ever a safe click-tracking destination.
+// Anything else (javascript:, data:, vbscript:, file:, a bare relative
+// path with no scheme at all, a protocol-relative "//host" with no scheme)
+// is rejected — checked here rather than with a denylist, the same
+// allowlist-over-denylist choice lib/email/render-email.ts's
+// SAFE_URL_PATTERN already makes for which bare-text URLs get linkified in
+// the first place. Used at both sign time (defense in depth against a
+// future caller of signClickTrackingToken — today's only caller,
+// send-worker.ts's rewriteClickTrackingLinks, already only ever captures an
+// http(s) href with no control characters by construction) and verify time
+// (the actual enforcement boundary the click route relies on).
+function isSafeHttpUrl(value: string): boolean {
+  if (CONTROL_CHARACTER_PATTERN.test(value)) return false;
+
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+// Order matters — read positionally by verifyClickTrackingToken, same
+// reasoning as encodeContext above.
+function encodeClickContext(context: ClickTrackingContext): string {
+  const tuple = [
+    context.campaignId,
+    context.campaignLeadId,
+    context.leadId,
+    context.mailboxId,
+    context.sequenceStepId,
+    context.destinationUrl,
+  ];
+  return Buffer.from(JSON.stringify(tuple), "utf8").toString("base64url");
+}
+
+// Server-only: called from lib/email/send-worker.ts when rewriting an
+// outgoing email's links, never from a Client Component.
+export function signClickTrackingToken(context: ClickTrackingContext): string {
+  if (!isSafeHttpUrl(context.destinationUrl)) {
+    throw new Error("Refusing to sign a click-tracking token for a non-http(s) destination.");
+  }
+  const encoded = encodeClickContext(context);
+  return `${encoded}${SEPARATOR}${signClick(encoded)}`;
+}
+
+// Returns the decoded context if the token is well-formed, its signature
+// matches, AND destinationUrl is a safe http(s) URL — otherwise null.
+// That last check makes a non-null return value a load-bearing guarantee:
+// app/api/track/click/[token]/route.ts redirects to context.destinationUrl
+// without re-validating the scheme itself, because this function already
+// did. Never throws, same reasoning as verifyOpenTrackingToken above.
+export function verifyClickTrackingToken(token: string): ClickTrackingContext | null {
+  try {
+    const separatorIndex = token.indexOf(SEPARATOR);
+    if (separatorIndex === -1) return null;
+
+    const encodedPayload = token.slice(0, separatorIndex);
+    const providedSignature = token.slice(separatorIndex + 1);
+
+    const expectedSignature = signClick(encodedPayload);
+    const expected = Buffer.from(expectedSignature);
+    const provided = Buffer.from(providedSignature);
+
+    if (expected.length !== provided.length) return null;
+    if (!timingSafeEqual(expected, provided)) return null;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    } catch {
+      return null;
+    }
+
+    if (!Array.isArray(parsed) || parsed.length !== 6 || !parsed.every((value) => typeof value === "string" && value.length > 0)) {
+      return null;
+    }
+
+    const [campaignId, campaignLeadId, leadId, mailboxId, sequenceStepId, destinationUrl] = parsed as string[];
+
+    if (!isSafeHttpUrl(destinationUrl)) return null;
+
+    return { campaignId, campaignLeadId, leadId, mailboxId, sequenceStepId, destinationUrl };
+  } catch {
+    return null;
+  }
+}
+
+// Builds the full absolute click-tracking redirect URL for one link inside
+// one outbound send — the one thing lib/email/send-worker.ts needs from
+// this module. Same NEXT_PUBLIC_APP_URL requirement as buildOpenTrackingUrl.
+export function buildClickTrackingUrl(context: ClickTrackingContext): string {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) {
+    throw new Error("NEXT_PUBLIC_APP_URL is not set — required to build links inside outgoing emails.");
+  }
+  return `${appUrl.replace(/\/$/, "")}/api/track/click/${signClickTrackingToken(context)}`;
+}

@@ -19,14 +19,14 @@ import {
 import { isWithinMonthlyEmailLimit } from "@/lib/billing/limits";
 import { getEmailProvider } from "./get-provider";
 import { EmailSendError } from "./provider";
-import { escapeHtml } from "./merge-tags";
+import { escapeHtml, unescapeHtml } from "./merge-tags";
 import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
 import { buildAttachmentPayload, type DownloadedAttachment } from "./attachment-payload";
 import { ATTACHMENTS_BUCKET } from "./attachment-validation";
 import { computeNextSchedule, computeRetryDelay, findPreviousStep } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
-import { buildOpenTrackingUrl, type OpenTrackingContext } from "./tracking-token";
+import { buildOpenTrackingUrl, type OpenTrackingContext, buildClickTrackingUrl, type ClickTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
 
 const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
@@ -291,6 +291,60 @@ export function injectOpenTrackingPixel(html: string, trackingEnabled: boolean, 
   }
 }
 
+// Only ever matches an href attribute value that already starts with
+// http:// or https:// — this is what makes mailto:/tel:/#anchor/relative
+// hrefs structurally impossible to match, not merely unlikely to occur.
+// Matches the attribute value only (double-quoted, as every href this
+// codebase ever generates — see render-email.ts/the unsubscribe footer
+// below — is written), never the visible link text that follows it.
+const HREF_URL_PATTERN = /href="(https?:\/\/[^"]*)"/g;
+
+// Batch 9B: click-link rewriting, pulled out of processCampaignLead the
+// same way injectOpenTrackingPixel above is — small and pure enough to
+// unit-test directly, without mocking the entire send pipeline.
+//
+// Rewrites only the href attribute's URL, never the visible link text
+// (which keeps showing the real destination to the recipient — the same
+// UX every mainstream email platform's click tracking uses). excludeUrls
+// lets the caller protect specific links (the unsubscribe link) from ever
+// being wrapped, by exact match against the decoded destination — see the
+// call site in processCampaignLead for why that's still needed even though
+// the unsubscribe footer this file adds itself is appended afterward.
+//
+// Non-fatal by design, same reasoning as injectOpenTrackingPixel: a config
+// problem degrades to "leave this one link untracked, still fully
+// functional" rather than failing the send.
+export function rewriteClickTrackingLinks(
+  html: string,
+  trackingEnabled: boolean,
+  excludeUrls: string[],
+  context: Omit<ClickTrackingContext, "destinationUrl">,
+): string {
+  if (!trackingEnabled) return html;
+
+  return html.replace(HREF_URL_PATTERN, (match, rawHref: string) => {
+    // rawHref is the href value as it appears in the already-HTML-escaped
+    // body (see render-email.ts's linkifyEscapedText) — e.g. a literal
+    // "&amp;" in place of a real "&" in the original URL's query string.
+    // Decoded back to the real URL before it's compared, signed, or ever
+    // used as an HTTP redirect target — a Location header is not HTML and
+    // must never contain a literal HTML entity.
+    const destinationUrl = unescapeHtml(rawHref);
+    if (excludeUrls.includes(destinationUrl)) return match;
+
+    try {
+      const trackedUrl = buildClickTrackingUrl({ ...context, destinationUrl });
+      return `href="${trackedUrl}"`;
+    } catch (error) {
+      console.warn("[send-worker] failed to build click-tracking link, leaving it untracked", {
+        campaignLeadId: context.campaignLeadId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      return match;
+    }
+  });
+}
+
 async function processCampaignLead(
   supabase: Client,
   campaignLead: Tables<"campaign_leads">,
@@ -465,6 +519,25 @@ async function processCampaignLead(
   // while the HTML body has it (and every other character) entity-escaped,
   // so a literal `&`-containing URL would never match against `html`.
   const settings = await getSettings(supabase, campaign.user_id);
+  // Shared by both open and click tracking below — default true, same
+  // fallback the Settings page itself uses (see app/(app)/settings/page.tsx).
+  const trackingEnabled = settings?.tracking_enabled ?? true;
+
+  // Batch 9B: click tracking. Runs BEFORE the unsubscribe footer is
+  // appended below, on purpose: rewriting first means the footer's own
+  // link (added after, using the raw, un-rewritten unsubscribeUrl) is
+  // never subject to the rewriter at all — not "excluded by matching",
+  // structurally never seen by it. excludeUrls still guards the case where
+  // the sender's own template already includes {{unsubscribe_link}} (so
+  // unsubscribeUrl is already present in `html` at this point, from
+  // renderEmailContent) — that occurrence must also stay untracked.
+  html = rewriteClickTrackingLinks(html, trackingEnabled, [unsubscribeUrl], {
+    campaignId: campaignLead.campaign_id,
+    campaignLeadId: campaignLead.id,
+    leadId: campaignLead.lead_id,
+    mailboxId: campaignLead.mailbox_id,
+    sequenceStepId: targetStep.id,
+  });
 
   if (!text.includes(unsubscribeUrl)) {
     const footerText = settings?.unsubscribe_text || DEFAULT_UNSUBSCRIBE_FOOTER_TEXT;
@@ -472,11 +545,9 @@ async function processCampaignLead(
     text += `\n\n${footerText}: ${unsubscribeUrl}`;
   }
 
-  // Batch 9A: open tracking. Uses the existing settings.tracking_enabled
-  // value as-is (default true, same fallback the Settings page itself uses
-  // — see app/(app)/settings/page.tsx) — the toggle already exists and is
-  // documented as inert until this. No Settings UI/schema change here.
-  html = injectOpenTrackingPixel(html, settings?.tracking_enabled ?? true, {
+  // Batch 9A: open tracking. The toggle already exists and is documented
+  // as inert until this batch. No Settings UI/schema change here.
+  html = injectOpenTrackingPixel(html, trackingEnabled, {
     campaignId: campaignLead.campaign_id,
     campaignLeadId: campaignLead.id,
     leadId: campaignLead.lead_id,

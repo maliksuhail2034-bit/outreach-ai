@@ -6,11 +6,14 @@ import {
   loadAttachmentsForSend,
   resolveThreadingHeaders,
   injectOpenTrackingPixel,
+  rewriteClickTrackingLinks,
   type ProcessOutcome,
   type SendWorkerSummary,
 } from "./send-worker";
 import { EmailSendError } from "./provider";
-import { verifyOpenTrackingToken, type OpenTrackingContext } from "./tracking-token";
+import { verifyOpenTrackingToken, type OpenTrackingContext, verifyClickTrackingToken, type ClickTrackingContext } from "./tracking-token";
+import { renderEmailContent } from "./render-email";
+import type { MergeTagLead } from "./merge-tags";
 
 function makeLead(id: string, mailboxId: string | null): Tables<"campaign_leads"> {
   return {
@@ -520,5 +523,133 @@ describe("injectOpenTrackingPixel", () => {
     // so there is no code path by which it could append markup to a
     // plain-text body. This test documents that invariant explicitly.
     expect(injectOpenTrackingPixel.length).toBe(3);
+  });
+});
+
+// Batch 9B: click-link rewriting, pulled out of processCampaignLead for
+// direct unit testing — same rationale as injectOpenTrackingPixel above.
+describe("rewriteClickTrackingLinks", () => {
+  const BASE_CONTEXT: Omit<ClickTrackingContext, "destinationUrl"> = {
+    campaignId: "campaign-1",
+    campaignLeadId: "cl-1",
+    leadId: "lead-1",
+    mailboxId: "mailbox-1",
+    sequenceStepId: "step-1",
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("CLICK_TRACKING_TOKEN_SECRET", "test-click-secret-do-not-use-in-prod");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.com");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("rewrites an http(s) href to a signed click-tracking URL bound to that exact destination", () => {
+    const html = '<p>Check out <a href="https://example.com/pricing" target="_blank" rel="noopener noreferrer">https://example.com/pricing</a> today.</p>';
+    const result = rewriteClickTrackingLinks(html, true, [], BASE_CONTEXT);
+
+    expect(result).toContain('href="https://app.example.com/api/track/click/');
+    expect(result).not.toContain('href="https://example.com/pricing"');
+    // The visible link text is left exactly as it was — only the href
+    // attribute value is rewritten.
+    expect(result).toContain(">https://example.com/pricing</a>");
+
+    const match = result.match(/href="https:\/\/app\.example\.com\/api\/track\/click\/([^"]+)"/);
+    expect(match).not.toBeNull();
+    expect(verifyClickTrackingToken(match![1])).toEqual({ ...BASE_CONTEXT, destinationUrl: "https://example.com/pricing" });
+  });
+
+  it("rewrites multiple distinct links independently, each bound to its own destination", () => {
+    const html =
+      '<p><a href="https://a.example.com">A</a> and <a href="https://b.example.com/path?x=1">B</a></p>';
+    const result = rewriteClickTrackingLinks(html, true, [], BASE_CONTEXT);
+
+    const tokens = [...result.matchAll(/href="https:\/\/app\.example\.com\/api\/track\/click\/([^"]+)"/g)].map((m) => m[1]);
+    expect(tokens).toHaveLength(2);
+    const destinations = tokens.map((t) => verifyClickTrackingToken(t)?.destinationUrl).sort();
+    expect(destinations).toEqual(["https://a.example.com", "https://b.example.com/path?x=1"]);
+  });
+
+  it("decodes an HTML-escaped ampersand in the href before signing, so the real destination (not a literal &amp;) is what gets tracked", () => {
+    const html = '<a href="https://example.com/page?a=1&amp;b=2">link</a>';
+    const result = rewriteClickTrackingLinks(html, true, [], BASE_CONTEXT);
+
+    const match = result.match(/href="https:\/\/app\.example\.com\/api\/track\/click\/([^"]+)"/);
+    expect(verifyClickTrackingToken(match![1])?.destinationUrl).toBe("https://example.com/page?a=1&b=2");
+  });
+
+  it("does not rewrite a link whose href is in excludeUrls (the unsubscribe link)", () => {
+    const unsubscribeUrl = "https://app.example.com/unsubscribe/abc123";
+    const html = `<p><a href="https://example.com/offer">Offer</a></p><hr/><p><a href="${unsubscribeUrl}">Unsubscribe</a></p>`;
+    const result = rewriteClickTrackingLinks(html, true, [unsubscribeUrl], BASE_CONTEXT);
+
+    expect(result).toContain(`href="${unsubscribeUrl}"`);
+    expect(result).toContain('href="https://app.example.com/api/track/click/');
+  });
+
+  it("does not rewrite mailto:, tel:, or #anchor hrefs", () => {
+    const html =
+      '<a href="mailto:someone@example.com">Email</a> <a href="tel:+15551234567">Call</a> <a href="#section">Jump</a>';
+    const result = rewriteClickTrackingLinks(html, true, [], BASE_CONTEXT);
+
+    expect(result).toBe(html);
+  });
+
+  it("returns the HTML unchanged when tracking is disabled", () => {
+    const html = '<a href="https://example.com/offer">Offer</a>';
+    const result = rewriteClickTrackingLinks(html, false, [], BASE_CONTEXT);
+
+    expect(result).toBe(html);
+  });
+
+  it("leaves a link untracked (unchanged) rather than throwing when required tracking config is missing", () => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("CLICK_TRACKING_TOKEN_SECRET", "test-click-secret-do-not-use-in-prod");
+    // NEXT_PUBLIC_APP_URL deliberately left unset.
+    const html = '<a href="https://example.com/offer">Offer</a>';
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = rewriteClickTrackingLinks(html, true, [], BASE_CONTEXT);
+
+    expect(result).toBe(html);
+    expect(consoleWarn).toHaveBeenCalled();
+    consoleWarn.mockRestore();
+  });
+
+  it("never touches the plain-text body — rewriteClickTrackingLinks only takes/returns an html string", () => {
+    expect(rewriteClickTrackingLinks.length).toBe(4);
+  });
+
+  it("leaves html with no links unchanged", () => {
+    const html = "<p>No links here.</p>";
+    expect(rewriteClickTrackingLinks(html, true, [], BASE_CONTEXT)).toBe(html);
+  });
+
+  // Regression test (security review follow-up): every other test in this
+  // describe block hand-types its HTML fixtures — this is the one place
+  // that proves the two real functions actually compose, so a future
+  // change to either render-email.ts's output shape or this regex would be
+  // caught here instead of silently breaking click tracking in production.
+  it("composes correctly with the real renderer: renderEmailContent(...) -> rewriteClickTrackingLinks(...)", () => {
+    const lead: MergeTagLead = { first_name: "Jane", email: "jane@example.com" };
+    const rendered = renderEmailContent(
+      "Subject",
+      "Check out https://example.com/pricing and https://example.com/signup?a=1&b=2 today.",
+      lead,
+    );
+
+    const result = rewriteClickTrackingLinks(rendered.html, true, [], BASE_CONTEXT);
+
+    const tokens = [...result.matchAll(/href="https:\/\/app\.example\.com\/api\/track\/click\/([^"]+)"/g)].map((m) => m[1]);
+    expect(tokens).toHaveLength(2);
+
+    const destinations = tokens.map((t) => verifyClickTrackingToken(t)?.destinationUrl);
+    expect(destinations).toContain("https://example.com/pricing");
+    // The &amp; produced by renderEmailContent's own escaping is decoded
+    // back to a real "&" in the signed destination, not left as a literal
+    // entity.
+    expect(destinations).toContain("https://example.com/signup?a=1&b=2");
   });
 });

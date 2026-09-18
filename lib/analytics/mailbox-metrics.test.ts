@@ -25,8 +25,11 @@ describe("summarizeMailboxMetrics", () => {
     });
 
     expect(summary.deliveryRate).toBe(95);
-    expect(summary.openRate).toBe(40); // 76 / 190
-    expect(summary.clickRate).toBe(10); // 19 / 190
+    // Batch 9C: open/click rate denominator is sentCount, not
+    // deliveredCount — see lib/analytics/campaign-metrics.ts's identical
+    // change for why (no 'delivered' event producer exists).
+    expect(summary.openRate).toBe(38); // 76 / 200
+    expect(summary.clickRate).toBe(9.5); // 19 / 200
     expect(summary.replyRate).toBe(5);
     expect(summary.bounceRate).toBe(5);
     expect(summary.spamComplaintRate).toBe(1);
@@ -40,6 +43,20 @@ describe("summarizeMailboxMetrics", () => {
     expect(summary.replyRate).toBeNull();
     expect(summary.bounceRate).toBeNull();
     expect(summary.spamComplaintRate).toBeNull();
+  });
+
+  it("returns a non-null open/click rate even though deliveredCount is 0 — the exact real-world case with no 'delivered' producer", () => {
+    const summary = summarizeMailboxMetrics({
+      ...ZERO_INPUTS,
+      sentCount: 80,
+      deliveredCount: 0,
+      openedCount: 20,
+      clickedCount: 5,
+    });
+
+    expect(summary.deliveryRate).toBe(0); // delivered / sent — a real (if misleading) 0%, since sentCount isn't 0
+    expect(summary.openRate).toBe(25); // 20 / 80 — unaffected by deliveredCount being 0
+    expect(summary.clickRate).toBe(6.3); // 5 / 80 rounded to 1 decimal (see rate())
   });
 });
 

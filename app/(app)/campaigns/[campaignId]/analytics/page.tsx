@@ -366,7 +366,10 @@ export default async function CampaignAnalyticsPage({
             <PercentageCard title="Delivery rate" value={overview.deliveryRate} icon={<MailCheckIcon className="size-4" />} description="Delivered ÷ sent" />
           </FadeIn>
           <FadeIn delay={0.26}>
-            <PercentageCard title="Open rate" value={overview.openRate} icon={<EyeIcon className="size-4" />} description="Opened ÷ delivered" />
+            <PercentageCard title="Open rate" value={overview.openRate} icon={<EyeIcon className="size-4" />} description="Opened ÷ sent" />
+          </FadeIn>
+          <FadeIn delay={0.27}>
+            <PercentageCard title="Click rate" value={overview.clickRate} icon={<MousePointerClickIcon className="size-4" />} description="Clicked ÷ sent" />
           </FadeIn>
           <FadeIn delay={0.28}>
             <PercentageCard title="Reply rate" value={overview.replyRate} icon={<MessageCircleReplyIcon className="size-4" />} description="Replied ÷ sent" />

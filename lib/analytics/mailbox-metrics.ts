@@ -22,8 +22,11 @@ export interface MailboxMetricsInputs {
 
 export interface MailboxMetricsSummary extends MailboxMetricsInputs {
   deliveryRate: number | null; // delivered / sent
-  openRate: number | null; // opened / delivered
-  clickRate: number | null; // clicked / delivered
+  // Batch 9C: denominator is sentCount, not deliveredCount — see
+  // lib/analytics/campaign-metrics.ts's identical change for why (no
+  // 'delivered' event producer exists, so deliveredCount is always 0).
+  openRate: number | null; // opened / sent
+  clickRate: number | null; // clicked / sent
   replyRate: number | null; // replied / sent
   bounceRate: number | null; // bounced / sent
   spamComplaintRate: number | null; // spam complaints / sent
@@ -33,8 +36,8 @@ export function summarizeMailboxMetrics(inputs: MailboxMetricsInputs): MailboxMe
   return {
     ...inputs,
     deliveryRate: rate(inputs.deliveredCount, inputs.sentCount),
-    openRate: rate(inputs.openedCount, inputs.deliveredCount),
-    clickRate: rate(inputs.clickedCount, inputs.deliveredCount),
+    openRate: rate(inputs.openedCount, inputs.sentCount),
+    clickRate: rate(inputs.clickedCount, inputs.sentCount),
     replyRate: rate(inputs.repliedCount, inputs.sentCount),
     bounceRate: rate(inputs.bouncedCount, inputs.sentCount),
     spamComplaintRate: rate(inputs.spamComplaintCount, inputs.sentCount),

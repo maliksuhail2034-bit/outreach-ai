@@ -23,6 +23,14 @@ function repliedEvent(metadata: unknown): EmailEventForAttribution {
   return { event_type: "replied", metadata };
 }
 
+function openedEvent(metadata: unknown): EmailEventForAttribution {
+  return { event_type: "opened", metadata };
+}
+
+function clickedEvent(metadata: unknown): EmailEventForAttribution {
+  return { event_type: "clicked", metadata };
+}
+
 describe("summarizeSequenceSteps", () => {
   it("counts sent attempts per step, ignoring non-'sent' statuses", () => {
     const attempts: SendAttemptForStep[] = [
@@ -111,17 +119,109 @@ describe("summarizeSequenceSteps", () => {
     expect(result.find((s) => s.stepId === "step-1")?.replyRate).toBe(25);
   });
 
-  it("never computes delivery/open/click/positive-reply rates — always null, not a fabricated 0%", () => {
+  it("never computes delivery/positive-reply rates — always null, not a fabricated 0% (no producer for either)", () => {
     const attempts: SendAttemptForStep[] = [
       sendAttempt({ sequence_step_id: "step-1", status: "sent", provider_message_id: "msg-1" }),
     ];
     const result = summarizeSequenceSteps(STEPS, attempts, []);
     for (const summary of result) {
       expect(summary.deliveryRate).toBeNull();
-      expect(summary.openRate).toBeNull();
-      expect(summary.clickRate).toBeNull();
       expect(summary.positiveReplyRate).toBeNull();
     }
+  });
+
+  it("attributes an opened/clicked event to the step named in metadata.sequenceStepId", () => {
+    const attempts: SendAttemptForStep[] = [
+      sendAttempt({ sequence_step_id: "step-1", status: "sent", provider_message_id: "msg-1" }),
+      sendAttempt({ sequence_step_id: "step-2", status: "sent", provider_message_id: "msg-2" }),
+    ];
+    const events: EmailEventForAttribution[] = [
+      openedEvent({ sequenceStepId: "step-2" }),
+      clickedEvent({ sequenceStepId: "step-2" }),
+    ];
+
+    const result = summarizeSequenceSteps(STEPS, attempts, events);
+
+    const step1 = result.find((s) => s.stepId === "step-1")!;
+    const step2 = result.find((s) => s.stepId === "step-2")!;
+    expect(step2.openRate).toBe(100); // 1 open / 1 sent
+    expect(step2.clickRate).toBe(100); // 1 click / 1 sent
+    expect(step1.openRate).toBe(0);
+    expect(step1.clickRate).toBe(0);
+  });
+
+  it("computes per-step open/click rate against that step's own sent count, not the campaign total", () => {
+    const attempts: SendAttemptForStep[] = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        sendAttempt({ sequence_step_id: "step-1", status: "sent", provider_message_id: `s1-${i}` }),
+      ),
+      ...Array.from({ length: 4 }, (_, i) =>
+        sendAttempt({ sequence_step_id: "step-2", status: "sent", provider_message_id: `s2-${i}` }),
+      ),
+    ];
+    const events: EmailEventForAttribution[] = [
+      ...Array.from({ length: 5 }, () => openedEvent({ sequenceStepId: "step-1" })), // 5/10 = 50%
+      ...Array.from({ length: 2 }, () => clickedEvent({ sequenceStepId: "step-2" })), // 2/4 = 50%
+    ];
+
+    const result = summarizeSequenceSteps(STEPS, attempts, events);
+
+    expect(result.find((s) => s.stepId === "step-1")?.openRate).toBe(50);
+    expect(result.find((s) => s.stepId === "step-2")?.clickRate).toBe(50);
+  });
+
+  it("ignores an opened/clicked event with missing metadata", () => {
+    const attempts: SendAttemptForStep[] = [
+      sendAttempt({ sequence_step_id: "step-1", status: "sent", provider_message_id: "msg-1" }),
+    ];
+    const events: EmailEventForAttribution[] = [openedEvent(undefined), clickedEvent(null)];
+
+    const result = summarizeSequenceSteps(STEPS, attempts, events);
+
+    // step-1 has a real send (sentCount 1), so its rate is a real 0% — not
+    // null — since neither malformed event could be attributed to it.
+    const step1 = result.find((s) => s.stepId === "step-1")!;
+    expect(step1.openRate).toBe(0);
+    expect(step1.clickRate).toBe(0);
+  });
+
+  it("ignores an opened/clicked event with malformed metadata (non-object, or sequenceStepId not a string)", () => {
+    const attempts: SendAttemptForStep[] = [
+      sendAttempt({ sequence_step_id: "step-1", status: "sent", provider_message_id: "msg-1" }),
+    ];
+    const events: EmailEventForAttribution[] = [
+      openedEvent("not-an-object"),
+      openedEvent({ sequenceStepId: 12345 }),
+      openedEvent({ sequenceStepId: "" }),
+      clickedEvent({ notSequenceStepId: "step-1" }),
+    ];
+
+    const result = summarizeSequenceSteps(STEPS, attempts, events);
+
+    const step1 = result.find((s) => s.stepId === "step-1")!;
+    expect(step1.openRate).toBe(0);
+    expect(step1.clickRate).toBe(0);
+  });
+
+  it("ignores an opened/clicked event whose sequenceStepId doesn't match any step in this sequence", () => {
+    const attempts: SendAttemptForStep[] = [
+      sendAttempt({ sequence_step_id: "step-1", status: "sent", provider_message_id: "msg-1" }),
+    ];
+    const events: EmailEventForAttribution[] = [
+      openedEvent({ sequenceStepId: "step-from-a-different-sequence" }),
+    ];
+
+    const result = summarizeSequenceSteps(STEPS, attempts, events);
+
+    expect(result.find((s) => s.stepId === "step-1")?.openRate).toBe(0);
+  });
+
+  it("computes a null open/click rate instead of dividing by zero when a step has no sends", () => {
+    const result = summarizeSequenceSteps(STEPS, [], [openedEvent({ sequenceStepId: "step-1" })]);
+    // step-1 has an "opened" event but zero sends recorded — still null,
+    // not a fabricated rate, and the stray event isn't counted anywhere
+    // meaningful without a sent denominator.
+    expect(result.find((s) => s.stepId === "step-1")?.openRate).toBeNull();
   });
 });
 

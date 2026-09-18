@@ -13,18 +13,24 @@ const ZERO_INPUTS = {
 };
 
 describe("summarizeCampaignMetrics", () => {
-  it("computes delivery/open/bounce/reply rates from raw counts", () => {
+  it("computes delivery/open/click/bounce/reply rates from raw counts", () => {
     const summary = summarizeCampaignMetrics({
       ...ZERO_INPUTS,
       sentCount: 100,
       deliveredCount: 95,
       openedCount: 38,
+      clickedCount: 12,
       repliedCount: 5,
       bouncedCount: 5,
     });
 
     expect(summary.deliveryRate).toBe(95);
-    expect(summary.openRate).toBe(40); // 38 / 95
+    // Batch 9C: open/click rate denominator is sentCount, not
+    // deliveredCount — there is no 'delivered' event producer, so
+    // deliveredCount would otherwise always be 0 and these would never be
+    // a real percentage.
+    expect(summary.openRate).toBe(38); // 38 / 100
+    expect(summary.clickRate).toBe(12); // 12 / 100
     expect(summary.bounceRate).toBe(5);
     expect(summary.replyRate).toBe(5);
   });
@@ -33,8 +39,23 @@ describe("summarizeCampaignMetrics", () => {
     const summary = summarizeCampaignMetrics(ZERO_INPUTS);
     expect(summary.deliveryRate).toBeNull();
     expect(summary.openRate).toBeNull();
+    expect(summary.clickRate).toBeNull();
     expect(summary.bounceRate).toBeNull();
     expect(summary.replyRate).toBeNull();
+  });
+
+  it("returns a non-null open/click rate even though deliveredCount is 0 — the exact real-world case with no 'delivered' producer", () => {
+    const summary = summarizeCampaignMetrics({
+      ...ZERO_INPUTS,
+      sentCount: 50,
+      deliveredCount: 0,
+      openedCount: 10,
+      clickedCount: 4,
+    });
+
+    expect(summary.deliveryRate).toBe(0); // delivered / sent — a real (if misleading) 0%, since sentCount isn't 0
+    expect(summary.openRate).toBe(20); // 10 / 50 — unaffected by deliveredCount being 0
+    expect(summary.clickRate).toBe(8); // 4 / 50
   });
 
   it("passes the raw counts through unchanged alongside the computed rates", () => {

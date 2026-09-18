@@ -40,25 +40,35 @@ function realStages(stages: FunnelStage[]): FunnelStage[] {
 
 // Stage keys with no event producer anywhere in the codebase today — see
 // lib/analytics/events.ts's catalog vs. the actual insert call sites:
-// nothing ever writes a 'delivered', 'opened', or 'clicked' email_event, so
-// those counts are always 0 for every campaign, not just campaigns that
-// happen to have no engagement. A stage that is *always* 0 for that reason
-// would otherwise make identifyBiggestDropOff mechanically report "Sent ->
+// nothing ever writes a 'delivered' email_event (no ESP delivery-webhook
+// infrastructure for SMTP/Gmail/Graph sending, and building one is out of
+// scope — see lib/analytics/campaign-metrics.ts's Batch 9C note), so that
+// count is always 0 for every campaign, not just campaigns that happen to
+// have no engagement. A stage that is *always* 0 for that reason would
+// otherwise make identifyBiggestDropOff mechanically report "Sent ->
 // Delivered, 100% lost" for any campaign that ever sent anything — true
 // arithmetic on real (zero) data, but a misleading insight, since it isn't
 // actually a delivery failure.
 //
-// identifyBiggestDropOff (below) skips these when picking a winner, bridging
-// straight to the next stage that *is* backed by real data (e.g. Sent ->
-// Replied). calculateFunnelDropOffs is untouched and still reports every
-// adjacent pair, including these — this exclusion is specific to "which
+// 'opened'/'clicked' were in this set too before Batch 9C — both now have
+// real producers (app/api/track/open/[token]/route.ts,
+// app/api/track/click/[token]/route.ts) and real, non-zero counts once a
+// campaign has engagement, so they've been removed: a genuine "Sent ->
+// Opened, 90% lost" is exactly the kind of drop-off this comparison should
+// be able to surface now.
+//
+// identifyBiggestDropOff (below) skips 'delivered' when picking a winner,
+// bridging straight to the next stage that *is* backed by real data (e.g.
+// Sent -> Opened, or Sent -> Replied if there's no open/click data either).
+// calculateFunnelDropOffs is untouched and still reports every adjacent
+// pair, including 'delivered' — this exclusion is specific to "which
 // transition should be called out as the biggest," not the underlying data.
 //
-// The moment a real producer exists for one of these event types, remove it
-// from this set — nothing else in this file needs to change for it to be
-// included in the comparison again. (Matches the FunnelStage.key values the
-// campaign analytics page assigns; keep in sync if those keys ever change.)
-const UNTRACKED_STAGE_KEYS = new Set(["delivered", "opened", "clicked"]);
+// The moment a real 'delivered' producer exists, remove it from this set
+// too — nothing else in this file needs to change for it to be included in
+// the comparison again. (Matches the FunnelStage.key values the campaign
+// analytics page assigns; keep in sync if those keys ever change.)
+const UNTRACKED_STAGE_KEYS = new Set(["delivered"]);
 
 function trackedStages(stages: FunnelStage[]): FunnelStage[] {
   return realStages(stages).filter((stage) => !UNTRACKED_STAGE_KEYS.has(stage.key));
@@ -104,9 +114,9 @@ function buildDropOffs(orderedStages: FunnelStage[]): FunnelDropOff[] {
 // Consecutive-stage drop-off, skipping any placeholder stage entirely (on
 // either side of the pair) — a stage with no real data source yet can't
 // honestly be said to have "dropped off" anything. Includes the currently-
-// untracked delivered/opened/clicked stages (see UNTRACKED_STAGE_KEYS
-// above) — this function reports the complete picture; only
-// identifyBiggestDropOff narrows further to what's safe to call "biggest."
+// untracked 'delivered' stage (see UNTRACKED_STAGE_KEYS above) — this
+// function reports the complete picture; only identifyBiggestDropOff
+// narrows further to what's safe to call "biggest."
 export function calculateFunnelDropOffs(stages: FunnelStage[]): FunnelDropOff[] {
   return buildDropOffs(realStages(stages));
 }
@@ -114,11 +124,11 @@ export function calculateFunnelDropOffs(stages: FunnelStage[]): FunnelDropOff[] 
 // The single transition that lost the highest percentage of leads, among
 // stages actually backed by real data today (see UNTRACKED_STAGE_KEYS) — an
 // untracked stage is skipped over entirely rather than treated as an
-// endpoint, so e.g. Sent -> Replied is compared directly when Delivered/
-// Opened/Clicked sit between them with no real producer. Null when there's
-// nothing to compare — fewer than two tracked stages, or every remaining
-// transition's starting value is 0 (rate() already returns null for those,
-// filtered out here rather than treated as "a 0% drop-off").
+// endpoint, so e.g. Sent -> Opened is compared directly when Delivered sits
+// between them with no real producer. Null when there's nothing to compare
+// — fewer than two tracked stages, or every remaining transition's starting
+// value is 0 (rate() already returns null for those, filtered out here
+// rather than treated as "a 0% drop-off").
 export function identifyBiggestDropOff(stages: FunnelStage[]): FunnelDropOff | null {
   const candidates = buildDropOffs(trackedStages(stages)).filter(
     (dropOff): dropOff is FunnelDropOff & { dropOffPercent: number } => dropOff.dropOffPercent !== null,

@@ -82,13 +82,14 @@ describe("calculateFunnelDropOffs", () => {
 
 describe("identifyBiggestDropOff", () => {
   it("picks the transition with the highest drop-off percentage among tracked stages", () => {
-    // delivered/opened/clicked are untracked (see UNTRACKED_STAGE_KEYS), so
-    // Sent bridges directly to Replied: dropped 760 of 800 sent, 95% — the
-    // biggest of any tracked-stage pair in this fixture.
+    // Only 'delivered' is untracked (see UNTRACKED_STAGE_KEYS) — Sent
+    // bridges past it straight to Opened. Among all tracked-stage pairs in
+    // this fixture, Opened (300) -> Clicked (50) has the highest drop-off:
+    // dropped 250, 83.3%.
     const result = identifyBiggestDropOff(STAGES);
-    expect(result?.fromKey).toBe("sent");
-    expect(result?.toKey).toBe("replied");
-    expect(result?.dropOffPercent).toBeCloseTo(95, 1);
+    expect(result?.fromKey).toBe("opened");
+    expect(result?.toKey).toBe("clicked");
+    expect(result?.dropOffPercent).toBeCloseTo(83.3, 1);
   });
 
   it("returns null when there are fewer than two real stages", () => {
@@ -116,30 +117,32 @@ describe("identifyBiggestDropOff", () => {
     expect(result?.toKey).toBe("b");
   });
 
-  it("bridges past untracked delivered/opened/clicked stages instead of reporting a misleading 100% at Sent -> Delivered", () => {
-    // Mirrors today's real production data: delivered/opened/clicked have
-    // no producer anywhere, so they're always exactly 0 — not "0 because
-    // nothing converted," but "0 because nothing is written." Without the
-    // untracked-stage exclusion, this would mechanically report
-    // Sent -> Delivered at 100% for any campaign that ever sent anything.
+  it("bridges past the untracked 'delivered' stage instead of reporting a misleading 100% at Sent -> Delivered", () => {
+    // Mirrors real production data: 'delivered' has no producer anywhere
+    // (no ESP delivery-webhook infrastructure), so it's always exactly 0 —
+    // not "0 because nothing converted," but "0 because nothing is
+    // written." Without the untracked-stage exclusion, this would
+    // mechanically report Sent -> Delivered at 100% for any campaign that
+    // ever sent anything. 'opened'/'clicked' DO have real producers as of
+    // Batch 9C and participate normally, not bridged over.
     const stages: FunnelStage[] = [
       { key: "leads", label: "Leads", value: 100 },
       { key: "sent", label: "Sent", value: 90 },
       { key: "delivered", label: "Delivered", value: 0 },
-      { key: "opened", label: "Opened", value: 0 },
-      { key: "clicked", label: "Clicked", value: 0 },
-      { key: "replied", label: "Replied", value: 20 },
-      { key: "positive_reply", label: "Positive reply", value: 5 },
+      { key: "opened", label: "Opened", value: 60 },
+      { key: "clicked", label: "Clicked", value: 20 },
+      { key: "replied", label: "Replied", value: 15 },
     ];
 
     const result = identifyBiggestDropOff(stages);
 
-    // Sent (90) -> Replied (20) bridges the untracked stages: dropped 70, ~77.8%.
-    // Never "Sent -> Delivered" (which would misleadingly read as 100%).
+    // Opened (60) -> Clicked (20) bridges past the untracked 'delivered'
+    // stage and beats every other tracked pair: dropped 40, ~66.7%. Never
+    // "Sent -> Delivered" (which would misleadingly read as 100%).
     expect(result?.toKey).not.toBe("delivered");
-    expect(result?.fromKey).toBe("sent");
-    expect(result?.toKey).toBe("replied");
-    expect(result?.dropOffPercent).toBeCloseTo(77.8, 1);
+    expect(result?.fromKey).toBe("opened");
+    expect(result?.toKey).toBe("clicked");
+    expect(result?.dropOffPercent).toBeCloseTo(66.7, 1);
   });
 
   it("returns null when only one tracked stage remains after excluding untracked ones", () => {
@@ -152,15 +155,17 @@ describe("identifyBiggestDropOff", () => {
 });
 
 describe("calculateFunnelDropOffs vs. identifyBiggestDropOff candidate pools", () => {
-  it("calculateFunnelDropOffs still reports the untracked-stage pairs identifyBiggestDropOff excludes", () => {
+  it("calculateFunnelDropOffs still reports the untracked 'delivered' pair that identifyBiggestDropOff excludes", () => {
     const dropOffs = calculateFunnelDropOffs(STAGES);
     expect(dropOffs.some((d) => d.fromKey === "sent" && d.toKey === "delivered")).toBe(true);
-    expect(dropOffs.some((d) => d.fromKey === "opened" && d.toKey === "clicked")).toBe(true);
 
-    // identifyBiggestDropOff never returns one of those excluded pairs as
-    // the winner, even though calculateFunnelDropOffs computed it.
+    // identifyBiggestDropOff never returns the 'delivered' pair as the
+    // winner, even though calculateFunnelDropOffs computed it — but it CAN
+    // (and, for this fixture, does) pick Opened -> Clicked, since that pair
+    // has real producers as of Batch 9C and is no longer excluded.
     const biggest = identifyBiggestDropOff(STAGES);
     expect(biggest?.fromKey === "sent" && biggest?.toKey === "delivered").toBe(false);
-    expect(biggest?.fromKey === "opened" && biggest?.toKey === "clicked").toBe(false);
+    expect(biggest?.fromKey).toBe("opened");
+    expect(biggest?.toKey).toBe("clicked");
   });
 });

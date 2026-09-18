@@ -22,7 +22,16 @@ export interface CampaignMetricsInputs {
 
 export interface CampaignMetricsSummary extends CampaignMetricsInputs {
   deliveryRate: number | null; // delivered / sent
-  openRate: number | null; // opened / delivered
+  // Batch 9C: denominator is sentCount, not deliveredCount. There is no
+  // 'delivered' email_event producer anywhere in this codebase (no ESP
+  // delivery-webhook infrastructure for SMTP/Gmail/Graph sending) and
+  // building one is explicitly out of scope — opened/clicked/sent, unlike
+  // delivered, all have real producers, so sentCount is the only
+  // denominator that lets these ever be a real, non-null percentage. See
+  // lib/analytics/metrics.ts's rate() — still null, not a fabricated 0%,
+  // when sentCount is 0.
+  openRate: number | null; // opened / sent
+  clickRate: number | null; // clicked / sent
   bounceRate: number | null; // bounced / sent
   replyRate: number | null; // replied / sent
 }
@@ -31,7 +40,8 @@ export function summarizeCampaignMetrics(inputs: CampaignMetricsInputs): Campaig
   return {
     ...inputs,
     deliveryRate: rate(inputs.deliveredCount, inputs.sentCount),
-    openRate: rate(inputs.openedCount, inputs.deliveredCount),
+    openRate: rate(inputs.openedCount, inputs.sentCount),
+    clickRate: rate(inputs.clickedCount, inputs.sentCount),
     bounceRate: rate(inputs.bouncedCount, inputs.sentCount),
     replyRate: rate(inputs.repliedCount, inputs.sentCount),
   };

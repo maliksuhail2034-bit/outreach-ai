@@ -19,6 +19,22 @@ vi.mock("@/lib/db", () => ({
   getCampaignLead: vi.fn(),
   updateCampaignLead: vi.fn(),
   getUserOrganization: vi.fn(),
+  // Batch 8: enrollLeadAction/enrollLeadListAction's dependencies.
+  getSuppressedEmails: vi.fn(),
+  listCampaignMailboxes: vi.fn(),
+  listCampaignLeads: vi.fn(),
+  addLeadToCampaign: vi.fn(),
+  addLeadsToCampaign: vi.fn(),
+  listLeads: vi.fn(),
+  listSequences: vi.fn(),
+  listSequenceSteps: vi.fn(),
+  // Batch 8: launchCampaignAction's dependencies, and the mailbox pool
+  // membership actions.
+  listMailboxes: vi.fn(),
+  listDomains: vi.fn(),
+  updateCampaign: vi.fn(),
+  addCampaignMailbox: vi.fn(),
+  removeCampaignMailbox: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
   checkRateLimit: vi.fn(),
@@ -30,10 +46,36 @@ vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
   },
 }));
 
+import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
-import { getCampaign, getCampaignLead, getUserOrganization, updateCampaignLead } from "@/lib/db";
+import {
+  addCampaignMailbox,
+  addLeadsToCampaign,
+  addLeadToCampaign,
+  getCampaign,
+  getCampaignLead,
+  getSuppressedEmails,
+  getUserOrganization,
+  listCampaignLeads,
+  listCampaignMailboxes,
+  listDomains,
+  listLeads,
+  listMailboxes,
+  listSequences,
+  listSequenceSteps,
+  removeCampaignMailbox,
+  updateCampaign,
+  updateCampaignLead,
+} from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
-import { sendNowAction } from "./actions";
+import {
+  addCampaignMailboxAction,
+  enrollLeadAction,
+  enrollLeadListAction,
+  launchCampaignAction,
+  removeCampaignMailboxAction,
+  sendNowAction,
+} from "./actions";
 import type { Tables } from "@/types/database.types";
 
 const mockRequireUser = vi.mocked(requireUser);
@@ -42,6 +84,20 @@ const mockGetCampaignLead = vi.mocked(getCampaignLead);
 const mockUpdateCampaignLead = vi.mocked(updateCampaignLead);
 const mockGetUserOrganization = vi.mocked(getUserOrganization);
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
+const mockGetSuppressedEmails = vi.mocked(getSuppressedEmails);
+const mockListCampaignMailboxes = vi.mocked(listCampaignMailboxes);
+const mockListCampaignLeads = vi.mocked(listCampaignLeads);
+const mockAddLeadToCampaign = vi.mocked(addLeadToCampaign);
+const mockAddLeadsToCampaign = vi.mocked(addLeadsToCampaign);
+const mockListLeads = vi.mocked(listLeads);
+const mockListSequences = vi.mocked(listSequences);
+const mockListSequenceSteps = vi.mocked(listSequenceSteps);
+const mockListMailboxes = vi.mocked(listMailboxes);
+const mockListDomains = vi.mocked(listDomains);
+const mockUpdateCampaign = vi.mocked(updateCampaign);
+const mockAddCampaignMailbox = vi.mocked(addCampaignMailbox);
+const mockRemoveCampaignMailbox = vi.mocked(removeCampaignMailbox);
+const mockRevalidatePath = vi.mocked(revalidatePath);
 
 const USER = { id: "user-1", email: "owner@example.com" };
 const ORGANIZATION = { id: "org-1" };
@@ -79,6 +135,38 @@ function makeCampaignLead(overrides: Partial<Tables<"campaign_leads">> = {}): Ta
   };
 }
 
+// Batch 8: launchCampaignAction fixtures — a minimal active mailbox
+// (id/display_name/email/status/daily_limit/hourly_limit is all
+// checkCampaignReadiness reads, see lib/campaigns/readiness.ts) and a
+// single-step sequence, just enough for readiness to pass and for
+// scheduleOnEnrollment's real (unmocked) computeNextSchedule to run without
+// throwing.
+function makeMailbox(overrides: Partial<{ id: string; display_name: string; email: string; status: string; daily_limit: number; hourly_limit: number }> = {}) {
+  return {
+    id: "mailbox-1",
+    display_name: "Sales",
+    email: "sales@example.com",
+    status: "active",
+    daily_limit: 50,
+    hourly_limit: 10,
+    ...overrides,
+  };
+}
+
+function makeSequenceStep(overrides: Partial<Tables<"sequence_steps">> = {}): Tables<"sequence_steps"> {
+  return {
+    id: "step-1",
+    sequence_id: "seq-1",
+    step_order: 0,
+    day_delay: 0,
+    subject: "Hi {{firstName}}",
+    body: "Body",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
@@ -89,6 +177,30 @@ beforeEach(() => {
   mockGetCampaign.mockResolvedValue(makeCampaign() as never);
   mockGetCampaignLead.mockResolvedValue(makeCampaignLead() as never);
   mockUpdateCampaignLead.mockResolvedValue(makeCampaignLead() as never);
+  // Batch 8 defaults: no suppression, no pool, no existing leads, no
+  // sequence — enrollLeadAction/enrollLeadListAction's tests below override
+  // only what each scenario needs.
+  mockGetSuppressedEmails.mockResolvedValue(new Map());
+  mockListCampaignMailboxes.mockResolvedValue([]);
+  mockListCampaignLeads.mockResolvedValue([]);
+  mockAddLeadToCampaign.mockResolvedValue(makeCampaignLead() as never);
+  mockAddLeadsToCampaign.mockResolvedValue({ inserted: 0, skipped: 0, rows: [] });
+  mockListLeads.mockResolvedValue([]);
+  mockListSequences.mockResolvedValue([]);
+  mockListSequenceSteps.mockResolvedValue([]);
+  // launchCampaignAction/addCampaignMailboxAction/removeCampaignMailboxAction
+  // defaults — the launchCampaignAction describe block below overrides these
+  // per scenario.
+  mockListMailboxes.mockResolvedValue([]);
+  mockListDomains.mockResolvedValue([]);
+  mockUpdateCampaign.mockResolvedValue(makeCampaign({ status: "active" }) as never);
+  mockAddCampaignMailbox.mockResolvedValue({
+    id: "cm-1",
+    campaign_id: "campaign-1",
+    mailbox_id: "mailbox-1",
+    created_at: "2026-01-01T00:00:00Z",
+  } as never);
+  mockRemoveCampaignMailbox.mockResolvedValue(undefined as never);
 });
 
 afterEach(() => {
@@ -216,5 +328,255 @@ describe("sendNowAction", () => {
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/too many attempts/i);
     expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+  });
+});
+
+// Batch 8: mailbox resolution order at enrollment — explicit override wins,
+// otherwise round-robin across the configured pool, falling back to
+// campaign.default_mailbox_id when there's no pool. confirmSuppressed=true
+// throughout so these tests never need to exercise the (unrelated)
+// suppression-check branch.
+describe("enrollLeadAction", () => {
+  it("uses the explicit mailbox override, never touching the pool", async () => {
+    await enrollLeadAction("campaign-1", "lead-1", "mailbox-explicit", true);
+
+    expect(mockListCampaignMailboxes).not.toHaveBeenCalled();
+    expect(mockAddLeadToCampaign).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ mailbox_id: "mailbox-explicit" }),
+    );
+  });
+
+  it("round-robins across the pool using the current enrolled-lead count as the index", async () => {
+    mockListCampaignMailboxes.mockResolvedValue([
+      { id: "cm-1", campaign_id: "campaign-1", mailbox_id: "mailbox-1", created_at: "2026-01-01T00:00:00Z" },
+      { id: "cm-2", campaign_id: "campaign-1", mailbox_id: "mailbox-2", created_at: "2026-01-01T00:00:00Z" },
+    ] as never);
+    mockListCampaignLeads.mockResolvedValue([makeCampaignLead({ id: "existing-1" })] as never);
+
+    await enrollLeadAction("campaign-1", "lead-1", undefined, true);
+
+    // One existing lead -> enrollment index 1 -> pool[1 % 2] = mailbox-2.
+    expect(mockAddLeadToCampaign).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ mailbox_id: "mailbox-2" }),
+    );
+  });
+
+  it("falls back to campaign.default_mailbox_id when the pool is empty (backward compatible)", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ default_mailbox_id: "mailbox-default" }) as never);
+    mockListCampaignMailboxes.mockResolvedValue([]);
+
+    await enrollLeadAction("campaign-1", "lead-1", undefined, true);
+
+    expect(mockAddLeadToCampaign).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ mailbox_id: "mailbox-default" }),
+    );
+  });
+
+  it("never queries the existing lead count when there is no pool (no extra cost for existing campaigns)", async () => {
+    mockListCampaignMailboxes.mockResolvedValue([]);
+
+    await enrollLeadAction("campaign-1", "lead-1", undefined, true);
+
+    expect(mockListCampaignLeads).not.toHaveBeenCalled();
+  });
+});
+
+describe("enrollLeadListAction", () => {
+  function makeLead(id: string, overrides: Partial<Tables<"leads">> = {}): Tables<"leads"> {
+    return {
+      id,
+      user_id: "user-1",
+      email: `${id}@example.com`,
+      first_name: null,
+      last_name: null,
+      company: null,
+      title: null,
+      city: null,
+      country: null,
+      linkedin: null,
+      phone: null,
+      website: null,
+      status: "new",
+      list_id: "list-1",
+      custom_fields: null,
+      verification_status: "unverified",
+      verification_detail: null,
+      verification_locked_until: null,
+      verification_risk_score: null,
+      verified_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("passes a resolver that always returns the explicit override, ignoring the pool", async () => {
+    mockListLeads.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b")]);
+
+    await enrollLeadListAction("campaign-1", "list-1", "mailbox-explicit", true);
+
+    expect(mockListCampaignMailboxes).not.toHaveBeenCalled();
+    const resolver = mockAddLeadsToCampaign.mock.calls[0][3];
+    expect(resolver(0)).toBe("mailbox-explicit");
+    expect(resolver(5)).toBe("mailbox-explicit");
+  });
+
+  it("passes a resolver that round-robins across the pool when there's no override", async () => {
+    mockListLeads.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b"), makeLead("lead-c")]);
+    mockListCampaignMailboxes.mockResolvedValue([
+      { id: "cm-1", campaign_id: "campaign-1", mailbox_id: "mailbox-1", created_at: "2026-01-01T00:00:00Z" },
+      { id: "cm-2", campaign_id: "campaign-1", mailbox_id: "mailbox-2", created_at: "2026-01-01T00:00:00Z" },
+    ] as never);
+
+    await enrollLeadListAction("campaign-1", "list-1", undefined, true);
+
+    const resolver = mockAddLeadsToCampaign.mock.calls[0][3];
+    expect(resolver(0)).toBe("mailbox-1");
+    expect(resolver(1)).toBe("mailbox-2");
+    expect(resolver(2)).toBe("mailbox-1"); // wraps around
+  });
+
+  it("passes a resolver that falls back to campaign.default_mailbox_id when the pool is empty", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ default_mailbox_id: "mailbox-default" }) as never);
+    mockListLeads.mockResolvedValue([makeLead("lead-a")]);
+    mockListCampaignMailboxes.mockResolvedValue([]);
+
+    await enrollLeadListAction("campaign-1", "list-1", undefined, true);
+
+    const resolver = mockAddLeadsToCampaign.mock.calls[0][3];
+    expect(resolver(0)).toBe("mailbox-default");
+  });
+});
+
+// Batch 8: launch-time backfill for leads enrolled before any mailbox
+// config existed (mailbox_id still null) — round-robins across the pool
+// when one is configured, same resolution order as enrollment
+// (resolvePoolMailboxId ?? resolveLeadMailboxId), and only ever touches
+// leads that actually need it.
+describe("launchCampaignAction", () => {
+  // updateCampaignLead is reused for two different writes per lead in this
+  // action: the mailbox_id backfill, and scheduleOnEnrollment's own
+  // current_step_id/next_send_at/status write. Isolate just the backfill
+  // writes for assertions below.
+  function mailboxBackfillCalls() {
+    return mockUpdateCampaignLead.mock.calls
+      .filter(([, , values]) => values !== null && typeof values === "object" && "mailbox_id" in values)
+      .map(([, id, values]) => [id, (values as { mailbox_id: string | null }).mailbox_id]);
+  }
+
+  it("backfills leads with no mailbox round-robin across the pool when default_mailbox_id is null (pool-only campaign)", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft", default_mailbox_id: null }) as never);
+    mockListCampaignLeads.mockResolvedValue([
+      makeCampaignLead({ id: "lead-1", mailbox_id: null, status: "pending" }),
+      makeCampaignLead({ id: "lead-2", mailbox_id: null, status: "pending" }),
+      makeCampaignLead({ id: "lead-3", mailbox_id: null, status: "pending" }),
+    ] as never);
+    mockListCampaignMailboxes.mockResolvedValue([
+      { id: "cm-1", campaign_id: "campaign-1", mailbox_id: "mailbox-1", created_at: "2026-01-01T00:00:00Z" },
+      { id: "cm-2", campaign_id: "campaign-1", mailbox_id: "mailbox-2", created_at: "2026-01-01T00:00:00Z" },
+    ] as never);
+    mockListMailboxes.mockResolvedValue([makeMailbox({ id: "mailbox-1" }), makeMailbox({ id: "mailbox-2" })] as never);
+    mockListSequences.mockResolvedValue([{ id: "seq-1", campaign_id: "campaign-1", name: "Default", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }] as never);
+    mockListSequenceSteps.mockResolvedValue([makeSequenceStep()]);
+
+    await launchCampaignAction("campaign-1");
+
+    expect(mockUpdateCampaign).toHaveBeenCalledWith(expect.anything(), "user-1", "campaign-1", { status: "active" });
+    expect(mailboxBackfillCalls()).toEqual([
+      ["lead-1", "mailbox-1"],
+      ["lead-2", "mailbox-2"],
+      ["lead-3", "mailbox-1"], // wraps around
+    ]);
+  });
+
+  it("only backfills leads with no mailbox_id, and the rotation index only counts backfilled leads", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft", default_mailbox_id: null }) as never);
+    mockListCampaignLeads.mockResolvedValue([
+      makeCampaignLead({ id: "lead-preassigned", mailbox_id: "mailbox-preassigned", status: "pending" }),
+      makeCampaignLead({ id: "lead-null-1", mailbox_id: null, status: "pending" }),
+      makeCampaignLead({ id: "lead-null-2", mailbox_id: null, status: "pending" }),
+    ] as never);
+    mockListCampaignMailboxes.mockResolvedValue([
+      { id: "cm-1", campaign_id: "campaign-1", mailbox_id: "mailbox-1", created_at: "2026-01-01T00:00:00Z" },
+      { id: "cm-2", campaign_id: "campaign-1", mailbox_id: "mailbox-2", created_at: "2026-01-01T00:00:00Z" },
+    ] as never);
+    mockListMailboxes.mockResolvedValue([
+      makeMailbox({ id: "mailbox-preassigned" }),
+      makeMailbox({ id: "mailbox-1" }),
+      makeMailbox({ id: "mailbox-2" }),
+    ] as never);
+    mockListSequences.mockResolvedValue([{ id: "seq-1", campaign_id: "campaign-1", name: "Default", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }] as never);
+    mockListSequenceSteps.mockResolvedValue([makeSequenceStep()]);
+
+    await launchCampaignAction("campaign-1");
+
+    // The already-assigned lead is never touched by the backfill; the two
+    // null leads get index 0 and 1 (not 1 and 2 — the preassigned lead
+    // doesn't consume a rotation slot).
+    expect(mailboxBackfillCalls()).toEqual([
+      ["lead-null-1", "mailbox-1"],
+      ["lead-null-2", "mailbox-2"],
+    ]);
+  });
+
+  it("blocks launch when leads are genuinely unresolvable (no pool, no default) and never touches any lead", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft", default_mailbox_id: null }) as never);
+    mockListCampaignLeads.mockResolvedValue([
+      makeCampaignLead({ id: "lead-1", mailbox_id: null, status: "pending" }),
+    ] as never);
+    mockListCampaignMailboxes.mockResolvedValue([]);
+    mockListMailboxes.mockResolvedValue([]);
+    mockListSequences.mockResolvedValue([{ id: "seq-1", campaign_id: "campaign-1", name: "Default", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }] as never);
+    mockListSequenceSteps.mockResolvedValue([makeSequenceStep()]);
+
+    await expect(launchCampaignAction("campaign-1")).rejects.toThrow(/no mailbox assigned/i);
+
+    expect(mockUpdateCampaign).not.toHaveBeenCalled();
+    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+  });
+});
+
+// Batch 8: mailbox pool membership toggles — both re-check ownership via
+// getCampaign before mutating campaign_mailboxes (the DB-level ownership
+// trigger is defense-in-depth, not a substitute — see actions.ts's own
+// comment), and revalidate the campaign detail path on success.
+describe("addCampaignMailboxAction", () => {
+  it("checks campaign ownership, adds the mailbox, and revalidates the campaign path", async () => {
+    await addCampaignMailboxAction("campaign-1", "mailbox-1");
+
+    expect(mockGetCampaign).toHaveBeenCalledWith(expect.anything(), "user-1", "campaign-1");
+    expect(mockAddCampaignMailbox).toHaveBeenCalledWith(expect.anything(), "campaign-1", "mailbox-1");
+    expect(mockRevalidatePath).toHaveBeenCalledWith("/campaigns/campaign-1");
+  });
+
+  it("never adds the mailbox when the ownership check fails", async () => {
+    mockGetCampaign.mockRejectedValue(new Error("not found"));
+
+    await expect(addCampaignMailboxAction("campaign-1", "mailbox-1")).rejects.toThrow();
+
+    expect(mockAddCampaignMailbox).not.toHaveBeenCalled();
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeCampaignMailboxAction", () => {
+  it("checks campaign ownership, removes the mailbox, and revalidates the campaign path", async () => {
+    await removeCampaignMailboxAction("campaign-1", "mailbox-1");
+
+    expect(mockGetCampaign).toHaveBeenCalledWith(expect.anything(), "user-1", "campaign-1");
+    expect(mockRemoveCampaignMailbox).toHaveBeenCalledWith(expect.anything(), "campaign-1", "mailbox-1");
+    expect(mockRevalidatePath).toHaveBeenCalledWith("/campaigns/campaign-1");
+  });
+
+  it("never removes the mailbox when the ownership check fails", async () => {
+    mockGetCampaign.mockRejectedValue(new Error("not found"));
+
+    await expect(removeCampaignMailboxAction("campaign-1", "mailbox-1")).rejects.toThrow();
+
+    expect(mockRemoveCampaignMailbox).not.toHaveBeenCalled();
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 });

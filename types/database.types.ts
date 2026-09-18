@@ -474,6 +474,42 @@ export type Database = {
           },
         ]
       }
+      campaign_mailboxes: {
+        Row: {
+          campaign_id: string
+          created_at: string
+          id: string
+          mailbox_id: string
+        }
+        Insert: {
+          campaign_id: string
+          created_at?: string
+          id?: string
+          mailbox_id: string
+        }
+        Update: {
+          campaign_id?: string
+          created_at?: string
+          id?: string
+          mailbox_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_mailboxes_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_mailboxes_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaigns: {
         Row: {
           created_at: string

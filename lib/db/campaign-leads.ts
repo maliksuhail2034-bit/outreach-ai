@@ -91,11 +91,21 @@ export async function removeCampaignLead(supabase: Client, id: string) {
 // unique(campaign_id, lead_id) constraint as a DB-level backstop, but
 // pre-filtering here gives an accurate inserted/skipped count for the UI
 // instead of relying on parsing constraint-violation errors per row).
+//
+// Batch 8: the single mailboxId value this used to take is now a resolver
+// callback, keyed by "enrollment index" (existing enrolled count + this
+// lead's position among the ones actually being inserted, preserving
+// leadIds' given order) — lets the caller round-robin across a mailbox pool
+// (see lib/campaigns/readiness.ts's resolvePoolMailboxId) without this
+// function needing any pool-specific knowledge of its own. The existing
+// count this already queried for dedup purposes doubles as the rotation
+// offset — no second query added. A caller with no pool just returns the
+// same mailboxId for every index, reproducing the exact prior behavior.
 export async function addLeadsToCampaign(
   supabase: Client,
   campaignId: string,
   leadIds: string[],
-  mailboxId: string | null,
+  resolveMailboxId: (enrollmentIndex: number) => string | null,
 ) {
   const { data: existing, error: existingError } = await supabase
     .from("campaign_leads")
@@ -104,9 +114,10 @@ export async function addLeadsToCampaign(
   if (existingError) throw existingError;
 
   const alreadyEnrolled = new Set(existing.map((row) => row.lead_id));
+  const startIndex = existing.length;
   const toInsert = leadIds
     .filter((leadId) => !alreadyEnrolled.has(leadId))
-    .map((leadId) => ({ campaign_id: campaignId, lead_id: leadId, mailbox_id: mailboxId }));
+    .map((leadId, index) => ({ campaign_id: campaignId, lead_id: leadId, mailbox_id: resolveMailboxId(startIndex + index) }));
 
   if (toInsert.length === 0) {
     return { inserted: 0, skipped: leadIds.length, rows: [] as Tables<"campaign_leads">[] };

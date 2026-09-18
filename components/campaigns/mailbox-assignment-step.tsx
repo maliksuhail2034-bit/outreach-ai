@@ -7,11 +7,13 @@ import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
 import type { SendingWindow } from "@/lib/validations/sending-window";
 import { updateCampaignAction } from "@/app/(app)/campaigns/actions";
+import { addCampaignMailboxAction, removeCampaignMailboxAction } from "@/app/(app)/campaigns/[campaignId]/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Campaign = Tables<"campaigns">;
+type CampaignMailbox = Tables<"campaign_mailboxes">;
 
 // updateCampaignAction takes the full campaign shape (campaignSchema has no
 // partial-update variant — see lib/validations/campaigns.ts), so this only
@@ -23,15 +25,18 @@ type Campaign = Tables<"campaigns">;
 export function MailboxAssignmentStep({
   campaign,
   mailboxes,
+  campaignMailboxes,
   sendingWindow,
   onAssigned,
 }: {
   campaign: Campaign;
   mailboxes: MailboxSafe[];
+  campaignMailboxes: CampaignMailbox[];
   sendingWindow: SendingWindow;
   onAssigned: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [isPoolPending, startPoolTransition] = useTransition();
 
   function handleChange(mailboxId: string) {
     startTransition(async () => {
@@ -51,12 +56,35 @@ export function MailboxAssignmentStep({
     });
   }
 
+  // Batch 8: pool membership toggle — checking a mailbox adds it to
+  // campaign_mailboxes, unchecking removes it. Leads already enrolled are
+  // never rewritten by either action (see addCampaignMailboxAction/
+  // removeCampaignMailboxAction's own comments) — this only affects future
+  // round-robin assignment.
+  const poolMailboxIds = new Set(campaignMailboxes.map((entry) => entry.mailbox_id));
+
+  function togglePoolMailbox(mailboxId: string, inPool: boolean) {
+    startPoolTransition(async () => {
+      try {
+        if (inPool) {
+          await removeCampaignMailboxAction(campaign.id, mailboxId);
+        } else {
+          await addCampaignMailboxAction(campaign.id, mailboxId);
+        }
+        onAssigned();
+      } catch {
+        toast.error("Couldn't update the mailbox pool. Try again.");
+      }
+    });
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Assign a sending mailbox</CardTitle>
         <CardDescription>
-          Every enrolled lead sends from this mailbox unless overridden individually.
+          Leads without an individual override send from the mailbox pool below when one is configured, or from this
+          default mailbox otherwise.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -87,6 +115,39 @@ export function MailboxAssignmentStep({
           </Select>
         )}
       </CardContent>
+
+      {mailboxes.length > 0 && (
+        <CardContent className="space-y-3 border-t border-border pt-4">
+          <div>
+            <p className="text-sm font-medium">Mailbox pool (optional)</p>
+            <p className="text-sm text-muted-foreground">
+              Enrolling leads without an explicit mailbox spreads them round-robin across the mailboxes checked
+              below, instead of always using the single mailbox above.
+            </p>
+          </div>
+          <ul className="space-y-2">
+            {mailboxes.map((mailbox) => {
+              const inPool = poolMailboxIds.has(mailbox.id);
+              return (
+                <li key={mailbox.id} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`pool-${mailbox.id}`}
+                    className="size-4 rounded-sm border-input accent-primary"
+                    checked={inPool}
+                    disabled={isPoolPending}
+                    onChange={() => togglePoolMailbox(mailbox.id, inPool)}
+                  />
+                  <label htmlFor={`pool-${mailbox.id}`} className="text-sm">
+                    {mailbox.display_name || mailbox.email}
+                    {mailbox.status !== "active" ? ` (${mailbox.status})` : ""}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </CardContent>
+      )}
     </Card>
   );
 }

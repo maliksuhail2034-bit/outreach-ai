@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
+  addCampaignMailbox,
   addLeadsToCampaign,
   addLeadToCampaign,
   cancelActiveCampaignLeads,
@@ -26,6 +27,7 @@ import {
   getUserOrganization,
   linkAttachmentsToStep,
   listCampaignLeads,
+  listCampaignMailboxes,
   listDomains,
   listLeads,
   listMailboxes,
@@ -33,6 +35,7 @@ import {
   listSequences,
   listSequenceSteps,
   removeCampaignLead,
+  removeCampaignMailbox,
   resolveSendAttemptManually,
   swapSequenceStepOrder,
   updateCampaign,
@@ -40,7 +43,7 @@ import {
   updateSequenceStep,
 } from "@/lib/db";
 import { computeNextSchedule } from "@/lib/email/scheduling";
-import { checkCampaignReadiness, resolveLeadMailboxId } from "@/lib/campaigns/readiness";
+import { checkCampaignReadiness, resolveLeadMailboxId, resolvePoolMailboxId } from "@/lib/campaigns/readiness";
 import {
   ATTACHMENTS_BUCKET,
   MAX_ATTACHMENTS_PER_STEP,
@@ -177,6 +180,7 @@ export async function launchCampaignAction(campaignId: string) {
     const leads = await listCampaignLeads(supabase, campaignId);
     const mailboxes = await listMailboxes(supabase, user.id);
     const domains = await listDomains(supabase, user.id);
+    const campaignMailboxes = await listCampaignMailboxes(supabase, campaignId);
 
     // Same check the campaign detail/wizard UI runs to show readiness ahead
     // of the click (see lib/campaigns/readiness.ts) — re-run here because
@@ -190,6 +194,7 @@ export async function launchCampaignAction(campaignId: string) {
       sequenceStepCount: steps.length,
       mailboxes,
       domainCount: (domains ?? []).length,
+      campaignMailboxes,
     });
     if (!readiness.ready) {
       throw new UserFacingError(readiness.errors.join(" "));
@@ -197,6 +202,14 @@ export async function launchCampaignAction(campaignId: string) {
 
     const activatedCampaign = { ...campaign, status: "active" as const };
     await updateCampaign(supabase, user.id, campaignId, { status: "active" });
+
+    // Batch 8: this pass's own rotation cursor — starts at 0 for leads
+    // needing backfill in this launch, independent of enrollLeadAction/
+    // enrollLeadListAction's own "existing enrolled count" cursors (this is
+    // a distinct, later event: a one-time cleanup sweep at launch, not a
+    // fresh enrollment). Only increments for leads that actually get
+    // backfilled below.
+    let poolBackfillIndex = 0;
 
     for (const lead of leads) {
       if (lead.status !== "pending") continue;
@@ -210,8 +223,10 @@ export async function launchCampaignAction(campaignId: string) {
       // would silently never be picked up by the send worker.
       let scheduledLead = lead;
       if (!lead.mailbox_id) {
+        const resolvedMailboxId = resolvePoolMailboxId(campaignMailboxes, poolBackfillIndex) ?? resolveLeadMailboxId(lead, campaign);
+        poolBackfillIndex += 1;
         scheduledLead = await updateCampaignLead(supabase, lead.id, {
-          mailbox_id: resolveLeadMailboxId(lead, campaign),
+          mailbox_id: resolvedMailboxId,
         });
       }
 
@@ -320,7 +335,21 @@ export async function enrollLeadAction(
       }
     }
 
-    const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
+    // Batch 8: explicit override wins outright; otherwise round-robin across
+    // the configured pool (using this campaign's current enrolled-lead count
+    // as the rotation index — see resolvePoolMailboxId), falling back to
+    // campaign.default_mailbox_id when there's no pool. The pool is only
+    // fetched/counted when there's no explicit override, so an existing
+    // campaign with no pool configured pays no extra query cost.
+    let effectiveMailboxId = mailboxId ? mailboxId : null;
+    if (!effectiveMailboxId) {
+      const pool = await listCampaignMailboxes(supabase, campaignId);
+      if (pool.length > 0) {
+        const enrollmentIndex = (await listCampaignLeads(supabase, campaignId)).length;
+        effectiveMailboxId = resolvePoolMailboxId(pool, enrollmentIndex);
+      }
+      effectiveMailboxId ??= campaign.default_mailbox_id;
+    }
 
     const campaignLead = await addLeadToCampaign(supabase, {
       campaign_id: campaignId,
@@ -348,7 +377,14 @@ export async function enrollLeadListAction(
     const campaign = await getCampaign(supabase, user.id, campaignId);
     const organization = await getUserOrganization(supabase, user);
     await checkRateLimit("campaign:enroll", organization.id);
-    const effectiveMailboxId = mailboxId ? mailboxId : campaign.default_mailbox_id;
+
+    // Batch 8: explicit override wins outright for every lead in this batch;
+    // otherwise round-robin across the configured pool, falling back to
+    // campaign.default_mailbox_id per lead when there's no pool — see
+    // addLeadsToCampaign's resolver contract and resolvePoolMailboxId.
+    const pool = mailboxId ? [] : await listCampaignMailboxes(supabase, campaignId);
+    const resolveMailboxId = (enrollmentIndex: number): string | null =>
+      mailboxId ? mailboxId : (resolvePoolMailboxId(pool, enrollmentIndex) ?? campaign.default_mailbox_id);
 
     const leads = await listLeads(supabase, user.id, { listId, limit: 10000 });
     const leadRows = leads ?? [];
@@ -368,7 +404,7 @@ export async function enrollLeadListAction(
     }
 
     const leadIds = leadRows.map((lead) => lead.id);
-    const result = await addLeadsToCampaign(supabase, campaignId, leadIds, effectiveMailboxId);
+    const result = await addLeadsToCampaign(supabase, campaignId, leadIds, resolveMailboxId);
 
     const steps = await loadSequenceSteps(supabase, campaignId);
     for (const campaignLead of result.rows) {
@@ -377,6 +413,41 @@ export async function enrollLeadListAction(
 
     revalidatePath(`/campaigns/${campaignId}`);
     return { inserted: result.inserted, skipped: result.skipped };
+  });
+}
+
+// Batch 8: mailbox pool membership toggles for the wizard's multi-select
+// (components/campaigns/mailbox-assignment-step.tsx). getCampaign(userId,
+// campaignId) is the ownership check, same reasoning as every other
+// mutation in this file — the DB-level ownership trigger on
+// campaign_mailboxes (20260918120000_campaign_mailboxes.sql) is
+// defense-in-depth, not a substitute for it. No readiness/scheduling
+// side effects here: the pool only affects assignment at enrollment time
+// (enrollLeadAction/enrollLeadListAction) and at launch-time backfill
+// (launchCampaignAction) — adding/removing a pool mailbox never rewrites
+// any already-enrolled lead's mailbox_id (see the migration's own
+// on-delete-cascade comment for why removal is safe by construction).
+export async function addCampaignMailboxAction(campaignId: string, mailboxId: string) {
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    await getCampaign(supabase, user.id, campaignId);
+    await addCampaignMailbox(supabase, campaignId, mailboxId);
+
+    revalidatePath(`/campaigns/${campaignId}`);
+  });
+}
+
+export async function removeCampaignMailboxAction(campaignId: string, mailboxId: string) {
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    await getCampaign(supabase, user.id, campaignId);
+    await removeCampaignMailbox(supabase, campaignId, mailboxId);
+
+    revalidatePath(`/campaigns/${campaignId}`);
   });
 }
 

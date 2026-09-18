@@ -33,9 +33,19 @@ const STEPS: { id: WizardStepId; label: string }[] = [
 // Derives readiness purely from already-loaded data (never stored wizard
 // state), so leaving mid-setup and coming back just resumes correctly — see
 // the Campaign Builder plan's "Proposed UI flow" section.
-function deriveStep(campaign: Campaign, campaignLeads: CampaignLead[], sequenceSteps: SequenceStep[]): WizardStepId {
+//
+// Batch 8: a configured mailbox pool also satisfies the "mailbox" step, not
+// just default_mailbox_id — a campaign can be fully set up with only a pool
+// and no default. default_mailbox_id remains the fallback-of-last-resort at
+// enrollment time either way (see lib/campaigns/readiness.ts).
+function deriveStep(
+  campaign: Campaign,
+  campaignLeads: CampaignLead[],
+  campaignMailboxes: Tables<"campaign_mailboxes">[],
+  sequenceSteps: SequenceStep[],
+): WizardStepId {
   if (campaignLeads.length === 0) return "leads";
-  if (!campaign.default_mailbox_id) return "mailbox";
+  if (!campaign.default_mailbox_id && campaignMailboxes.length === 0) return "mailbox";
   if (sequenceSteps.length === 0) return "sequence";
   return "review";
 }
@@ -47,6 +57,7 @@ export function CampaignSetupWizard({
   availableLeads,
   leadLists,
   mailboxes,
+  campaignMailboxes,
   sequenceId,
   sequenceSteps,
   templates,
@@ -61,6 +72,7 @@ export function CampaignSetupWizard({
   availableLeads: Lead[];
   leadLists: LeadList[];
   mailboxes: MailboxSafe[];
+  campaignMailboxes: Tables<"campaign_mailboxes">[];
   sequenceId: string | null;
   sequenceSteps: SequenceStep[];
   templates: Tables<"templates">[];
@@ -69,7 +81,7 @@ export function CampaignSetupWizard({
   suppressions: Tables<"suppressions">[];
   readiness: CampaignReadinessResult;
 }) {
-  const derivedStep = deriveStep(campaign, campaignLeads, sequenceSteps);
+  const derivedStep = deriveStep(campaign, campaignLeads, campaignMailboxes, sequenceSteps);
   const [selected, setSelected] = useState<WizardStepId>(derivedStep);
 
   // Auto-advance only when the step the user was actually sitting on just
@@ -86,7 +98,7 @@ export function CampaignSetupWizard({
 
   const completed: Record<WizardStepId, boolean> = {
     leads: campaignLeads.length > 0,
-    mailbox: Boolean(campaign.default_mailbox_id),
+    mailbox: Boolean(campaign.default_mailbox_id) || campaignMailboxes.length > 0,
     sequence: sequenceSteps.length > 0,
     review: false,
   };
@@ -140,6 +152,7 @@ export function CampaignSetupWizard({
         <MailboxAssignmentStep
           campaign={campaign}
           mailboxes={mailboxes}
+          campaignMailboxes={campaignMailboxes}
           sendingWindow={sendingWindow}
           onAssigned={() => setSelected(derivedStep)}
         />

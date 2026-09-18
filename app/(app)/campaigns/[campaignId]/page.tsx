@@ -20,6 +20,7 @@ import {
   listAnalyticsEvents,
   listAttachmentsForSteps,
   listCampaignLeads,
+  listCampaignMailboxes,
   listDomains,
   listEmailEvents,
   listLeadLists,
@@ -113,6 +114,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     availableLeadsRead,
     leadListsResult,
     mailboxesResult,
+    campaignMailboxesResult,
     sequencesResult,
     templatesResult,
     suppressionsResult,
@@ -137,6 +139,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     optionalRead(() => listLeadsAvailableForCampaign(supabase, user.id, campaignId, { limit: 10000 }), []),
     optionalRead(() => listLeadLists(supabase, user.id), []),
     optionalRead(() => listMailboxes(supabase, user.id), []),
+    optionalRead(() => listCampaignMailboxes(supabase, campaignId), []),
     optionalRead(() => listSequences(supabase, campaignId), []),
     optionalRead(() => listTemplates(supabase, user.id), []),
     optionalRead(() => listSuppressions(supabase, user.id), []),
@@ -157,6 +160,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   const availableLeads = availableLeadsRead.data ?? [];
   const leadLists = leadListsResult.data;
   const mailboxes = mailboxesResult.data;
+  const campaignMailboxes = campaignMailboxesResult.data;
   const sequences = sequencesResult.data;
   const templates = templatesResult.data;
   const suppressions = suppressionsResult.data;
@@ -212,6 +216,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       availableLeadsRead,
       leadListsResult,
       mailboxesResult,
+      campaignMailboxesResult,
       templatesResult,
       suppressionsResult,
       domainsResult,
@@ -223,6 +228,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       availableLeadsRead,
       leadListsResult,
       mailboxesResult,
+      campaignMailboxesResult,
       templatesResult,
       suppressionsResult,
       domainsResult,
@@ -238,6 +244,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     sequenceStepCount: sequenceSteps.length,
     mailboxes,
     domainCount: (domains ?? []).length,
+    campaignMailboxes,
   });
   const executionState = deriveExecutionState(campaign.status, readiness);
 
@@ -310,6 +317,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 availableLeads={availableLeads}
                 leadLists={leadLists ?? []}
                 mailboxes={mailboxes}
+                campaignMailboxes={campaignMailboxes ?? []}
                 sequenceId={sequence?.id ?? null}
                 sequenceSteps={sequenceSteps ?? []}
                 templates={templates ?? []}

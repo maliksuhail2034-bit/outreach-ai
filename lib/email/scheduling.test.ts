@@ -5,6 +5,7 @@ import {
   computeNextSendTime,
   computeRetryDelay,
   findNextStep,
+  findPreviousStep,
   recomputeNextSendAt,
   type SequenceStepLike,
 } from "./scheduling";
@@ -223,6 +224,40 @@ describe("findNextStep", () => {
   it("sorts by step_order regardless of input array order", () => {
     const shuffled = [steps[2], steps[0], steps[1]];
     expect(findNextStep(shuffled, null)).toEqual(steps[0]);
+  });
+});
+
+describe("findPreviousStep", () => {
+  const steps: SequenceStepLike[] = [
+    { id: "a", step_order: 0, day_delay: 0 },
+    { id: "b", step_order: 1, day_delay: 2 },
+    { id: "c", step_order: 2, day_delay: 3 },
+  ];
+
+  it("returns null when currentStepId is null", () => {
+    expect(findPreviousStep(steps, null)).toBeNull();
+  });
+
+  it("returns null for the first step — nothing precedes it", () => {
+    expect(findPreviousStep(steps, "a")).toBeNull();
+  });
+
+  it("returns the step immediately before the current one", () => {
+    expect(findPreviousStep(steps, "b")).toEqual(steps[0]);
+    expect(findPreviousStep(steps, "c")).toEqual(steps[1]);
+  });
+
+  it("returns null when currentStepId doesn't match any step", () => {
+    expect(findPreviousStep(steps, "does-not-exist")).toBeNull();
+  });
+
+  it("returns null for an empty sequence", () => {
+    expect(findPreviousStep([], "a")).toBeNull();
+  });
+
+  it("sorts by step_order regardless of input array order", () => {
+    const shuffled = [steps[2], steps[0], steps[1]];
+    expect(findPreviousStep(shuffled, "c")).toEqual(steps[1]);
   });
 });
 

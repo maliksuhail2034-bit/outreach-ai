@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
-import { processClaimedLeads, loadAttachmentsForSend, type ProcessOutcome, type SendWorkerSummary } from "./send-worker";
+import {
+  processClaimedLeads,
+  loadAttachmentsForSend,
+  resolveThreadingHeaders,
+  type ProcessOutcome,
+  type SendWorkerSummary,
+} from "./send-worker";
 import { EmailSendError } from "./provider";
 
 function makeLead(id: string, mailboxId: string | null): Tables<"campaign_leads"> {
@@ -320,5 +326,127 @@ describe("loadAttachmentsForSend", () => {
     await expect(
       loadAttachmentsForSend(client, "step-1", "user-1", { campaignLeadId: "cl-1", sequenceStepId: "step-1" }),
     ).rejects.toThrow(EmailSendError);
+  });
+});
+
+// Batch 7 (pre-launch checklist item #7): follow-up campaign emails now
+// thread under the immediately preceding step's send, the same
+// inReplyTo/references capability already proven by the warmup engine's
+// auto-reply step (lib/warmup/warmup-worker.ts) — see resolveThreadingHeaders's
+// own header comment in send-worker.ts for the full reasoning.
+describe("resolveThreadingHeaders", () => {
+  function makeStep(id: string, stepOrder: number): Tables<"sequence_steps"> {
+    return {
+      id,
+      sequence_id: "sequence-1",
+      step_order: stepOrder,
+      day_delay: 0,
+      subject: null,
+      body: null,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+  }
+
+  const stepOne = makeStep("step-1", 0);
+  const stepTwo = makeStep("step-2", 1);
+  const steps = [stepOne, stepTwo];
+
+  function makeSendAttempt(overrides: Partial<Tables<"send_attempts">> = {}): Tables<"send_attempts"> {
+    return {
+      id: "attempt-1",
+      campaign_lead_id: "cl-1",
+      sequence_step_id: "step-1",
+      status: "sent",
+      attempt_count: 1,
+      provider_message_id: "abc123@mail.example.com",
+      last_error: null,
+      claimed_at: "2026-01-01T00:00:00Z",
+      resolved_at: "2026-01-01T00:00:01Z",
+      resolved_manually: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:01Z",
+      ...overrides,
+    };
+  }
+
+  // Mirrors getSendAttempt's exact query shape (select -> eq -> eq ->
+  // maybeSingle) — same fake-Client pattern as lib/db/warmup.test.ts.
+  function createSendAttemptLookupClient(result: Tables<"send_attempts"> | null) {
+    const chainable = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: result, error: null })),
+    };
+    chainable.select.mockReturnValue(chainable);
+    chainable.eq.mockReturnValue(chainable);
+    const from = vi.fn(() => chainable);
+    const client = { from } as unknown as Client;
+    return { client, chainable };
+  }
+
+  it("returns no headers for a campaign lead's first email — there is no previous step", async () => {
+    const { client, chainable } = createSendAttemptLookupClient(null);
+
+    const result = await resolveThreadingHeaders(client, steps, stepOne, "cl-1");
+
+    expect(result).toEqual({});
+    // Never even queries send_attempts — nothing precedes the first step.
+    expect(chainable.select).not.toHaveBeenCalled();
+  });
+
+  it("threads under the previous step's successful send", async () => {
+    const previousAttempt = makeSendAttempt({ status: "sent", provider_message_id: "parent-msg-id@example.com" });
+    const { client, chainable } = createSendAttemptLookupClient(previousAttempt);
+
+    const result = await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
+
+    expect(result).toEqual({
+      inReplyTo: "parent-msg-id@example.com",
+      references: ["parent-msg-id@example.com"],
+    });
+    // Looks up the PREVIOUS step (step-1), never the current one (step-2).
+    expect(chainable.eq).toHaveBeenCalledWith("campaign_lead_id", "cl-1");
+    expect(chainable.eq).toHaveBeenCalledWith("sequence_step_id", "step-1");
+    expect(chainable.eq).not.toHaveBeenCalledWith("sequence_step_id", "step-2");
+  });
+
+  it("does not thread when the previous attempt failed — a failed attempt is never the parent", async () => {
+    const previousAttempt = makeSendAttempt({ status: "failed", provider_message_id: null });
+    const { client } = createSendAttemptLookupClient(previousAttempt);
+
+    const result = await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
+
+    expect(result).toEqual({});
+  });
+
+  it("does not thread when the previous attempt is still pending (an in-flight/unknown-outcome retry)", async () => {
+    const previousAttempt = makeSendAttempt({ status: "pending", provider_message_id: null });
+    const { client } = createSendAttemptLookupClient(previousAttempt);
+
+    const result = await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
+
+    expect(result).toEqual({});
+  });
+
+  it("does not invent a Message-ID when there is no previous attempt row at all", async () => {
+    const { client } = createSendAttemptLookupClient(null);
+
+    const result = await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
+
+    expect(result).toEqual({});
+  });
+
+  it("a retry of the current step queries the previous step's row, never the current step's own (no self-reference)", async () => {
+    // Even though the current step (step-2) itself might have its own
+    // 'pending'/'failed' send_attempts row after a retry, resolveThreadingHeaders
+    // never looks it up — only step-1 (the previous step) is queried, so a
+    // retry of the current step can never become its own threading parent.
+    const previousAttempt = makeSendAttempt({ status: "sent", provider_message_id: "parent-msg-id@example.com" });
+    const { client, chainable } = createSendAttemptLookupClient(previousAttempt);
+
+    await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
+
+    expect(chainable.eq).not.toHaveBeenCalledWith("sequence_step_id", stepTwo.id);
   });
 });

@@ -24,7 +24,7 @@ import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
 import { buildAttachmentPayload, type DownloadedAttachment } from "./attachment-payload";
 import { ATTACHMENTS_BUCKET } from "./attachment-validation";
-import { computeNextSchedule, computeRetryDelay } from "./scheduling";
+import { computeNextSchedule, computeRetryDelay, findPreviousStep } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
 
@@ -215,6 +215,48 @@ export async function loadAttachmentsForSend(
     );
   }
   return attachments;
+}
+
+// Batch 7: threading headers for a follow-up step. The provider abstraction
+// (inReplyTo/references on OutboundEmailMessage) and SMTP implementation
+// already exist — built for the warmup engine's auto-reply step
+// (lib/warmup/warmup-worker.ts) — this is the campaign send path's first use
+// of it. Mirrors warmup's own references shape exactly: a single-element
+// array containing the immediate parent's provider_message_id, not an
+// accumulated multi-hop chain — see warmup-worker.ts's sendWarmupMessage.
+//
+// "Previous step" is the sequence step immediately before targetStep by
+// step_order (findPreviousStep), never current_step_id - 1 — step_order is
+// the only ordering guarantee sequence_steps makes (see
+// lib/db/sequence-steps.ts's swapSequenceStepOrder).
+//
+// Retry safety: this looks up the PREVIOUS step's send_attempts row, a
+// different sequence_step_id than the one claimSendAttempt just claimed for
+// the CURRENT step — a retry/reclaim of the current step's own attempt can
+// therefore never become its own threading parent by construction, no
+// special-casing needed. Only a previous attempt with status = 'sent' and a
+// real provider_message_id is used; a missing, 'pending', or 'failed'
+// previous attempt (or no previous step at all — the lead's first email)
+// returns {}, so the send proceeds unthreaded exactly like today, rather
+// than inventing a Message-ID.
+export async function resolveThreadingHeaders(
+  supabase: Client,
+  steps: Tables<"sequence_steps">[],
+  targetStep: Tables<"sequence_steps">,
+  campaignLeadId: string,
+): Promise<{ inReplyTo?: string; references?: string[] }> {
+  const previousStep = findPreviousStep(steps, targetStep.id);
+  if (!previousStep) return {};
+
+  const previousAttempt = await getSendAttempt(supabase, campaignLeadId, previousStep.id);
+  if (!previousAttempt || previousAttempt.status !== "sent" || !previousAttempt.provider_message_id) {
+    return {};
+  }
+
+  return {
+    inReplyTo: previousAttempt.provider_message_id,
+    references: [previousAttempt.provider_message_id],
+  };
 }
 
 async function processCampaignLead(
@@ -412,6 +454,8 @@ async function processCampaignLead(
       sequenceStepId: targetStep.id,
     });
 
+    const threadingHeaders = await resolveThreadingHeaders(supabase, steps, targetStep, campaignLead.id);
+
     const result = await provider.send({
       from: { name: mailbox.display_name ?? undefined, email: mailbox.email },
       to: {
@@ -421,6 +465,7 @@ async function processCampaignLead(
       subject,
       html,
       text,
+      ...threadingHeaders,
       ...(attachments.length > 0 ? { attachments } : {}),
     });
 

@@ -115,6 +115,18 @@ export function findNextStep(steps: SequenceStepLike[], currentStepId: string | 
   return sorted[currentIndex + 1] ?? null;
 }
 
+// Mirror of findNextStep, walking backward — used by send-worker.ts to find
+// the step a follow-up should thread under (see resolveThreadingHeaders).
+// currentStepId === null or unmatched has no meaningful "previous" -> null,
+// same as the first step in the sequence having none.
+export function findPreviousStep(steps: SequenceStepLike[], currentStepId: string | null): SequenceStepLike | null {
+  if (currentStepId === null) return null;
+  const sorted = [...steps].sort((a, b) => a.step_order - b.step_order);
+  const currentIndex = sorted.findIndex((step) => step.id === currentStepId);
+  if (currentIndex <= 0) return null;
+  return sorted[currentIndex - 1] ?? null;
+}
+
 export interface NextScheduleResult {
   nextStepId: string | null;
   nextSendAt: Date | null;

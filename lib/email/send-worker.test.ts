@@ -1,14 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
   processClaimedLeads,
   loadAttachmentsForSend,
   resolveThreadingHeaders,
+  injectOpenTrackingPixel,
   type ProcessOutcome,
   type SendWorkerSummary,
 } from "./send-worker";
 import { EmailSendError } from "./provider";
+import { verifyOpenTrackingToken, type OpenTrackingContext } from "./tracking-token";
 
 function makeLead(id: string, mailboxId: string | null): Tables<"campaign_leads"> {
   return {
@@ -448,5 +450,75 @@ describe("resolveThreadingHeaders", () => {
     await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
 
     expect(chainable.eq).not.toHaveBeenCalledWith("sequence_step_id", stepTwo.id);
+  });
+});
+
+// Batch 9A: open-tracking pixel injection, pulled out of processCampaignLead
+// for direct unit testing — same rationale as loadAttachmentsForSend/
+// resolveThreadingHeaders above.
+describe("injectOpenTrackingPixel", () => {
+  const CONTEXT: OpenTrackingContext = {
+    campaignId: "campaign-1",
+    campaignLeadId: "cl-1",
+    leadId: "lead-1",
+    mailboxId: "mailbox-1",
+    sequenceStepId: "step-1",
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("TRACKING_TOKEN_SECRET", "test-secret-do-not-use-in-prod");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.com");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("appends a hidden 1x1 pixel <img> to the HTML body when tracking is enabled", () => {
+    const html = "<p>Hello there</p>";
+    const result = injectOpenTrackingPixel(html, true, CONTEXT);
+
+    expect(result.startsWith(html)).toBe(true);
+    expect(result).toContain('<img src="https://app.example.com/api/track/open/');
+    expect(result).toContain('width="1" height="1"');
+  });
+
+  it("the injected pixel URL carries a token that verifies back to the exact send context", () => {
+    const result = injectOpenTrackingPixel("<p>Body</p>", true, CONTEXT);
+    const match = result.match(/src="https:\/\/app\.example\.com\/api\/track\/open\/([^"]+)"/);
+    expect(match).not.toBeNull();
+
+    const token = match![1];
+    expect(verifyOpenTrackingToken(token)).toEqual(CONTEXT);
+  });
+
+  it("returns the HTML unchanged when tracking is disabled", () => {
+    const html = "<p>Hello there</p>";
+    const result = injectOpenTrackingPixel(html, false, CONTEXT);
+
+    expect(result).toBe(html);
+    expect(result).not.toContain("<img");
+  });
+
+  it("degrades to the HTML unchanged (never throws) when required tracking config is missing", () => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("TRACKING_TOKEN_SECRET", "test-secret-do-not-use-in-prod");
+    // NEXT_PUBLIC_APP_URL deliberately left unset — buildOpenTrackingUrl
+    // throws in that case; injectOpenTrackingPixel must swallow it.
+    const html = "<p>Hello there</p>";
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = injectOpenTrackingPixel(html, true, CONTEXT);
+
+    expect(result).toBe(html);
+    expect(consoleWarn).toHaveBeenCalled();
+    consoleWarn.mockRestore();
+  });
+
+  it("never touches the plain-text body — injectOpenTrackingPixel only takes/returns an html string", () => {
+    // Structural guarantee: the function signature has no text parameter,
+    // so there is no code path by which it could append markup to a
+    // plain-text body. This test documents that invariant explicitly.
+    expect(injectOpenTrackingPixel.length).toBe(3);
   });
 });

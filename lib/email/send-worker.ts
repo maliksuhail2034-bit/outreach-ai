@@ -26,6 +26,7 @@ import { buildAttachmentPayload, type DownloadedAttachment } from "./attachment-
 import { ATTACHMENTS_BUCKET } from "./attachment-validation";
 import { computeNextSchedule, computeRetryDelay, findPreviousStep } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
+import { buildOpenTrackingUrl, type OpenTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
 
 const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
@@ -259,6 +260,37 @@ export async function resolveThreadingHeaders(
   };
 }
 
+// Batch 9A: open-tracking pixel injection, pulled out of processCampaignLead
+// the same way loadAttachmentsForSend/resolveThreadingHeaders above are —
+// small and pure enough to unit-test directly, without mocking the entire
+// send pipeline processCampaignLead owns.
+//
+// HTML only, never the plain-text body: an <img> tag is invisible in an
+// HTML email client but would show up as a raw, suspicious-looking URL if
+// appended to the plain-text part, which is exactly the failure mode the
+// unsubscribe-footer code above this avoids for its own link.
+//
+// Non-fatal by design: unlike the unsubscribe footer (a compliance
+// requirement, added above), open tracking is a nice-to-have. A config
+// problem (e.g. TRACKING_TOKEN_SECRET or NEXT_PUBLIC_APP_URL unset)
+// degrades to "send without a pixel" rather than failing the send —
+// otherwise turning this feature on in an environment missing that secret
+// would break every single send for every org with tracking enabled.
+export function injectOpenTrackingPixel(html: string, trackingEnabled: boolean, context: OpenTrackingContext): string {
+  if (!trackingEnabled) return html;
+
+  try {
+    const pixelUrl = buildOpenTrackingUrl(context);
+    return `${html}<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`;
+  } catch (error) {
+    console.warn("[send-worker] failed to build open-tracking pixel, sending without it", {
+      campaignLeadId: context.campaignLeadId,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    return html;
+  }
+}
+
 async function processCampaignLead(
   supabase: Client,
   campaignLead: Tables<"campaign_leads">,
@@ -432,12 +464,25 @@ async function processCampaignLead(
   // plain-text body: {{unsubscribe_link}} resolves to the raw URL there,
   // while the HTML body has it (and every other character) entity-escaped,
   // so a literal `&`-containing URL would never match against `html`.
+  const settings = await getSettings(supabase, campaign.user_id);
+
   if (!text.includes(unsubscribeUrl)) {
-    const settings = await getSettings(supabase, campaign.user_id);
     const footerText = settings?.unsubscribe_text || DEFAULT_UNSUBSCRIBE_FOOTER_TEXT;
     html += `<hr/><p style="font-size:12px;color:#666;">${escapeHtml(footerText)} <a href="${unsubscribeUrl}">Unsubscribe</a></p>`;
     text += `\n\n${footerText}: ${unsubscribeUrl}`;
   }
+
+  // Batch 9A: open tracking. Uses the existing settings.tracking_enabled
+  // value as-is (default true, same fallback the Settings page itself uses
+  // — see app/(app)/settings/page.tsx) — the toggle already exists and is
+  // documented as inert until this. No Settings UI/schema change here.
+  html = injectOpenTrackingPixel(html, settings?.tracking_enabled ?? true, {
+    campaignId: campaignLead.campaign_id,
+    campaignLeadId: campaignLead.id,
+    leadId: campaignLead.lead_id,
+    mailboxId: campaignLead.mailbox_id,
+    sequenceStepId: targetStep.id,
+  });
 
   const provider = getEmailProvider(mailbox);
 

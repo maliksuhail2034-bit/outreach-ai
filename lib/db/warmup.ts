@@ -82,14 +82,11 @@ export async function listWarmupEvents(supabase: Client, organizationId: string,
 
 // Atomic claim via claim_due_warmup_sends() (`for update skip locked`,
 // mirrors claimMailboxesForReplySync/claimDueSends) — an overlapping cron
-// invocation can never double-process the same profile.
-export async function claimDueWarmupSends(
-  supabase: Client,
-  organizationId: string,
-  limit = 10,
-): Promise<Tables<"warmup_profiles">[]> {
+// invocation can never double-process the same profile. Claims across all
+// organizations; each returned row carries its own organization_id, which
+// drives all downstream scoping (peer selection, sends, stats).
+export async function claimDueWarmupSends(supabase: Client, limit = 10): Promise<Tables<"warmup_profiles">[]> {
   const { data, error } = await supabase.rpc("claim_due_warmup_sends", {
-    p_organization_id: organizationId,
     p_limit: limit,
   });
   if (error) throw error;

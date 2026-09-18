@@ -1905,7 +1905,7 @@ export type Database = {
         }
       }
       claim_due_warmup_sends: {
-        Args: { p_limit?: number; p_organization_id: string }
+        Args: { p_limit?: number }
         Returns: {
           consecutive_failures: number
           created_at: string

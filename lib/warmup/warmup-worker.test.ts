@@ -1,9 +1,56 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
+
+// Batch 5: mocks for runWarmupCycleWorker's multi-org claim regression test
+// below. Every function warmup-worker.ts imports from "@/lib/db" must be
+// present here (vi.mock replaces the whole module) even though this test
+// only exercises a subset of them.
+const {
+  claimDueWarmupSendsMock,
+  releaseWarmupProfileLockMock,
+  getMailboxCredentialsMock,
+  listDueWarmupRepliesMock,
+  listWarmupMessagesSentOnDateMock,
+  countWarmupMessagesReceivedOnDateMock,
+  upsertWarmupStatMock,
+} = vi.hoisted(() => ({
+  claimDueWarmupSendsMock: vi.fn(),
+  releaseWarmupProfileLockMock: vi.fn(),
+  getMailboxCredentialsMock: vi.fn(),
+  listDueWarmupRepliesMock: vi.fn(),
+  listWarmupMessagesSentOnDateMock: vi.fn(),
+  countWarmupMessagesReceivedOnDateMock: vi.fn(),
+  upsertWarmupStatMock: vi.fn(),
+}));
+
+// Safe default so the pre-existing processClaimedWarmupProfiles tests below
+// (which never configure this mock themselves) don't crash on
+// `releaseWarmupProfileLock(...).catch(...)` — clearAllMocks() in this
+// file's beforeEach clears call history but not this implementation.
+releaseWarmupProfileLockMock.mockResolvedValue(undefined);
+
+vi.mock("@/lib/db", () => ({
+  claimDueWarmupSends: claimDueWarmupSendsMock,
+  releaseWarmupProfileLock: releaseWarmupProfileLockMock,
+  updateWarmupProfile: vi.fn(),
+  insertWarmupEvent: vi.fn(),
+  insertWarmupMessage: vi.fn(),
+  updateWarmupMessage: vi.fn(),
+  getWarmupMessageByProviderMessageId: vi.fn(),
+  listDueWarmupReplies: listDueWarmupRepliesMock,
+  countWarmupMessagesSentToday: vi.fn(),
+  listWarmupMessagesSentOnDate: listWarmupMessagesSentOnDateMock,
+  countWarmupMessagesReceivedOnDate: countWarmupMessagesReceivedOnDateMock,
+  upsertWarmupStat: upsertWarmupStatMock,
+  listWarmupProfiles: vi.fn(),
+  getMailboxCredentials: getMailboxCredentialsMock,
+}));
+
 import {
   classifyWarmupFailure,
   processClaimedWarmupProfiles,
+  runWarmupCycleWorker,
   selectWarmupPeer,
   type ProcessWarmupProfileOutcome,
   type WarmupCycleSummary,
@@ -126,6 +173,57 @@ describe("selectWarmupPeer", () => {
     expect(seen.has("peer-1")).toBe(true);
     expect(seen.has("peer-2")).toBe(true);
     expect(seen.has("self")).toBe(false);
+  });
+});
+
+// Batch 5: regression coverage for the fix removing
+// WARMUP_ENGINE_ORGANIZATION_ID / lib/warmup/owner-scope.ts. Profiles are
+// given stage "healthy" (outside forecastNextRamp's ramping stages) and
+// status "paused" so advanceRampAndStage and the send/peer-selection branch
+// are no-ops, isolating the assertions to exactly what changed: the claim
+// call itself and that a multi-org claimed batch is processed without a
+// worker-side organization filter reappearing.
+describe("runWarmupCycleWorker", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getMailboxCredentialsMock.mockImplementation(async (_supabase: Client, mailboxId: string) => ({
+      id: mailboxId,
+      imap_enabled: false,
+    }));
+    listDueWarmupRepliesMock.mockResolvedValue([]);
+    listWarmupMessagesSentOnDateMock.mockResolvedValue([]);
+    countWarmupMessagesReceivedOnDateMock.mockResolvedValue(0);
+    upsertWarmupStatMock.mockResolvedValue({ id: "stat-1" });
+    releaseWarmupProfileLockMock.mockResolvedValue(undefined);
+  });
+
+  it("claims without any organization filter", async () => {
+    claimDueWarmupSendsMock.mockResolvedValue([]);
+    const supabase = {} as unknown as Client;
+
+    await runWarmupCycleWorker(supabase, { limit: 7 });
+
+    expect(claimDueWarmupSendsMock).toHaveBeenCalledWith(supabase, 7);
+    expect(claimDueWarmupSendsMock.mock.calls[0]).toHaveLength(2);
+  });
+
+  it("processes profiles claimed from multiple organizations in a single cycle", async () => {
+    const orgAProfile = makeProfile("a", { organization_id: "org-a", stage: "healthy", status: "paused" });
+    const orgBProfile = makeProfile("b", { organization_id: "org-b", stage: "healthy", status: "paused" });
+    claimDueWarmupSendsMock.mockResolvedValue([orgAProfile, orgBProfile]);
+    const supabase = {} as unknown as Client;
+
+    const summary = await runWarmupCycleWorker(supabase);
+
+    expect(summary.claimed).toBe(2);
+    expect(getMailboxCredentialsMock).toHaveBeenCalledWith(supabase, "mailbox-a");
+    expect(getMailboxCredentialsMock).toHaveBeenCalledWith(supabase, "mailbox-b");
+    expect(releaseWarmupProfileLockMock).toHaveBeenCalledWith(supabase, "a");
+    expect(releaseWarmupProfileLockMock).toHaveBeenCalledWith(supabase, "b");
+    // Each profile's own organization_id is what stats get recorded under —
+    // never a shared/hardcoded id, and never swapped between the two.
+    expect(upsertWarmupStatMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ organization_id: "org-a" }));
+    expect(upsertWarmupStatMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ organization_id: "org-b" }));
   });
 });
 

@@ -20,7 +20,6 @@ import { getEmailProvider } from "@/lib/email/get-provider";
 import { getReplyProvider } from "@/lib/email/get-reply-provider";
 import { EmailSendError, type OutboundEmailMessage } from "@/lib/email/provider";
 import { computeNextSendTime, DEFAULT_SENDING_WINDOW } from "@/lib/email/scheduling";
-import { WARMUP_ENGINE_ORGANIZATION_ID } from "./owner-scope";
 import { forecastNextRamp, randomizedNextSendDelayMinutes } from "./scheduler";
 import { canTransition, nextStageForStatusChange, transition } from "./state-machine";
 import { calculateWarmupScore } from "./scoring";
@@ -78,7 +77,7 @@ export async function runWarmupCycleWorker(
   const limit = options.limit ?? DEFAULT_CLAIM_LIMIT;
   const dryRun = options.dryRun ?? false;
 
-  const claimed = await claimDueWarmupSends(supabase, WARMUP_ENGINE_ORGANIZATION_ID, limit);
+  const claimed = await claimDueWarmupSends(supabase, limit);
   const summary: WarmupCycleSummary = { claimed: claimed.length, sent: 0, repliesSent: 0, bounced: 0, paused: 0, skipped: 0 };
 
   await processClaimedWarmupProfiles(supabase, claimed, summary, dryRun, processWarmupProfile);

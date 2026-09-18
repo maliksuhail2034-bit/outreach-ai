@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
 import {
+  claimDueWarmupSends,
   countWarmupMessagesReceivedOnDate,
   getWarmupProfileByMailbox,
   getWarmupProfileByMailboxId,
   insertWarmupEvent,
   listWarmupMessagesSentOnDate,
+  listWarmupProfiles,
   updateWarmupProfile,
   upsertWarmupStat,
 } from "./warmup";
@@ -33,6 +35,50 @@ function createMockClient(result: { data?: unknown; error?: unknown; count?: num
   const client = { from } as unknown as Client;
   return { client, chainable };
 }
+
+describe("listWarmupProfiles", () => {
+  it("scopes peer candidates to a single organization", async () => {
+    const { client, chainable } = createMockClient({ data: [{ id: "profile-1" }], error: null });
+
+    await listWarmupProfiles(client, "org-a");
+
+    expect(client.from).toHaveBeenCalledWith("warmup_profiles");
+    expect(chainable.eq).toHaveBeenCalledWith("organization_id", "org-a");
+    expect(chainable.eq).not.toHaveBeenCalledWith("organization_id", "org-b");
+  });
+});
+
+// Batch 5: proves claim_due_warmup_sends is called with no organization
+// filter, i.e. the fix for the hardcoded WARMUP_ENGINE_ORGANIZATION_ID
+// single-org restriction (lib/warmup/warmup-worker.ts previously passed it
+// through here as p_organization_id). No local Postgres/Supabase instance
+// was available in this environment to exercise the SQL function itself
+// (Docker was not running); this is the strongest repository-level proof
+// available that the TypeScript-level restriction is gone — the SQL
+// function's own behavior (that it now returns rows across all
+// organizations) still needs to be confirmed once this migration is
+// applied to a real database.
+describe("claimDueWarmupSends", () => {
+  it("calls claim_due_warmup_sends with only p_limit, no organization filter", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ id: "profile-1" }, { id: "profile-2" }], error: null });
+    const client = { rpc } as unknown as Client;
+
+    const result = await claimDueWarmupSends(client, 5);
+
+    expect(rpc).toHaveBeenCalledWith("claim_due_warmup_sends", { p_limit: 5 });
+    expect(rpc.mock.calls[0][1]).not.toHaveProperty("p_organization_id");
+    expect(result).toEqual([{ id: "profile-1" }, { id: "profile-2" }]);
+  });
+
+  it("defaults the limit to 10 when not given", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const client = { rpc } as unknown as Client;
+
+    await claimDueWarmupSends(client);
+
+    expect(rpc).toHaveBeenCalledWith("claim_due_warmup_sends", { p_limit: 10 });
+  });
+});
 
 describe("getWarmupProfileByMailbox", () => {
   it("scopes the lookup to both organization and mailbox", async () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -338,7 +339,9 @@ export function LeadTable({
                         />
                       </td>
                       <td className="max-w-48 truncate py-3 pr-4">
-                        <p className="truncate font-medium">{leadName(lead)}</p>
+                        <Link href={`/leads/${lead.id}`} className="block truncate font-medium hover:underline">
+                          {leadName(lead)}
+                        </Link>
                         <p className="truncate text-xs text-muted-foreground">{lead.email}</p>
                       </td>
                       <td className="max-w-40 truncate py-3 pr-4 text-muted-foreground">{lead.company || "—"}</td>

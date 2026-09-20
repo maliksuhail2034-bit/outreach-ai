@@ -21,6 +21,23 @@ export async function listCampaignLeads(supabase: Client, campaignId: string, op
   return data;
 }
 
+// The lead-scoped counterpart to listCampaignLeads above — every campaign a
+// given lead is enrolled in, not one campaign's enrolled leads. Used by the
+// lead detail page (app/(app)/leads/[leadId]/page.tsx). No userId param
+// needed here either: RLS already restricts this to enrollments whose
+// campaign belongs to the caller, regardless of which lead_id is queried, so
+// a lead_id from another user's account simply returns zero rows rather than
+// leaking anything.
+export async function listCampaignLeadsForLead(supabase: Client, leadId: string) {
+  const { data, error } = await supabase
+    .from("campaign_leads")
+    .select("*")
+    .eq("lead_id", leadId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
 export interface CampaignLeadActivitySummary {
   leadsCount: number;
   nextSendAt: string | null;

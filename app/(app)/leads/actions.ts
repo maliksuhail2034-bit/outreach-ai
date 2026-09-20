@@ -101,6 +101,7 @@ export async function updateLeadAction(id: string, input: LeadInput) {
   });
 
   revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
 }
 
 export async function deleteLeadAction(id: string) {
@@ -111,6 +112,7 @@ export async function deleteLeadAction(id: string) {
 
   revalidatePath("/leads");
   revalidatePath("/dashboard");
+  revalidatePath(`/leads/${id}`);
 }
 
 export async function deleteLeadsAction(ids: string[]) {
@@ -149,6 +151,7 @@ export async function verifyLeadAction(id: string) {
   await verifyLead(supabase, user.id, organization.id, id, lead.email, "millionverifier");
 
   revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
 }
 
 // Bulk verification never runs synchronously in-request (see ROADMAP.md /

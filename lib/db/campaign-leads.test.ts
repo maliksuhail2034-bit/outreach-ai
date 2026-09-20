@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { addLeadsToCampaign, removeCampaignLead } from "./campaign-leads";
+import { addLeadsToCampaign, listCampaignLeadsForLead, removeCampaignLead } from "./campaign-leads";
 import type { Tables } from "@/types/database.types";
 
 // Same fake-Client pattern as lib/db/suppressions.test.ts.
@@ -25,6 +25,30 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
   const client = { from } as unknown as Client;
   return { client, chainable };
 }
+
+describe("listCampaignLeadsForLead", () => {
+  it("scopes the query to the given lead_id, newest first", async () => {
+    const rows = [{ id: "campaign-lead-1", lead_id: "lead-1" }];
+    const { client, chainable } = createMockClient({ data: rows, error: null });
+
+    const result = await listCampaignLeadsForLead(client, "lead-1");
+
+    expect(client.from).toHaveBeenCalledWith("campaign_leads");
+    expect(chainable.eq).toHaveBeenCalledWith("lead_id", "lead-1");
+    expect(chainable.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(result).toEqual(rows);
+  });
+
+  it("returns an empty array when the lead has no enrollments", async () => {
+    const { client } = createMockClient({ data: [], error: null });
+    expect(await listCampaignLeadsForLead(client, "lead-1")).toEqual([]);
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(listCampaignLeadsForLead(client, "lead-1")).rejects.toThrow("boom");
+  });
+});
 
 describe("removeCampaignLead", () => {
   it("deletes the enrollment by id, leaving the lead itself untouched", async () => {

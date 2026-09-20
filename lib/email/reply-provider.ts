@@ -12,7 +12,14 @@ export interface ReplyMessage {
   inReplyTo: string | null; // normalized, same rules as messageId
   references: string[]; // normalized, header order preserved
   from: { name?: string; email: string };
+  to: { name?: string; email: string }[];
   subject: string | null;
+  // Full text/HTML body, already parsed by the provider (e.g. mailparser) —
+  // null when the message genuinely has no part of that type, not when
+  // parsing fails (a parse failure is a thrown error upstream, same as a
+  // missing Message-ID).
+  bodyText: string | null;
+  bodyHtml: string | null;
   receivedAt: string; // ISO timestamp
 }
 

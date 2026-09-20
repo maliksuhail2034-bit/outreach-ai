@@ -745,6 +745,83 @@ export type Database = {
           },
         ]
       }
+      email_replies: {
+        Row: {
+          body_html: string | null
+          body_text: string | null
+          campaign_id: string
+          created_at: string
+          email_event_id: string
+          from_email: string
+          from_name: string | null
+          id: string
+          lead_id: string
+          mailbox_id: string
+          received_at: string
+          subject: string | null
+          to_emails: string[]
+        }
+        Insert: {
+          body_html?: string | null
+          body_text?: string | null
+          campaign_id: string
+          created_at?: string
+          email_event_id: string
+          from_email: string
+          from_name?: string | null
+          id?: string
+          lead_id: string
+          mailbox_id: string
+          received_at: string
+          subject?: string | null
+          to_emails?: string[]
+        }
+        Update: {
+          body_html?: string | null
+          body_text?: string | null
+          campaign_id?: string
+          created_at?: string
+          email_event_id?: string
+          from_email?: string
+          from_name?: string | null
+          id?: string
+          lead_id?: string
+          mailbox_id?: string
+          received_at?: string
+          subject?: string | null
+          to_emails?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_replies_email_event_id_fkey"
+            columns: ["email_event_id"]
+            isOneToOne: true
+            referencedRelation: "email_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_replies_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_replies_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_replies_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integrations: {
         Row: {
           config: Json

@@ -1,5 +1,6 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
+import type { AddressObject } from "mailparser";
 
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { refreshGoogleAccessToken } from "@/lib/email/google-oauth";
@@ -41,6 +42,19 @@ function normalizeReferences(raw: string | string[] | undefined): string[] {
   if (!raw) return [];
   const list = Array.isArray(raw) ? raw : raw.split(/\s+/);
   return list.map((id) => normalizeMessageId(id)).filter((id): id is string => id !== null);
+}
+
+// Mirrors the existing single-address `from` handling below, generalized to
+// a list — mailparser's `to` can be one AddressObject or several (a group
+// header), each carrying its own `value` array of individual addresses.
+function normalizeAddressList(raw: AddressObject | AddressObject[] | undefined): { name?: string; email: string }[] {
+  if (!raw) return [];
+  const addressObjects = Array.isArray(raw) ? raw : [raw];
+  return addressObjects.flatMap((addressObject) =>
+    addressObject.value
+      .filter((entry) => Boolean(entry.address))
+      .map((entry) => ({ name: entry.name || undefined, email: entry.address! })),
+  );
 }
 
 // The only IMAP/MIME-specific code in the codebase — everything it returns
@@ -155,7 +169,10 @@ export class ImapReplyChecker implements ReplyProvider {
           inReplyTo: normalizeMessageId(parsed.inReplyTo),
           references: normalizeReferences(parsed.references),
           from: { name: fromAddress.name || undefined, email: fromAddress.address },
+          to: normalizeAddressList(parsed.to),
           subject: parsed.subject ?? null,
+          bodyText: parsed.text ?? null,
+          bodyHtml: parsed.html || null,
           receivedAt: (parsed.date ?? new Date()).toISOString(),
         });
       }

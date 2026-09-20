@@ -4,10 +4,12 @@ import {
   claimMailboxesForReplySync,
   getCampaignLeadByCampaignAndLead,
   getEmailEventByProviderMessageId,
+  getEmailReplyByEventId,
   getLeadById,
   listActiveCampaignLeadsForMailbox,
   listLeadIdsByEmail,
   recordEmailEvent,
+  recordEmailReply,
   releaseMailboxReplySyncLock,
   updateCampaignLead,
   updateLead,
@@ -108,13 +110,22 @@ async function processInboundMessage(
   // (email_events_replied_message_id_key), not this check, which only
   // avoids redundant matching work in the common case.
   const alreadyRecorded = await getEmailEventByProviderMessageId(supabase, message.messageId, "replied");
-  if (alreadyRecorded) return "alreadyRecorded";
+  if (alreadyRecorded) {
+    // The event was recorded, but a prior run may have crashed between that
+    // insert and persisting this message's content (or this exact message
+    // is being re-delivered by the provider) — persistReplyContent is
+    // idempotent per email_event_id, so backfilling here is always safe and
+    // never produces a second email_replies row.
+    await persistReplyContent(supabase, alreadyRecorded, message);
+    return "alreadyRecorded";
+  }
 
   const match = await matchReply(supabase, mailbox, message);
   if (!match) return "unmatched";
 
+  let emailEvent: Tables<"email_events">;
   try {
-    await recordEmailEvent(supabase, {
+    emailEvent = await recordEmailEvent(supabase, {
       campaign_id: match.campaignId,
       lead_id: match.leadId,
       mailbox_id: mailbox.id,
@@ -130,9 +141,17 @@ async function processInboundMessage(
   } catch (error) {
     // A concurrent run winning the same insert is the unique index doing
     // its job, not an error from this function's perspective — see plan §4.
-    if (isUniqueViolation(error)) return "alreadyRecorded";
+    // The concurrent run may not have persisted the reply content yet
+    // either, so fetch its row and (idempotently) backfill from here too.
+    if (isUniqueViolation(error)) {
+      const winningEvent = await getEmailEventByProviderMessageId(supabase, message.messageId, "replied");
+      if (winningEvent) await persistReplyContent(supabase, winningEvent, message);
+      return "alreadyRecorded";
+    }
     throw error;
   }
+
+  await persistReplyContent(supabase, emailEvent, message);
 
   await updateCampaignLead(supabase, match.campaignLeadId, {
     status: "replied",
@@ -146,6 +165,45 @@ async function processInboundMessage(
   }
 
   return "matched";
+}
+
+// Persists the reply's content (subject/from/to/body — see the reply
+// content persistence batch) exactly once per email_events row. Called from
+// every path that can reach a 'replied' event — a fresh insert, a
+// concurrent run's winning insert, or an already-recorded event from a
+// prior run — so content is backfilled if an earlier attempt recorded the
+// event but crashed before persisting its content, without ever risking a
+// second email_replies row for the same email_event_id: checked here, and
+// backstopped by email_replies_email_event_id_key at the DB level.
+async function persistReplyContent(
+  supabase: Client,
+  emailEvent: Tables<"email_events">,
+  message: ReplyMessage,
+): Promise<void> {
+  const existing = await getEmailReplyByEventId(supabase, emailEvent.id);
+  if (existing) return;
+
+  try {
+    await recordEmailReply(supabase, {
+      email_event_id: emailEvent.id,
+      campaign_id: emailEvent.campaign_id,
+      lead_id: emailEvent.lead_id,
+      // Always set on a 'replied' event — recordEmailEvent above (and any
+      // other writer of a 'replied' row) always passes mailbox_id.
+      mailbox_id: emailEvent.mailbox_id!,
+      subject: message.subject,
+      from_email: message.from.email,
+      from_name: message.from.name ?? null,
+      to_emails: message.to.map((address) => address.email),
+      body_text: message.bodyText,
+      body_html: message.bodyHtml,
+      received_at: message.receivedAt,
+    });
+  } catch (error) {
+    // Another concurrent call already won the insert for this
+    // email_event_id — the unique index doing its job, not an error here.
+    if (!isUniqueViolation(error)) throw error;
+  }
 }
 
 // Priority order per the plan §2: In-Reply-To, then References (most

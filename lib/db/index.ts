@@ -20,6 +20,7 @@ export * from "./sequence-steps";
 export * from "./attachments";
 export * from "./templates";
 export * from "./email-events";
+export * from "./email-replies";
 export * from "./suppressions";
 export * from "./send-attempts";
 export * from "./ai-provider-keys";

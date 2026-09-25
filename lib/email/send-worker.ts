@@ -97,10 +97,12 @@ export async function runSendWorker(
 
 // Processes claimed leads with up to `concurrency` in flight at once, with
 // one hard invariant: two leads for the same mailbox_id are never processed
-// concurrently. This is what protects mailboxes.cooldown_minutes, which
-// depends on real-world send timing, not just a claim-time count —
-// claim_due_sends() only checks it (and daily_limit/hourly_limit) once, as a
-// snapshot, when a batch is claimed; nothing re-checks it per send. Same-
+// concurrently. claim_due_sends() already guarantees this across the whole
+// system — at most one lead per mailbox per batch, and never a lead for a
+// mailbox with a send still in flight (see
+// 20260925100000_claim_due_sends_per_mailbox_capacity.sql), which is also
+// what keeps its daily/hourly/cooldown checks exact. This in-process check is
+// defense in depth on top of that, not the enforcement point. Same-
 // mailbox serialization is structural (inFlightMailboxIds below) and holds
 // regardless of `concurrency`'s value — raising it only lets *different*
 // mailboxes' lanes run in parallel. Item 12 (Scalability Track, Phase D)

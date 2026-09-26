@@ -7,6 +7,7 @@ import {
   findNextStep,
   findPreviousStep,
   recomputeNextSendAt,
+  resolveSendDecision,
   type SequenceStepLike,
 } from "./scheduling";
 import type { SendingWindow } from "@/lib/validations/sending-window";
@@ -322,5 +323,108 @@ describe("computeRetryDelay", () => {
 
   it("clamps non-positive attempt counts to the first rung", () => {
     expect(computeRetryDelay(0).toISOString()).toBe("2026-08-03T12:05:00.000Z");
+  });
+});
+
+// Batch B: the send worker's final sending-window decision. Fixtures use the
+// shape of a real production campaign (Asia/Dubai, Sun-Thu, 09:00-17:00).
+describe("resolveSendDecision", () => {
+  const DUBAI_SUN_TO_THU: SendingWindow = {
+    days: ["sun", "mon", "tue", "wed", "thu"],
+    startHour: 9,
+    endHour: 17,
+    timezone: "Asia/Dubai", // UTC+4, no DST
+  };
+
+  function decide(nowIso: string, sendingWindow: unknown, sendNowStepId: string | null = null, currentStepId = "step-1") {
+    return resolveSendDecision({ now: new Date(nowIso), sendingWindow, currentStepId, sendNowStepId });
+  }
+
+  it("sends a normal due lead inside the window", () => {
+    // Wed 2026-09-23 10:00 Dubai
+    expect(decide("2026-09-23T06:00:00.000Z", DUBAI_SUN_TO_THU)).toEqual({ send: true, usesSendNowBypass: false });
+  });
+
+  it("defers a lead due before the window opens to that day's opening", () => {
+    // Wed 08:00 Dubai -> Wed 09:00 Dubai
+    expect(decide("2026-09-23T04:00:00.000Z", DUBAI_SUN_TO_THU)).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-23T05:00:00.000Z"),
+    });
+  });
+
+  it("defers a lead due after the window closes to the next allowed day's opening", () => {
+    // Wed 18:00 Dubai -> Thu 09:00 Dubai
+    expect(decide("2026-09-23T14:00:00.000Z", DUBAI_SUN_TO_THU)).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-24T05:00:00.000Z"),
+    });
+  });
+
+  it("skips disabled sending days", () => {
+    // Fri 09:06 Dubai (Fri and Sat disabled) -> Sun 09:00 Dubai
+    expect(decide("2026-09-25T05:06:00.000Z", DUBAI_SUN_TO_THU)).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-27T05:00:00.000Z"),
+    });
+  });
+
+  it("treats the window as [startHour, endHour) — opening sends, closing defers", () => {
+    expect(decide("2026-09-23T05:00:00.000Z", DUBAI_SUN_TO_THU).send).toBe(true); // Wed 09:00
+    expect(decide("2026-09-23T13:00:00.000Z", DUBAI_SUN_TO_THU)).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-24T05:00:00.000Z"),
+    }); // Wed 17:00 -> Thu 09:00
+  });
+
+  it("uses DST-correct local time across America/New_York spring-forward (EDT starts 2026-03-08)", () => {
+    const newYork: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, timezone: "America/New_York" };
+    // Sat 2026-03-07 18:00 EST (after close) -> Sun 09:00 EDT = 13:00Z, not 14:00Z
+    expect(decide("2026-03-07T23:00:00.000Z", newYork)).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-03-08T13:00:00.000Z"),
+    });
+    // Sun 2026-03-08 09:30 EDT is inside the window
+    expect(decide("2026-03-08T13:30:00.000Z", newYork).send).toBe(true);
+  });
+
+  it("sends at any time for a 0-24 window", () => {
+    const allDay: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 0, endHour: 24, timezone: "Asia/Kolkata" };
+    expect(decide("2026-09-22T18:21:53.000Z", allDay).send).toBe(true);
+  });
+
+  it("falls back to the default 09:00-17:00 UTC window for an unset/invalid window", () => {
+    expect(decide("2026-09-23T20:00:00.000Z", {})).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-24T09:00:00.000Z"),
+    });
+  });
+
+  it("never defers to the current instant, so a deferred lead isn't immediately due again", () => {
+    const now = "2026-09-25T05:06:00.000Z";
+    const decision = decide(now, DUBAI_SUN_TO_THU);
+    if (decision.send) throw new Error("expected a deferral");
+    expect(decision.nextSendAt.getTime()).toBeGreaterThan(new Date(now).getTime());
+    // ...and once that opening arrives, the same lead is sendable.
+    expect(decide(decision.nextSendAt.toISOString(), DUBAI_SUN_TO_THU).send).toBe(true);
+  });
+
+  it("lets an explicit Send Now for the current step bypass the window", () => {
+    expect(decide("2026-09-25T05:06:00.000Z", DUBAI_SUN_TO_THU, "step-1", "step-1")).toEqual({
+      send: true,
+      usesSendNowBypass: true,
+    });
+  });
+
+  it("never applies a Send Now recorded for another step (no leak into the next step)", () => {
+    expect(decide("2026-09-25T05:06:00.000Z", DUBAI_SUN_TO_THU, "step-1", "step-2")).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-27T05:00:00.000Z"),
+    });
+  });
+
+  it("gives no bypass once the Send Now has been consumed (a failed send's retry waits for the window)", () => {
+    // After the worker consumes it, send_now_step_id is null again.
+    expect(decide("2026-09-25T05:06:00.000Z", DUBAI_SUN_TO_THU, null, "step-1").send).toBe(false);
   });
 });

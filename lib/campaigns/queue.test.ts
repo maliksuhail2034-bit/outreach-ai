@@ -16,6 +16,7 @@ function lead(overrides: Partial<Tables<"campaign_leads">>): Tables<"campaign_le
     enrolled_at: NOW.toISOString(),
     current_step_id: "step-1",
     next_send_at: null,
+    send_now_step_id: null,
     last_error: null,
     locked_until: null,
     ...overrides,

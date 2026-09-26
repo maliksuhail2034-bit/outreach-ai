@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { addLeadsToCampaign, listCampaignLeadsForLead, removeCampaignLead } from "./campaign-leads";
+import {
+  addLeadsToCampaign,
+  consumeSendNow,
+  listCampaignLeadsForLead,
+  removeCampaignLead,
+  requestSendNow,
+} from "./campaign-leads";
 import type { Tables } from "@/types/database.types";
 
 // Same fake-Client pattern as lib/db/suppressions.test.ts.
@@ -13,11 +19,12 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
     eq: vi.fn(),
     order: vi.fn(),
     in: vi.fn(),
+    not: vi.fn(),
     single: vi.fn(),
     maybeSingle: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "delete", "insert", "update", "eq", "order", "in", "single", "maybeSingle"] as const) {
+  for (const method of ["select", "delete", "insert", "update", "eq", "order", "in", "not", "single", "maybeSingle"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 
@@ -154,5 +161,54 @@ describe("addLeadsToCampaign", () => {
     expect(resolveMailboxId).not.toHaveBeenCalled();
     expect(insertChainable.insert).not.toHaveBeenCalled();
     expect(result).toEqual({ inserted: 0, skipped: 1, rows: [] });
+  });
+});
+
+describe("requestSendNow", () => {
+  function rpcClient(result: { data: unknown; error: unknown }) {
+    const rpc = vi.fn(async () => result);
+    return { client: { rpc } as unknown as Client, rpc };
+  }
+
+  it("calls request_send_now with only the lead id and reports success", async () => {
+    const { client, rpc } = rpcClient({ data: true, error: null });
+
+    await expect(requestSendNow(client, "cl-1")).resolves.toBe(true);
+    expect(rpc).toHaveBeenCalledWith("request_send_now", { p_campaign_lead_id: "cl-1" });
+  });
+
+  it("reports a refusal (lead no longer eligible) as false", async () => {
+    const { client } = rpcClient({ data: false, error: null });
+    await expect(requestSendNow(client, "cl-1")).resolves.toBe(false);
+  });
+
+  it("throws on an RPC error", async () => {
+    const { client } = rpcClient({ data: null, error: new Error("boom") });
+    await expect(requestSendNow(client, "cl-1")).rejects.toThrow("boom");
+  });
+});
+
+describe("consumeSendNow", () => {
+  it("clears the bypass only where the row still holds this exact bypass for this step", async () => {
+    const { client, chainable } = createMockClient({ data: [{ id: "cl-1" }], error: null });
+
+    await expect(consumeSendNow(client, "cl-1", "step-1", "step-1")).resolves.toBe(true);
+    expect(chainable.update).toHaveBeenCalledWith({ send_now_step_id: null });
+    expect(chainable.eq.mock.calls).toEqual([
+      ["id", "cl-1"],
+      ["send_now_step_id", "step-1"],
+      ["current_step_id", "step-1"],
+    ]);
+    expect(chainable.select).toHaveBeenCalledWith("id");
+  });
+
+  it("reports false when no row matched (the bypass was cleared, e.g. by a pause)", async () => {
+    const { client } = createMockClient({ data: [], error: null });
+    await expect(consumeSendNow(client, "cl-1", "step-1", "step-1")).resolves.toBe(false);
+  });
+
+  it("throws on a database error", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(consumeSendNow(client, "cl-1", "step-1", "step-1")).rejects.toThrow("boom");
   });
 });

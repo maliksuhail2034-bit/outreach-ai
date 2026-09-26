@@ -412,6 +412,7 @@ export type Database = {
           locked_until: string | null
           mailbox_id: string | null
           next_send_at: string | null
+          send_now_step_id: string | null
           status: string
           updated_at: string
         }
@@ -426,6 +427,7 @@ export type Database = {
           locked_until?: string | null
           mailbox_id?: string | null
           next_send_at?: string | null
+          send_now_step_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -440,6 +442,7 @@ export type Database = {
           locked_until?: string | null
           mailbox_id?: string | null
           next_send_at?: string | null
+          send_now_step_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -470,6 +473,13 @@ export type Database = {
             columns: ["mailbox_id"]
             isOneToOne: false
             referencedRelation: "mailboxes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_leads_send_now_step_id_fkey"
+            columns: ["send_now_step_id"]
+            isOneToOne: false
+            referencedRelation: "sequence_steps"
             referencedColumns: ["id"]
           },
         ]
@@ -1974,6 +1984,7 @@ export type Database = {
           locked_until: string | null
           mailbox_id: string | null
           next_send_at: string | null
+          send_now_step_id: string | null
           status: string
           updated_at: string
         }[]
@@ -2162,6 +2173,10 @@ export type Database = {
           p_send_attempt_id: string
         }
         Returns: undefined
+      }
+      request_send_now: {
+        Args: { p_campaign_lead_id: string }
+        Returns: boolean
       }
     }
     Enums: {

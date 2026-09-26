@@ -69,6 +69,7 @@ function makeCampaignLead(overrides: Partial<Tables<"campaign_leads">> = {}): Ta
     current_step_id: "step-1",
     status: "active",
     next_send_at: "2026-08-03T15:00:00.000Z",
+    send_now_step_id: null,
     locked_until: null,
     last_error: null,
     enrolled_at: "2026-08-01T00:00:00Z",

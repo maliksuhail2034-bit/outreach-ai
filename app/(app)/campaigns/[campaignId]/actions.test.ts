@@ -35,6 +35,8 @@ vi.mock("@/lib/db", () => ({
   updateCampaign: vi.fn(),
   addCampaignMailbox: vi.fn(),
   removeCampaignMailbox: vi.fn(),
+  // Batch B: Send Now's atomic RPC wrapper.
+  requestSendNow: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
   checkRateLimit: vi.fn(),
@@ -64,6 +66,7 @@ import {
   listSequences,
   listSequenceSteps,
   removeCampaignMailbox,
+  requestSendNow,
   updateCampaign,
   updateCampaignLead,
 } from "@/lib/db";
@@ -73,6 +76,7 @@ import {
   enrollLeadAction,
   enrollLeadListAction,
   launchCampaignAction,
+  pauseCampaignAction,
   removeCampaignMailboxAction,
   sendNowAction,
 } from "./actions";
@@ -98,6 +102,7 @@ const mockUpdateCampaign = vi.mocked(updateCampaign);
 const mockAddCampaignMailbox = vi.mocked(addCampaignMailbox);
 const mockRemoveCampaignMailbox = vi.mocked(removeCampaignMailbox);
 const mockRevalidatePath = vi.mocked(revalidatePath);
+const mockRequestSendNow = vi.mocked(requestSendNow);
 
 const USER = { id: "user-1", email: "owner@example.com" };
 const ORGANIZATION = { id: "org-1" };
@@ -126,6 +131,7 @@ function makeCampaignLead(overrides: Partial<Tables<"campaign_leads">> = {}): Ta
     current_step_id: "step-1",
     status: "active",
     next_send_at: "2026-09-20T09:00:00.000Z",
+    send_now_step_id: null,
     locked_until: null,
     last_error: null,
     enrolled_at: "2026-09-01T00:00:00Z",
@@ -201,6 +207,7 @@ beforeEach(() => {
     created_at: "2026-01-01T00:00:00Z",
   } as never);
   mockRemoveCampaignMailbox.mockResolvedValue(undefined as never);
+  mockRequestSendNow.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -208,32 +215,28 @@ afterEach(() => {
 });
 
 describe("sendNowAction", () => {
-  it("sets next_send_at to now for an eligible, active, queued lead", async () => {
+  it("records an explicit Send Now for an eligible, active, queued lead through request_send_now", async () => {
     await sendNowAction("campaign-1", "cl-1");
 
-    expect(mockUpdateCampaignLead).toHaveBeenCalledTimes(1);
-    expect(mockUpdateCampaignLead).toHaveBeenCalledWith(expect.anything(), "cl-1", {
-      next_send_at: "2026-09-18T12:00:00.000Z",
-    });
+    expect(mockRequestSendNow).toHaveBeenCalledTimes(1);
+    expect(mockRequestSendNow).toHaveBeenCalledWith(expect.anything(), "cl-1");
   });
 
-  it("only ever writes next_send_at — never mailbox_id, status, or current_step_id", async () => {
+  it("never writes the lead row directly — only the atomic RPC may set the bypass", async () => {
     await sendNowAction("campaign-1", "cl-1");
 
-    const [, , values] = mockUpdateCampaignLead.mock.calls[0];
-    expect(Object.keys(values as object)).toEqual(["next_send_at"]);
+    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
   });
 
   it("is idempotent — calling it twice in a row is safe and never duplicates a queue entry", async () => {
     await sendNowAction("campaign-1", "cl-1");
     await sendNowAction("campaign-1", "cl-1");
 
-    // Two calls, each a plain update of the same single row — never an
-    // insert, so there is no way this creates a second queue entry.
-    expect(mockUpdateCampaignLead).toHaveBeenCalledTimes(2);
-    for (const call of mockUpdateCampaignLead.mock.calls) {
+    // Two calls, each an update of the same single row inside
+    // request_send_now — never an insert, so no second queue entry.
+    expect(mockRequestSendNow).toHaveBeenCalledTimes(2);
+    for (const call of mockRequestSendNow.mock.calls) {
       expect(call[1]).toBe("cl-1");
-      expect(Object.keys(call[2] as object)).toEqual(["next_send_at"]);
     }
   });
 
@@ -242,38 +245,47 @@ describe("sendNowAction", () => {
 
     await sendNowAction("campaign-1", "cl-1");
 
-    const [, , values] = mockUpdateCampaignLead.mock.calls[0];
-    expect(values).not.toHaveProperty("mailbox_id");
+    // request_send_now takes only the lead id and writes only next_send_at
+    // and send_now_step_id (see its migration).
+    expect(mockRequestSendNow.mock.calls[0]).toHaveLength(2);
+    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a refusal from request_send_now (e.g. the worker claimed the lead first)", async () => {
+    mockRequestSendNow.mockResolvedValue(false);
+
+    await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/already being sent or is no longer eligible/i);
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
   it("rejects when the campaign is paused (respects pause protection)", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "paused" }) as never);
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/active campaign/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("rejects when the campaign is a draft", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft" }) as never);
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/active campaign/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("rejects when the campaign is completed", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "completed" }) as never);
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/active campaign/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("rejects a lead that isn't active (e.g. bounced/unsubscribed/completed/needs_review)", async () => {
     for (const status of ["bounced", "unsubscribed", "completed", "needs_review", "failed", "cancelled", "pending"]) {
-      mockUpdateCampaignLead.mockClear();
+      mockRequestSendNow.mockClear();
       mockGetCampaignLead.mockResolvedValue(makeCampaignLead({ status }) as never);
 
       await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/isn't currently active/i);
-      expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+      expect(mockRequestSendNow).not.toHaveBeenCalled();
     }
   });
 
@@ -281,14 +293,14 @@ describe("sendNowAction", () => {
     mockGetCampaignLead.mockResolvedValue(makeCampaignLead({ current_step_id: null }) as never);
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/no pending step/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("rejects a lead with no assigned mailbox", async () => {
     mockGetCampaignLead.mockResolvedValue(makeCampaignLead({ mailbox_id: null }) as never);
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/no assigned mailbox/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("rejects a lead that's currently locked by an in-flight send", async () => {
@@ -297,7 +309,7 @@ describe("sendNowAction", () => {
     );
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/already being sent/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("allows a lead whose lock has already expired", async () => {
@@ -307,14 +319,14 @@ describe("sendNowAction", () => {
 
     await sendNowAction("campaign-1", "cl-1");
 
-    expect(mockUpdateCampaignLead).toHaveBeenCalledTimes(1);
+    expect(mockRequestSendNow).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a campaign_lead that belongs to a different campaign", async () => {
     mockGetCampaignLead.mockResolvedValue(makeCampaignLead({ campaign_id: "some-other-campaign" }) as never);
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/does not belong/i);
-    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
   });
 
   it("checks the campaign:send_now rate limit scope", async () => {
@@ -327,7 +339,26 @@ describe("sendNowAction", () => {
     mockCheckRateLimit.mockRejectedValue(new RateLimitError(60));
 
     await expect(sendNowAction("campaign-1", "cl-1")).rejects.toThrow(/too many attempts/i);
+    expect(mockRequestSendNow).not.toHaveBeenCalled();
+  });
+});
+
+describe("pauseCampaignAction", () => {
+  // Pending Send Now requests are cleared by the database in the same
+  // transaction as the status change (campaigns_clear_send_now_on_inactive,
+  // covered in supabase/tests/send_now.test.sql), not by this action.
+  it("pauses through the status update only", async () => {
+    await pauseCampaignAction("campaign-1");
+
+    expect(mockUpdateCampaign).toHaveBeenCalledWith(expect.anything(), "user-1", "campaign-1", { status: "paused" });
     expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+  });
+
+  it("rejects a campaign that isn't running", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ status: "paused" }) as never);
+
+    await expect(pauseCampaignAction("campaign-1")).rejects.toThrow(/only a running campaign/i);
+    expect(mockUpdateCampaign).not.toHaveBeenCalled();
   });
 });
 

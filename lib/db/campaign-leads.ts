@@ -196,6 +196,63 @@ export async function cancelActiveCampaignLeads(supabase: Client, campaignId: st
   if (error) throw error;
 }
 
+// Wraps request_send_now()
+// (supabase/migrations/20260926100000_campaign_leads_send_now_step.sql) — the
+// only way to record a Send Now bypass. Must be called with the user's own
+// session (lib/supabase/server.ts): the RPC checks ownership via auth.uid()
+// and every eligibility condition atomically, so false means the lead was no
+// longer eligible by the time it ran (most often: the worker had just
+// claimed it).
+export async function requestSendNow(supabase: Client, campaignLeadId: string) {
+  const { data, error } = await supabase.rpc("request_send_now", { p_campaign_lead_id: campaignLeadId });
+  if (error) throw error;
+  return data === true;
+}
+
+// The send worker's clear-before-send of a Send Now bypass. Conditional on
+// the row still holding exactly the bypass the worker claimed, for the same
+// step: its claimed copy can be stale — a pause after the claim clears
+// send_now_step_id in the database (campaigns_clear_send_now_on_inactive).
+// Returns false when nothing matched, i.e. the bypass is no longer valid and
+// must not be used. Called with the admin client from the worker.
+export async function consumeSendNow(
+  supabase: Client,
+  campaignLeadId: string,
+  sendNowStepId: string,
+  currentStepId: string,
+) {
+  const { data, error } = await supabase
+    .from("campaign_leads")
+    .update({ send_now_step_id: null })
+    .eq("id", campaignLeadId)
+    .eq("send_now_step_id", sendNowStepId)
+    .eq("current_step_id", currentStepId)
+    .select("id");
+  if (error) throw error;
+  return data.length > 0;
+}
+
+// When the send worker finds a due lead outside its campaign's sending
+// window, every other lead of that campaign due right now is outside it too
+// (the window is per campaign), so they're all moved to the same next
+// opening in one statement instead of being claimed and deferred one per
+// worker run. Only rows that are active, due, unleased and have no pending
+// Send Now — a leased row belongs to an in-flight worker, and a Send Now
+// request is handled on its own. Called with the admin client from the
+// worker (see lib/email/send-worker.ts).
+export async function deferDueCampaignLeads(supabase: Client, campaignId: string, nextSendAt: Date, now: Date) {
+  const nowIso = now.toISOString();
+  const { error } = await supabase
+    .from("campaign_leads")
+    .update({ next_send_at: nextSendAt.toISOString() })
+    .eq("campaign_id", campaignId)
+    .eq("status", "active")
+    .lte("next_send_at", nowIso)
+    .is("send_now_step_id", null)
+    .or(`locked_until.is.null,locked_until.lt.${nowIso}`);
+  if (error) throw error;
+}
+
 // Wraps claim_due_sends() (supabase/migrations/20260730100020_claim_due_sends.sql).
 // Must be called with lib/supabase/admin.ts — same carve-out as
 // recordEmailEvent/getMailboxCredentials: privileged, no user in the loop.

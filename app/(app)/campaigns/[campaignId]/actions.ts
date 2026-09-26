@@ -36,6 +36,7 @@ import {
   listSequenceSteps,
   removeCampaignLead,
   removeCampaignMailbox,
+  requestSendNow,
   resolveSendAttemptManually,
   swapSequenceStepOrder,
   updateCampaign,
@@ -257,6 +258,8 @@ export async function pauseCampaignAction(campaignId: string) {
       throw new UserFacingError("Only a running campaign can be paused.");
     }
 
+    // Also drops any pending Send Now for this campaign, in the same
+    // transaction (campaigns_clear_send_now_on_inactive trigger).
     await updateCampaign(supabase, user.id, campaignId, { status: "paused" });
 
     revalidatePath("/campaigns");
@@ -652,7 +655,10 @@ export async function resolveSendAttemptAction(
 // NOT talk to the provider, claim a send_attempt, or otherwise short-circuit
 // the real send path: it only pulls this one campaign_lead's next_send_at
 // forward to "now," making it eligible for the very next claim_due_sends()
-// tick — the exact same queue every scheduled send already goes through.
+// tick — the exact same queue every scheduled send already goes through —
+// and records an explicit Send Now (campaign_leads.send_now_step_id) for the
+// lead's current step, the worker's only reason to send outside the sending
+// window (see enforceSendingWindow in lib/email/send-worker.ts).
 // Every existing safety check downstream is therefore untouched and still
 // applies: mailbox daily/hourly/cooldown limits and campaign.status =
 // 'active' (claim_due_sends(), see supabase/migrations/20260804100000_sending_limits.sql),
@@ -660,12 +666,16 @@ export async function resolveSendAttemptAction(
 // lib/email/send-worker.ts), and send_attempts idempotency
 // (claimSendAttempt). The only thing this bypasses is *waiting for the
 // sending window* — which is the entire point of "now" instead of "at the
-// next scheduled window," not a safety check.
+// next scheduled window," not a safety check — and only once, for this step.
 //
-// Only ever writes next_send_at. Never touches mailbox_id (mailbox-per-lead
-// stickiness), status, or current_step_id (follow-up sequencing) — so this
-// can't create a duplicate queue entry, move a lead to a different mailbox,
-// or skip a step.
+// The write goes through request_send_now(), which re-checks ownership and
+// eligibility (campaign active, lead active with a step and mailbox, not
+// leased by the worker) atomically, so it can't race a worker claim; the
+// checks below stay for specific error messages. Only ever writes
+// next_send_at and send_now_step_id. Never touches mailbox_id (mailbox-per-
+// lead stickiness), status, or current_step_id (follow-up sequencing) — so
+// this can't create a duplicate queue entry, move a lead to a different
+// mailbox, or skip a step.
 export async function sendNowAction(campaignId: string, campaignLeadId: string) {
   return runUserFacing(async () => {
     const user = await requireUser();
@@ -704,9 +714,9 @@ export async function sendNowAction(campaignId: string, campaignLeadId: string) 
       throw new UserFacingError("This lead is already being sent — try again in a moment.");
     }
 
-    await updateCampaignLead(supabase, campaignLeadId, {
-      next_send_at: new Date().toISOString(),
-    });
+    if (!(await requestSendNow(supabase, campaignLeadId))) {
+      throw new UserFacingError("This lead is already being sent or is no longer eligible — refresh and try again.");
+    }
 
     revalidatePath(`/campaigns/${campaignId}`);
   });

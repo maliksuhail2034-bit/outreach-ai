@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
+  enforceSendingWindow,
   processClaimedLeads,
   loadAttachmentsForSend,
   resolveThreadingHeaders,
@@ -29,6 +30,7 @@ function makeLead(id: string, mailboxId: string | null): Tables<"campaign_leads"
     last_error: null,
     locked_until: null,
     next_send_at: "2026-01-01T00:00:00Z",
+    send_now_step_id: null,
   };
 }
 
@@ -651,5 +653,153 @@ describe("rewriteClickTrackingLinks", () => {
     // back to a real "&" in the signed destination, not left as a literal
     // entity.
     expect(destinations).toContain("https://example.com/signup?a=1&b=2");
+  });
+});
+
+// Batch B: the final sending-window check. Exercises the real
+// updateCampaignLead/deferDueCampaignLeads query builders against a
+// recording fake client, so the assertions cover the actual rows/filters
+// written — not just which helper was called.
+describe("enforceSendingWindow", () => {
+  type Call = { method: string; args: unknown[] };
+
+  function createRecordingClient() {
+    const statements: Call[][] = [];
+    function from(table: string) {
+      const calls: Call[] = [{ method: "from", args: [table] }];
+      statements.push(calls);
+      const chain: Record<string, unknown> = {};
+      for (const method of ["update", "eq", "lte", "is", "or", "select", "not"]) {
+        chain[method] = (...args: unknown[]) => {
+          calls.push({ method, args });
+          return chain;
+        };
+      }
+      chain.single = async () => {
+        calls.push({ method: "single", args: [] });
+        return { data: makeLead("returned", "mailbox-1"), error: null };
+      };
+      // A matched row, so a conditional consume (consumeSendNow) succeeds.
+      chain.then = (resolve: (value: { data: { id: string }[]; error: null }) => void) =>
+        resolve({ data: [{ id: "cl-1" }], error: null });
+      return chain;
+    }
+    return { client: { from } as unknown as Client, statements };
+  }
+
+  const DUBAI_SUN_TO_THU = {
+    days: ["sun", "mon", "tue", "wed", "thu"],
+    startHour: 9,
+    endHour: 17,
+    timezone: "Asia/Dubai",
+  };
+  const INSIDE = new Date("2026-09-23T06:00:00.000Z"); // Wed 10:00 Dubai
+  const OUTSIDE = new Date("2026-09-25T05:06:00.000Z"); // Fri 09:06 Dubai (Fri disabled)
+  const NEXT_OPENING = "2026-09-27T05:00:00.000Z"; // Sun 09:00 Dubai
+
+  function updateValues(call: Call[]) {
+    return call.find((c) => c.method === "update")?.args[0];
+  }
+
+  it("lets a normal due lead inside the window proceed without any write", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = makeLead("cl-1", "mailbox-1");
+
+    expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, INSIDE)).toBe("send");
+    expect(statements).toHaveLength(0);
+  });
+
+  it("defers the claimed lead outside the window: next opening, lease released, nothing else changed", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = makeLead("cl-1", "mailbox-1");
+
+    expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, OUTSIDE)).toBe("deferred");
+
+    expect(updateValues(statements[0])).toEqual({
+      next_send_at: NEXT_OPENING,
+      locked_until: null,
+      send_now_step_id: null,
+    });
+    expect(statements[0]).toContainEqual({ method: "eq", args: ["id", "cl-1"] });
+  });
+
+  it("defers every other due, active, unleased, non-Send-Now lead of the same campaign to the same opening (D1b)", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = makeLead("cl-1", "mailbox-1");
+
+    await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, OUTSIDE);
+
+    const bulk = statements[1];
+    expect(updateValues(bulk)).toEqual({ next_send_at: NEXT_OPENING });
+    expect(bulk).toEqual([
+      { method: "from", args: ["campaign_leads"] },
+      { method: "update", args: [{ next_send_at: NEXT_OPENING }] },
+      { method: "eq", args: ["campaign_id", "campaign-1"] },
+      { method: "eq", args: ["status", "active"] },
+      { method: "lte", args: ["next_send_at", OUTSIDE.toISOString()] },
+      { method: "is", args: ["send_now_step_id", null] },
+      { method: "or", args: [`locked_until.is.null,locked_until.lt.${OUTSIDE.toISOString()}`] },
+    ]);
+  });
+
+  it("lets an explicit Send Now for the current step send outside the window, consuming it first", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = { ...makeLead("cl-1", "mailbox-1"), send_now_step_id: "step-1" };
+
+    expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, OUTSIDE)).toBe("send");
+
+    // Consumed before returning "send" — i.e. before claimSendAttempt and the
+    // provider send, so a failure's retry has no bypass left. Conditional on
+    // the row still holding this exact bypass for this step, never by id alone.
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toEqual([
+      { method: "from", args: ["campaign_leads"] },
+      { method: "update", args: [{ send_now_step_id: null }] },
+      { method: "eq", args: ["id", "cl-1"] },
+      { method: "eq", args: ["send_now_step_id", "step-1"] },
+      { method: "eq", args: ["current_step_id", "step-1"] },
+      { method: "select", args: ["id"] },
+    ]);
+  });
+
+  it("also consumes a Send Now that happens to run inside the window", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = { ...makeLead("cl-1", "mailbox-1"), send_now_step_id: "step-1" };
+
+    expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, INSIDE)).toBe("send");
+    expect(updateValues(statements[0])).toEqual({ send_now_step_id: null });
+  });
+
+  it("ignores (and clears) a stale Send Now left from an earlier step", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = { ...makeLead("cl-1", "mailbox-1"), current_step_id: "step-2", send_now_step_id: "step-1" };
+
+    expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, OUTSIDE)).toBe("deferred");
+    expect(updateValues(statements[0])).toEqual({
+      next_send_at: NEXT_OPENING,
+      locked_until: null,
+      send_now_step_id: null,
+    });
+  });
+
+  it("clears a stale Send Now from an earlier step even when sending normally inside the window", async () => {
+    const { client, statements } = createRecordingClient();
+    const lead = { ...makeLead("cl-1", "mailbox-1"), current_step_id: "step-2", send_now_step_id: "step-1" };
+
+    expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, INSIDE)).toBe("send");
+    expect(statements).toHaveLength(1);
+    expect(updateValues(statements[0])).toEqual({ send_now_step_id: null });
+  });
+
+  it("gives a retry after a failed Send Now no bypass (the bypass was consumed before the attempt)", async () => {
+    const { client } = createRecordingClient();
+    const sendNowLead = { ...makeLead("cl-1", "mailbox-1"), send_now_step_id: "step-1" };
+    expect(await enforceSendingWindow(client, sendNowLead, DUBAI_SUN_TO_THU, OUTSIDE)).toBe("send");
+
+    // The send then fails; record_send_failure('retry') reschedules the same
+    // step without touching send_now_step_id, which the consume above set to
+    // null. The retry is reclaimed outside the window:
+    const retryLead = { ...sendNowLead, send_now_step_id: null };
+    expect(await enforceSendingWindow(client, retryLead, DUBAI_SUN_TO_THU, OUTSIDE)).toBe("deferred");
   });
 });

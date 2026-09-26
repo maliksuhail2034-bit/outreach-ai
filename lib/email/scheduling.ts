@@ -97,6 +97,31 @@ export function recomputeNextSendAt(currentNextSendAt: Date, newWindow: SendingW
   return nextTimeWithinWindow(zoned, newWindow).toJSDate();
 }
 
+export type SendDecision = { send: true; usesSendNowBypass: boolean } | { send: false; nextSendAt: Date };
+
+// The send worker's final sending-window check, made immediately before a
+// send attempt. An explicit Send Now (campaign_leads.send_now_step_id) is
+// honored only for the step it was requested for — never for a later step.
+// Otherwise "inside the window" is exactly "recomputeNextSendAt leaves now
+// unchanged", and when it doesn't, its result is the next window opening —
+// the same DST-safe math every other scheduling path here uses.
+export function resolveSendDecision(params: {
+  now: Date;
+  sendingWindow: unknown;
+  currentStepId: string | null;
+  sendNowStepId: string | null;
+}): SendDecision {
+  if (params.sendNowStepId !== null && params.sendNowStepId === params.currentStepId) {
+    return { send: true, usesSendNowBypass: true };
+  }
+
+  const nextSendAt = recomputeNextSendAt(params.now, resolveSendingWindow(params.sendingWindow));
+  if (nextSendAt.getTime() === params.now.getTime()) {
+    return { send: true, usesSendNowBypass: false };
+  }
+  return { send: false, nextSendAt };
+}
+
 export interface SequenceStepLike {
   id: string;
   step_order: number;
@@ -159,11 +184,9 @@ export function computeNextSchedule(params: {
 // minutes before the next reclaim, attempt 2's waits 15, etc. Any attempt
 // beyond the ladder's length is capped at the last rung. A hardcoded
 // constant, same pattern as send-worker.ts's DEFAULT_CLAIM_LIMIT — no config
-// or schema needed for v1. Deliberately not snapped to the campaign's
-// sending window (unlike computeNextSchedule above): a retry is completing
-// an already-due send that failed for infrastructure reasons, not
-// scheduling a new one, so firing slightly outside business hours is an
-// acceptable v1 tradeoff for staying simple.
+// or schema needed for v1. Not snapped to the campaign's sending window
+// here: the send worker's final window check (resolveSendDecision above)
+// defers a retry that comes due outside the window, same as any other send.
 const RETRY_BACKOFF_MINUTES = [5, 15, 60, 240, 1440] as const;
 
 export function computeRetryDelay(attemptCount: number): Date {

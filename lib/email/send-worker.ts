@@ -3,6 +3,8 @@ import type { Tables } from "@/types/database.types";
 import {
   claimDueSends,
   claimSendAttempt,
+  consumeSendNow,
+  deferDueCampaignLeads,
   getCampaignById,
   getLeadById,
   getMailboxCredentials,
@@ -24,7 +26,7 @@ import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
 import { buildAttachmentPayload, type DownloadedAttachment } from "./attachment-payload";
 import { ATTACHMENTS_BUCKET } from "./attachment-validation";
-import { computeNextSchedule, computeRetryDelay, findPreviousStep } from "./scheduling";
+import { computeNextSchedule, computeRetryDelay, findPreviousStep, resolveSendDecision } from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
 import { buildOpenTrackingUrl, type OpenTrackingContext, buildClickTrackingUrl, type ClickTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
@@ -347,6 +349,97 @@ export function rewriteClickTrackingLinks(
   });
 }
 
+// Final sending-window check, run immediately before the send attempt (see
+// processCampaignLead) so every way a lead can come due — a late worker run,
+// a retry, a campaign resume, a manual reactivation — is covered in one
+// place. The decision itself is resolveSendDecision (lib/email/scheduling.ts).
+//
+// Outside the window without a valid Send Now: the claimed lead moves to the
+// next window opening and releases its lease, and so does every other lead of
+// this campaign that's due right now (deferDueCampaignLeads) — all of them
+// are outside the same window, so this avoids deferring them one claim at a
+// time. next_send_at lands in the future, so nothing is reclaimed until the
+// window opens. Status, mailbox and step are untouched; a stale Send Now for
+// an earlier step is cleared, since it can never apply again.
+//
+// With a valid Send Now: the bypass is consumed here, before the send
+// attempt, so if this send fails its retry waits for the window like any
+// other, and a crash after this point can't re-use it either. The worker
+// holds this lead's lease, and request_send_now() refuses leased leads, so
+// nothing can set a new bypass concurrently. The consume is conditional
+// (consumeSendNow): if the database no longer holds the bypass the claim
+// returned — a pause after the claim clears it — the bypass is not used
+// (handleLostSendNow).
+export async function enforceSendingWindow(
+  supabase: Client,
+  campaignLead: Tables<"campaign_leads">,
+  sendingWindow: unknown,
+  now: Date = new Date(),
+): Promise<"send" | "deferred"> {
+  const decision = resolveSendDecision({
+    now,
+    sendingWindow,
+    currentStepId: campaignLead.current_step_id,
+    sendNowStepId: campaignLead.send_now_step_id,
+  });
+
+  if (decision.send) {
+    // A stale value (left for an earlier step) is dropped here too, so no
+    // bypass is ever still pending once this step's send is attempted.
+    if (campaignLead.send_now_step_id !== null && campaignLead.current_step_id !== null) {
+      const consumed = await consumeSendNow(
+        supabase,
+        campaignLead.id,
+        campaignLead.send_now_step_id,
+        campaignLead.current_step_id,
+      );
+      if (decision.usesSendNowBypass && !consumed) {
+        return handleLostSendNow(supabase, campaignLead, sendingWindow, now);
+      }
+    }
+    return "send";
+  }
+
+  await updateCampaignLead(supabase, campaignLead.id, {
+    next_send_at: decision.nextSendAt.toISOString(),
+    locked_until: null,
+    send_now_step_id: null,
+  });
+  await deferDueCampaignLeads(supabase, campaignLead.campaign_id, decision.nextSendAt, now);
+  console.log("[send-worker] outside sending window, deferred", {
+    campaignLeadId: campaignLead.id,
+    campaignId: campaignLead.campaign_id,
+    nextSendAt: decision.nextSendAt.toISOString(),
+  });
+  return "deferred";
+}
+
+// The claimed copy showed a valid Send Now, but the database no longer has
+// it — in practice because the campaign was paused (or otherwise left
+// 'active') after the claim, whose trigger clears pending requests. The
+// bypass is not used. A campaign that is no longer active sends nothing: the
+// lease is released and next_send_at kept, so a resume picks the lead up
+// again through the normal window check. Otherwise the lead goes through the
+// normal window decision as if it never had a Send Now.
+async function handleLostSendNow(
+  supabase: Client,
+  campaignLead: Tables<"campaign_leads">,
+  sendingWindow: unknown,
+  now: Date,
+): Promise<"send" | "deferred"> {
+  const campaign = await getCampaignById(supabase, campaignLead.campaign_id);
+  if (campaign.status !== "active") {
+    await updateCampaignLead(supabase, campaignLead.id, { locked_until: null });
+    console.log("[send-worker] Send Now withdrawn by campaign status change, not sent", {
+      campaignLeadId: campaignLead.id,
+      campaignId: campaignLead.campaign_id,
+      campaignStatus: campaign.status,
+    });
+    return "deferred";
+  }
+  return enforceSendingWindow(supabase, { ...campaignLead, send_now_step_id: null }, sendingWindow, now);
+}
+
 async function processCampaignLead(
   supabase: Client,
   campaignLead: Tables<"campaign_leads">,
@@ -422,10 +515,17 @@ async function processCampaignLead(
     });
     const now = new Date();
     const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    // A pending Send Now is dropped too: it was a request to send now, not
+    // next month, and must not fire at 00:00 UTC regardless of the window.
     await updateCampaignLead(supabase, campaignLead.id, {
       next_send_at: nextMonthStart.toISOString(),
       locked_until: null,
+      send_now_step_id: null,
     });
+    return "skipped";
+  }
+
+  if ((await enforceSendingWindow(supabase, campaignLead, campaign.sending_window)) === "deferred") {
     return "skipped";
   }
 

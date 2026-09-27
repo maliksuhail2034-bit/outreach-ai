@@ -52,8 +52,9 @@ const MERGE_TAG_ALIASES: Record<string, string> = {
 // [a-zA-Z0-9_.]+ charset) so user-facing variants with spaces, e.g.
 // {{First Name}} or {{Company Name}}, are captured at all. Whether a
 // captured tag actually resolves is decided by resolveTag below, not by
-// this pattern.
-const MERGE_TAG_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
+// this pattern. Exported so the composer's markup parser
+// (lib/email/composer-markup.ts) recognizes exactly the same tags.
+export const MERGE_TAG_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
 function getByPath(value: unknown, path: string[]): unknown {
   let current = value;
@@ -104,6 +105,12 @@ function resolveTag(tag: string, lead: MergeTagLead): TagResolution {
   if (aliasKey) return { value: MERGE_TAG_RESOLVERS[aliasKey](lead), supported: true };
 
   return { value: undefined, supported: false };
+}
+
+// Whether a tag name is recognized at all, independent of any lead's data —
+// the composer uses it to flag an unknown variable chip.
+export function isSupportedMergeTag(tag: string): boolean {
+  return resolveTag(tag, { email: "" }).supported;
 }
 
 // Phase 3B Enterprise Readiness (security audit, item 2): lead data (company,

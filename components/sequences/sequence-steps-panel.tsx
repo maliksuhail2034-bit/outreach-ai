@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ArrowDownIcon, ArrowUpIcon, EyeIcon, PaperclipIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
+import { composerMarkupToPlainText } from "@/lib/email/composer-markup";
 import { deleteSequenceStepAction, moveSequenceStepAction } from "@/app/(app)/campaigns/[campaignId]/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -130,7 +131,11 @@ export function SequenceStepsPanel({
                       Step {index + 1} · {delayLabel(step.day_delay)}
                     </p>
                     <p className="mt-1 truncate font-medium">{step.subject || "(No subject)"}</p>
-                    {step.body && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{step.body}</p>}
+                    {step.body && (
+                      <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                        {composerMarkupToPlainText(step.body)}
+                      </p>
+                    )}
                     {stepAttachments.length > 0 && (
                       <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                         <PaperclipIcon className="size-3" />

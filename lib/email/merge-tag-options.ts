@@ -5,6 +5,8 @@
 // so a sequence step's stored body always uses the one syntax the renderer
 // treats as a first-class hit, even though merge-tags.ts separately also
 // accepts alias spellings a user might type by hand (e.g. {{First Name}}).
+import { isSupportedMergeTag } from "./merge-tags";
+
 export interface MergeTagOption {
   label: string;
   tag: string;
@@ -22,27 +24,15 @@ export function mergeTagSyntax(tag: string): string {
   return `{{${tag}}}`;
 }
 
-export interface CursorInsertResult {
-  value: string;
-  // Where the caret should land after the insertion — right after the
-  // inserted text, matching how a normal text editor behaves on paste.
-  cursor: number;
+export interface MergeTagChip {
+  label: string;
+  supported: boolean;
 }
 
-// Pure text-splicing helper behind the variable picker: inserts `insertion`
-// in place of the [selectionStart, selectionEnd) range of `value` (an empty
-// range is just a caret position; a non-empty one is a replaced selection).
-// Extracted out of the picker component so the insertion math itself is
-// unit-testable without a DOM/jsdom — the component only needs to read
-// selectionStart/selectionEnd off the focused field and call this.
-export function insertAtCursor(
-  value: string,
-  insertion: string,
-  selectionStart: number,
-  selectionEnd: number,
-): CursorInsertResult {
-  const start = Math.max(0, Math.min(selectionStart, value.length));
-  const end = Math.max(start, Math.min(selectionEnd, value.length));
-  const nextValue = value.slice(0, start) + insertion + value.slice(end);
-  return { value: nextValue, cursor: start + insertion.length };
+// What a variable chip in the composer shows: the picker's friendly label
+// for a canonical tag, otherwise the tag as typed, flagged when the renderer
+// wouldn't recognize it (it then renders as an empty string, same as ever).
+export function mergeTagChip(tag: string): MergeTagChip {
+  const option = MERGE_TAG_OPTIONS.find((candidate) => candidate.tag === tag);
+  return { label: option?.label ?? tag, supported: isSupportedMergeTag(tag) };
 }

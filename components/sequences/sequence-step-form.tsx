@@ -13,18 +13,17 @@ import {
   linkAttachmentsToStepAction,
   updateSequenceStepAction,
 } from "@/app/(app)/campaigns/[campaignId]/actions";
-import { insertAtCursor, mergeTagSyntax } from "@/lib/email/merge-tag-options";
 import { findMalformedTags, findUnsupportedTags } from "@/lib/email/validate-template";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { TemplatePicker } from "./template-picker";
 import { MergeTagPicker } from "./merge-tag-picker";
 import { TemplateValidationList } from "./template-validation-list";
 import { EmailPreviewDialog } from "./email-preview-dialog";
 import { AttachmentManager, type AttachmentSummary } from "./attachment-manager";
+import { ComposerEditor, type ComposerEditorHandle } from "./composer-editor";
 
 type SequenceStepFormProps = (
   | { mode: "create"; campaignId: string; step?: undefined; onSuccess?: () => void }
@@ -109,8 +108,8 @@ export function SequenceStepForm({
   // accept merge tags (a subject line like "Quick question about
   // {{company}}" is a common real pattern, not just the body).
   const [activeField, setActiveField] = useState<ActiveField>("body");
-  const subjectRef = useRef<HTMLInputElement | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const subjectEditorRef = useRef<ComposerEditorHandle | null>(null);
+  const bodyEditorRef = useRef<ComposerEditorHandle | null>(null);
 
   const subjectValue = useWatch({ control: form.control, name: "subject" }) ?? "";
   const bodyValue = useWatch({ control: form.control, name: "body" }) ?? "";
@@ -125,21 +124,11 @@ export function SequenceStepForm({
     [subjectValue, bodyValue],
   );
 
+  // Inserts a variable chip at the cursor of the last-focused field; the
+  // editor's own update then writes the new value into the form.
   function insertMergeTag(tag: string) {
-    const fieldName: ActiveField = activeField;
-    const ref = fieldName === "subject" ? subjectRef : bodyRef;
-    const el = ref.current;
-    const currentValue = form.getValues(fieldName) ?? "";
-    const start = el?.selectionStart ?? currentValue.length;
-    const end = el?.selectionEnd ?? currentValue.length;
-    const { value, cursor } = insertAtCursor(currentValue, mergeTagSyntax(tag), start, end);
-
-    form.setValue(fieldName, value, { shouldDirty: true, shouldValidate: true });
-
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(cursor, cursor);
-    });
+    const editor = activeField === "subject" ? subjectEditorRef.current : bodyEditorRef.current;
+    editor?.insertMergeTag(tag);
   }
 
   function onSubmit(values: SequenceStepInput) {
@@ -211,14 +200,16 @@ export function SequenceStepForm({
             <FormItem>
               <FormLabel>Subject</FormLabel>
               <FormControl>
-                <Input
-                  placeholder="Quick question about {{company}}"
-                  {...field}
-                  ref={(el) => {
-                    field.ref(el);
-                    subjectRef.current = el;
-                  }}
+                <ComposerEditor
+                  ref={subjectEditorRef}
+                  variant="subject"
+                  ariaLabel="Subject"
+                  placeholder="Quick question about your team"
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
                   onFocus={() => setActiveField("subject")}
+                  disabled={isPending}
                 />
               </FormControl>
               <FormMessage />
@@ -235,22 +226,24 @@ export function SequenceStepForm({
                 <FormLabel>Body</FormLabel>
                 <EmailPreviewDialog subject={subjectValue} body={bodyValue} attachments={attachments} />
               </div>
-              <MergeTagPicker onInsert={insertMergeTag} />
               <FormControl>
-                <Textarea
-                  rows={8}
-                  placeholder="Hi {{first_name}}, ..."
-                  {...field}
-                  ref={(el) => {
-                    field.ref(el);
-                    bodyRef.current = el;
-                  }}
+                <ComposerEditor
+                  ref={bodyEditorRef}
+                  variant="body"
+                  ariaLabel="Body"
+                  placeholder="Hi there, ..."
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
                   onFocus={() => setActiveField("body")}
+                  disabled={isPending}
+                  toolbarExtra={<MergeTagPicker onInsert={insertMergeTag} disabled={isPending} />}
                 />
               </FormControl>
               <p className="text-xs text-muted-foreground">
-                Paragraphs (blank line between) and line breaks are preserved automatically. A link like
-                https://example.com becomes clickable automatically — no special formatting needed.
+                Variables go into whichever field you last clicked, and appear as chips. Select text to make it bold,
+                italic or a link. Press Enter for a new paragraph and Shift+Enter for a line break. A web address like
+                https://example.com becomes clickable automatically.
               </p>
               <FormMessage />
             </FormItem>

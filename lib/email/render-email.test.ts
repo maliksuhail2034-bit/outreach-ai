@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderEmailContent, plainTextToHtml } from "./render-email";
+import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
 
 const lead: MergeTagLead = {
@@ -208,13 +208,15 @@ describe("renderEmailContent", () => {
   });
 });
 
-describe("plainTextToHtml", () => {
-  it("returns an empty string for empty input", () => {
-    expect(plainTextToHtml("")).toBe("");
-    expect(plainTextToHtml("   \n  ")).toBe("");
+describe("renderEmailContent body HTML edge cases", () => {
+  const html = (body: string) => renderEmailContent("Subject", body, lead).html;
+
+  it("returns an empty string for empty or whitespace-only input", () => {
+    expect(html("")).toBe("");
+    expect(html("   \n  ")).toBe("");
   });
 
   it("normalizes CRLF line endings the same as LF", () => {
-    expect(plainTextToHtml("Line one.\r\nLine two.")).toBe(plainTextToHtml("Line one.\nLine two."));
+    expect(html("Line one.\r\nLine two.")).toBe(html("Line one.\nLine two."));
   });
 });

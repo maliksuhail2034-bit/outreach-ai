@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MERGE_TAG_OPTIONS, insertAtCursor, mergeTagSyntax } from "./merge-tag-options";
+import { MERGE_TAG_OPTIONS, mergeTagChip, mergeTagSyntax } from "./merge-tag-options";
 import { SUPPORTED_MERGE_TAGS, renderMergeTags } from "./merge-tags";
 import { SAMPLE_LEAD } from "./sample-lead";
 
@@ -36,45 +36,17 @@ describe("mergeTagSyntax", () => {
   });
 });
 
-describe("insertAtCursor", () => {
-  it("inserts at an empty-selection caret position", () => {
-    const result = insertAtCursor("Hi , welcome", "{{first_name}}", 3, 3);
-    expect(result.value).toBe("Hi {{first_name}}, welcome");
-    expect(result.cursor).toBe(3 + "{{first_name}}".length);
+describe("mergeTagChip", () => {
+  it("labels a canonical picker tag with its friendly label", () => {
+    expect(mergeTagChip("first_name")).toEqual({ label: "First Name", supported: true });
   });
 
-  it("inserts at the start of an empty field", () => {
-    const result = insertAtCursor("", "{{first_name}}", 0, 0);
-    expect(result.value).toBe("{{first_name}}");
-    expect(result.cursor).toBe("{{first_name}}".length);
+  it("shows a supported tag that isn't in the picker as typed", () => {
+    expect(mergeTagChip("custom_fields.role")).toEqual({ label: "custom_fields.role", supported: true });
+    expect(mergeTagChip("First Name")).toEqual({ label: "First Name", supported: true });
   });
 
-  it("inserts at the end of existing text", () => {
-    const value = "Hi there, ";
-    const result = insertAtCursor(value, "{{first_name}}", value.length, value.length);
-    expect(result.value).toBe("Hi there, {{first_name}}");
-    expect(result.cursor).toBe(value.length + "{{first_name}}".length);
-  });
-
-  it("replaces a non-empty selection with the inserted tag", () => {
-    const result = insertAtCursor("Hi NAME, welcome", "{{first_name}}", 3, 7);
-    expect(result.value).toBe("Hi {{first_name}}, welcome");
-  });
-
-  it("clamps an out-of-range selection instead of throwing", () => {
-    const result = insertAtCursor("Hi", "{{first_name}}", 50, 99);
-    expect(result.value).toBe("Hi{{first_name}}");
-  });
-
-  it("clamps a negative selection instead of throwing", () => {
-    const result = insertAtCursor("Hi", "{{first_name}}", -5, -1);
-    expect(result.value).toBe("{{first_name}}Hi");
-  });
-
-  it("inserts every supported variable's canonical syntax correctly", () => {
-    for (const option of MERGE_TAG_OPTIONS) {
-      const result = insertAtCursor("", mergeTagSyntax(option.tag), 0, 0);
-      expect(result.value).toBe(`{{${option.tag}}}`);
-    }
+  it("flags an unknown tag as unsupported", () => {
+    expect(mergeTagChip("favorite_color")).toEqual({ label: "favorite_color", supported: false });
   });
 });

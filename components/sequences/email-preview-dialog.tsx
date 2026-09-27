@@ -84,9 +84,10 @@ export function EmailPreviewDialog({
               <div className="max-h-80 overflow-y-auto bg-background px-4 py-4 text-sm leading-relaxed text-foreground [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_p]:mb-3 [&_p:last-child]:mb-0">
                 {rendered.html ? (
                   // Safe: rendered.html comes from renderEmailContent, which
-                  // HTML-escapes the entire merged body and only ever emits
-                  // <p>, <br>, and <a href="http(s)://…"> itself (see
-                  // lib/email/render-email.ts) — never raw user/lead input.
+                  // HTML-escapes every piece of text and only ever emits <p>,
+                  // <br>, <strong>, <em> and <a href="http(s)://…"> itself
+                  // (see lib/email/render-email.ts) — never raw user/lead
+                  // input.
                   <div dangerouslySetInnerHTML={{ __html: rendered.html }} />
                 ) : (
                   <p className="text-muted-foreground">(No content yet)</p>

@@ -29,16 +29,21 @@ function displayName(timezone: string): string {
 // "Asia/Riyadh"); the current UTC offset shown alongside each option is
 // display-only, computed fresh rather than hardcoded so it's never wrong
 // after a DST transition.
+//
+// `emptyLabel` makes "no timezone" a choice of its own (value ""), listed
+// first — a lead's timezone is optional, a campaign's is not.
 export function TimezoneSelect({
   value,
   onChange,
   disabled,
   id,
+  emptyLabel,
 }: {
   value: string;
   onChange: (timezone: string) => void;
   disabled?: boolean;
   id?: string;
+  emptyLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -88,7 +93,7 @@ export function TimezoneSelect({
         onClick={() => (open ? setOpen(false) : handleOpen())}
       >
         <span className="truncate">
-          {value ? `${displayName(value)} (${currentOffsetLabel(value)})` : "Select a timezone"}
+          {value ? `${displayName(value)} (${currentOffsetLabel(value)})` : (emptyLabel ?? "Select a timezone")}
         </span>
         <ChevronsUpDownIcon className="size-4 shrink-0 opacity-50" />
       </Button>
@@ -108,6 +113,21 @@ export function TimezoneSelect({
             />
           </div>
           <ul className="max-h-64 overflow-y-auto p-1">
+            {emptyLabel && !query.trim() && (
+              <li>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
+                    !value && "bg-accent/50",
+                  )}
+                  onClick={() => handleSelect("")}
+                >
+                  <span className="truncate">{emptyLabel}</span>
+                  {!value && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" />}
+                </button>
+              </li>
+            )}
             {filtered.length === 0 ? (
               <li className="px-2 py-1.5 text-sm text-muted-foreground">No matching timezone.</li>
             ) : (

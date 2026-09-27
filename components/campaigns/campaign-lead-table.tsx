@@ -9,6 +9,7 @@ import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { CAMPAIGN_LEAD_STATUSES } from "@/lib/validations/campaign-leads";
 import { classifyErrorCategory, ERROR_CATEGORY_LABELS } from "@/lib/analytics/error-category";
+import { formatLocalTime, isValidIanaTimezone } from "@/lib/timezones";
 import {
   deleteLeadPermanentlyAction,
   removeCampaignLeadAction,
@@ -448,6 +449,9 @@ export function CampaignLeadTable({
                               {row.next_send_at && (
                                 <p className="text-xs text-muted-foreground">
                                   Next send {formatDateTime(row.next_send_at)}
+                                  {lead?.timezone && isValidIanaTimezone(lead.timezone) && (
+                                    <> · lead&apos;s time {formatLocalTime(lead.timezone, new Date(row.next_send_at))}</>
+                                  )}
                                 </p>
                               )}
                               {row.locked_until && new Date(row.locked_until) > new Date() ? (

@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
   createCampaign: vi.fn(),
   deleteCampaign: vi.fn(),
   getCampaign: vi.fn(),
-  listCampaignLeads: vi.fn(),
+  listCampaignLeadsWithTimezones: vi.fn(),
   updateCampaign: vi.fn(),
   updateCampaignLead: vi.fn(),
 }));
@@ -27,7 +27,7 @@ vi.mock("@/lib/billing/limits", () => ({
 }));
 
 import { requireUser } from "@/lib/supabase/auth";
-import { getCampaign, listCampaignLeads, updateCampaign, updateCampaignLead } from "@/lib/db";
+import { getCampaign, listCampaignLeadsWithTimezones, updateCampaign, updateCampaignLead } from "@/lib/db";
 import { assertWithinDailySendLimit } from "@/lib/billing/limits";
 import { updateCampaignAction } from "./actions";
 import type { SendingWindow } from "@/lib/validations/sending-window";
@@ -35,7 +35,7 @@ import type { Tables } from "@/types/database.types";
 
 const mockRequireUser = vi.mocked(requireUser);
 const mockGetCampaign = vi.mocked(getCampaign);
-const mockListCampaignLeads = vi.mocked(listCampaignLeads);
+const mockListCampaignLeadsWithTimezones = vi.mocked(listCampaignLeadsWithTimezones);
 const mockUpdateCampaign = vi.mocked(updateCampaign);
 const mockUpdateCampaignLead = vi.mocked(updateCampaignLead);
 const mockAssertWithinDailySendLimit = vi.mocked(assertWithinDailySendLimit);
@@ -60,8 +60,11 @@ function makeCampaign(overrides: Partial<Tables<"campaigns">> = {}): Tables<"cam
   };
 }
 
-function makeCampaignLead(overrides: Partial<Tables<"campaign_leads">> = {}): Tables<"campaign_leads"> {
+function makeCampaignLead(
+  overrides: Partial<Tables<"campaign_leads"> & { leadTimezone: string | null }> = {},
+): Tables<"campaign_leads"> & { leadTimezone: string | null } {
   return {
+    leadTimezone: null,
     id: "cl-1",
     campaign_id: "campaign-1",
     lead_id: "lead-1",
@@ -101,11 +104,11 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
     // 15:00 UTC is inside 9-17 UTC, but outside 9-17 Riyadh (18:00 local) —
     // must roll forward once re-snapped into the new window.
     const lead = makeCampaignLead({ next_send_at: "2026-08-03T15:00:00.000Z" });
-    mockListCampaignLeads.mockResolvedValue([lead] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([lead] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
 
-    expect(mockListCampaignLeads).toHaveBeenCalledWith(expect.anything(), "campaign-1", { status: "active" });
+    expect(mockListCampaignLeadsWithTimezones).toHaveBeenCalledWith(expect.anything(), "campaign-1", { status: "active" });
     expect(mockUpdateCampaignLead).toHaveBeenCalledWith(
       expect.anything(),
       "cl-1",
@@ -115,11 +118,11 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
 
   it("does not touch campaign_leads at all when the sending window is unchanged", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
-    mockListCampaignLeads.mockResolvedValue([makeCampaignLead()] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([makeCampaignLead()] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: UTC_9_TO_5, name: "Renamed" });
 
-    expect(mockListCampaignLeads).not.toHaveBeenCalled();
+    expect(mockListCampaignLeadsWithTimezones).not.toHaveBeenCalled();
     expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
   });
 
@@ -127,7 +130,7 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
     // 10:00 UTC = 13:00 Riyadh — already inside the new window.
     const lead = makeCampaignLead({ id: "cl-already-valid", next_send_at: "2026-08-03T10:00:00.000Z" });
-    mockListCampaignLeads.mockResolvedValue([lead] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([lead] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
 
@@ -137,7 +140,7 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
   it("never recomputes a lead with no next_send_at queued", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
     const notQueued = makeCampaignLead({ id: "cl-not-queued", next_send_at: null });
-    mockListCampaignLeads.mockResolvedValue([notQueued] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([notQueued] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
 
@@ -147,7 +150,7 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
   it("only ever writes next_send_at — never mailbox_id, status, or current_step_id (stickiness/sequencing preserved)", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
     const lead = makeCampaignLead({ next_send_at: "2026-08-03T15:00:00.000Z", mailbox_id: "mailbox-sticky" });
-    mockListCampaignLeads.mockResolvedValue([lead] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([lead] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
 
@@ -158,17 +161,17 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
 
   it("only asks for active leads — terminal/already-resolved statuses are never queried for recompute", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
-    mockListCampaignLeads.mockResolvedValue([] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
 
-    expect(mockListCampaignLeads).toHaveBeenCalledWith(expect.anything(), "campaign-1", { status: "active" });
+    expect(mockListCampaignLeadsWithTimezones).toHaveBeenCalledWith(expect.anything(), "campaign-1", { status: "active" });
   });
 
   it("recomputes queued leads even for a paused campaign, without changing its paused status", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "paused", sending_window: UTC_9_TO_5 }) as never);
     const lead = makeCampaignLead({ next_send_at: "2026-08-03T15:00:00.000Z" });
-    mockListCampaignLeads.mockResolvedValue([lead] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([lead] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5, status: "paused" });
 
@@ -191,7 +194,7 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
     const leadA = makeCampaignLead({ id: "cl-a", next_send_at: "2026-08-03T15:00:00.000Z" });
     const leadB = makeCampaignLead({ id: "cl-b", next_send_at: "2026-08-03T10:00:00.000Z" });
-    mockListCampaignLeads.mockResolvedValue([leadA, leadB] as never);
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([leadA, leadB] as never);
 
     await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
 
@@ -200,6 +203,31 @@ describe("updateCampaignAction — schedule-edit recompute", () => {
     expect(mockUpdateCampaignLead).toHaveBeenCalledTimes(1);
     expect(mockUpdateCampaignLead).toHaveBeenCalledWith(expect.anything(), "cl-a", {
       next_send_at: "2026-08-04T06:00:00.000Z",
+    });
+  });
+});
+
+// Batch G: each queued lead is re-snapped into its own window — the new
+// days and hours in the lead's timezone when it has a valid one.
+describe("updateCampaignAction — per-lead timezone recompute", () => {
+  it("re-snaps each queued lead into the new window in its own timezone", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: UTC_9_TO_5 }) as never);
+    // Mon 2026-08-03 10:00 UTC:
+    //   campaign timezone (Riyadh, +3) -> 13:00 local, inside 9-17: unchanged
+    //   America/New_York (-4)          -> 06:00 local, outside: 09:00 EDT = 13:00Z
+    //   invalid timezone               -> falls back to Riyadh: unchanged
+    const queuedAt = "2026-08-03T10:00:00.000Z";
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([
+      makeCampaignLead({ id: "cl-campaign-tz", next_send_at: queuedAt, leadTimezone: null }),
+      makeCampaignLead({ id: "cl-new-york", next_send_at: queuedAt, leadTimezone: "America/New_York" }),
+      makeCampaignLead({ id: "cl-invalid", next_send_at: queuedAt, leadTimezone: "Nowhere/Special" }),
+    ]);
+
+    await updateCampaignAction("campaign-1", { ...BASE_INPUT, sendingWindow: RIYADH_9_TO_5 });
+
+    expect(mockUpdateCampaignLead).toHaveBeenCalledTimes(1);
+    expect(mockUpdateCampaignLead).toHaveBeenCalledWith(expect.anything(), "cl-new-york", {
+      next_send_at: "2026-08-03T13:00:00.000Z",
     });
   });
 });

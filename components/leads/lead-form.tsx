@@ -10,9 +10,10 @@ import { LEAD_STATUSES, leadSchema, type LeadInput } from "@/lib/validations/lea
 import { createLeadAction, updateLeadAction } from "@/app/(app)/leads/actions";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TimezoneSelect } from "@/components/campaigns/timezone-select";
 
 const NO_LIST = "none";
 
@@ -39,6 +40,7 @@ export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
             title: lead.title ?? "",
             status: lead.status as LeadInput["status"],
             listId: lead.list_id ?? "",
+            timezone: lead.timezone ?? "",
           }
         : {
             firstName: "",
@@ -47,6 +49,7 @@ export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
             company: "",
             title: "",
             listId: "",
+            timezone: "",
           },
   });
 
@@ -199,6 +202,28 @@ export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
             />
           )}
         </div>
+
+        <FormField
+          control={form.control}
+          name="timezone"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Timezone</FormLabel>
+              <FormControl>
+                <TimezoneSelect
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  emptyLabel="Use campaign timezone"
+                />
+              </FormControl>
+              <FormDescription>
+                Campaigns send within their sending hours in this timezone. Leave it on the campaign timezone if
+                you don&apos;t know it.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         <DialogFooter>
           <Button type="submit" disabled={isPending}>

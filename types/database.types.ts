@@ -984,6 +984,7 @@ export type Database = {
           list_id: string | null
           phone: string | null
           status: string
+          timezone: string | null
           title: string | null
           updated_at: string
           user_id: string
@@ -1008,6 +1009,7 @@ export type Database = {
           list_id?: string | null
           phone?: string | null
           status?: string
+          timezone?: string | null
           title?: string | null
           updated_at?: string
           user_id: string
@@ -1032,6 +1034,7 @@ export type Database = {
           list_id?: string | null
           phone?: string | null
           status?: string
+          timezone?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string

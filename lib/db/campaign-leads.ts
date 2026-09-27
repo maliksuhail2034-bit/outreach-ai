@@ -257,25 +257,77 @@ export async function consumeSendNow(
   return data.length > 0;
 }
 
-// When the send worker finds a due lead outside its campaign's sending
-// window, every other lead of that campaign due right now is outside it too
-// (the window is per campaign), so they're all moved to the same next
-// opening in one statement instead of being claimed and deferred one per
-// worker run. Only rows that are active, due, unleased and have no pending
-// Send Now — a leased row belongs to an in-flight worker, and a Send Now
-// request is handled on its own. Called with the admin client from the
-// worker (see lib/email/send-worker.ts).
-export async function deferDueCampaignLeads(supabase: Client, campaignId: string, nextSendAt: Date, now: Date) {
-  const nowIso = now.toISOString();
-  const { error } = await supabase
+// listCampaignLeads with each row's lead timezone (leads.timezone) read in
+// the same query, for the paths that schedule many enrolled leads at once
+// (launch, sending-window edits) — see resolveLeadSendingWindow in
+// lib/email/scheduling.ts.
+export async function listCampaignLeadsWithTimezones(
+  supabase: Client,
+  campaignId: string,
+  options?: { status?: string },
+): Promise<(Tables<"campaign_leads"> & { leadTimezone: string | null })[]> {
+  let query = supabase
     .from("campaign_leads")
-    .update({ next_send_at: nextSendAt.toISOString() })
+    .select("*, lead:leads(timezone)")
+    .eq("campaign_id", campaignId)
+    .order("created_at", { ascending: false });
+
+  if (options?.status) {
+    query = query.eq("status", options.status);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data.map(({ lead, ...campaignLead }) => ({ ...campaignLead, leadTimezone: lead?.timezone ?? null }));
+}
+
+// Upper bound on ids per update, keeping the PostgREST request URL small.
+const DEFER_ID_CHUNK = 200;
+
+// When the send worker finds a due lead outside its sending window, every
+// other due lead of that campaign that is sent in the same window — the
+// campaign's days and hours in the same effective timezone — is outside it
+// too, so they're moved to the same next opening together instead of being
+// claimed and deferred one per worker run. `inSameWindow` decides that from
+// each lead's timezone (see resolveLeadSendingWindow); leads in other
+// timezones are left alone and get their own window check when claimed.
+// Only rows that are active, due, unleased and have no pending Send Now — a
+// leased row belongs to an in-flight worker, and a Send Now request is
+// handled on its own — and those conditions are re-applied by the update
+// itself, so a row that changed in between is not touched. Called with the
+// admin client from the worker (see lib/email/send-worker.ts).
+export async function deferDueCampaignLeads(
+  supabase: Client,
+  campaignId: string,
+  nextSendAt: Date,
+  now: Date,
+  inSameWindow: (leadTimezone: string | null) => boolean,
+) {
+  const nowIso = now.toISOString();
+  const { data: due, error: dueError } = await supabase
+    .from("campaign_leads")
+    .select("id, lead:leads(timezone)")
     .eq("campaign_id", campaignId)
     .eq("status", "active")
     .lte("next_send_at", nowIso)
     .is("send_now_step_id", null)
     .or(`locked_until.is.null,locked_until.lt.${nowIso}`);
-  if (error) throw error;
+  if (dueError) throw dueError;
+
+  const ids = due.filter((row) => inSameWindow(row.lead?.timezone ?? null)).map((row) => row.id);
+
+  for (let start = 0; start < ids.length; start += DEFER_ID_CHUNK) {
+    const { error } = await supabase
+      .from("campaign_leads")
+      .update({ next_send_at: nextSendAt.toISOString() })
+      .in("id", ids.slice(start, start + DEFER_ID_CHUNK))
+      .eq("campaign_id", campaignId)
+      .eq("status", "active")
+      .lte("next_send_at", nowIso)
+      .is("send_now_step_id", null)
+      .or(`locked_until.is.null,locked_until.lt.${nowIso}`);
+    if (error) throw error;
+  }
 }
 
 // Wraps claim_due_sends() (supabase/migrations/20260730100020_claim_due_sends.sql).

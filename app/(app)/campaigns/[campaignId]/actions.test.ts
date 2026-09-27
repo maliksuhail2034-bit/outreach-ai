@@ -17,12 +17,14 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/db", () => ({
   getCampaign: vi.fn(),
   getCampaignLead: vi.fn(),
+  getLead: vi.fn(),
   updateCampaignLead: vi.fn(),
   getUserOrganization: vi.fn(),
   // Batch 8: enrollLeadAction/enrollLeadListAction's dependencies.
   getSuppressedEmails: vi.fn(),
   listCampaignMailboxes: vi.fn(),
   listCampaignLeads: vi.fn(),
+  listCampaignLeadsWithTimezones: vi.fn(),
   addLeadToCampaign: vi.fn(),
   addLeadsToCampaign: vi.fn(),
   listLeads: vi.fn(),
@@ -59,10 +61,12 @@ import {
   addLeadToCampaign,
   getCampaign,
   getCampaignLead,
+  getLead,
   getLeadSegment,
   getSuppressedEmails,
   getUserOrganization,
   listCampaignLeads,
+  listCampaignLeadsWithTimezones,
   listCampaignMailboxes,
   listDomains,
   listLeads,
@@ -97,6 +101,8 @@ const mockCheckRateLimit = vi.mocked(checkRateLimit);
 const mockGetSuppressedEmails = vi.mocked(getSuppressedEmails);
 const mockListCampaignMailboxes = vi.mocked(listCampaignMailboxes);
 const mockListCampaignLeads = vi.mocked(listCampaignLeads);
+const mockListCampaignLeadsWithTimezones = vi.mocked(listCampaignLeadsWithTimezones);
+const mockGetLead = vi.mocked(getLead);
 const mockAddLeadToCampaign = vi.mocked(addLeadToCampaign);
 const mockAddLeadsToCampaign = vi.mocked(addLeadsToCampaign);
 const mockListLeads = vi.mocked(listLeads);
@@ -197,6 +203,8 @@ beforeEach(() => {
   mockGetSuppressedEmails.mockResolvedValue(new Map());
   mockListCampaignMailboxes.mockResolvedValue([]);
   mockListCampaignLeads.mockResolvedValue([]);
+  mockListCampaignLeadsWithTimezones.mockResolvedValue([]);
+  mockGetLead.mockResolvedValue({ id: "lead-1", email: "lead-1@example.com", timezone: null } as never);
   mockAddLeadToCampaign.mockResolvedValue(makeCampaignLead() as never);
   mockAddLeadsToCampaign.mockResolvedValue({ inserted: 0, skipped: 0, rows: [] });
   mockListLeads.mockResolvedValue([]);
@@ -438,6 +446,7 @@ describe("enrollLeadListAction", () => {
       linkedin: null,
       phone: null,
       website: null,
+      timezone: null,
       status: "new",
       list_id: "list-1",
       custom_fields: null,
@@ -524,6 +533,7 @@ describe("enrollLeadSegmentAction", () => {
       linkedin: null,
       phone: null,
       website: null,
+      timezone: null,
       status: "new",
       list_id: null,
       custom_fields: {},
@@ -657,7 +667,7 @@ describe("launchCampaignAction", () => {
 
   it("backfills leads with no mailbox round-robin across the pool when default_mailbox_id is null (pool-only campaign)", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft", default_mailbox_id: null }) as never);
-    mockListCampaignLeads.mockResolvedValue([
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([
       makeCampaignLead({ id: "lead-1", mailbox_id: null, status: "pending" }),
       makeCampaignLead({ id: "lead-2", mailbox_id: null, status: "pending" }),
       makeCampaignLead({ id: "lead-3", mailbox_id: null, status: "pending" }),
@@ -682,7 +692,7 @@ describe("launchCampaignAction", () => {
 
   it("only backfills leads with no mailbox_id, and the rotation index only counts backfilled leads", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft", default_mailbox_id: null }) as never);
-    mockListCampaignLeads.mockResolvedValue([
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([
       makeCampaignLead({ id: "lead-preassigned", mailbox_id: "mailbox-preassigned", status: "pending" }),
       makeCampaignLead({ id: "lead-null-1", mailbox_id: null, status: "pending" }),
       makeCampaignLead({ id: "lead-null-2", mailbox_id: null, status: "pending" }),
@@ -712,7 +722,7 @@ describe("launchCampaignAction", () => {
 
   it("blocks launch when leads are genuinely unresolvable (no pool, no default) and never touches any lead", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ status: "draft", default_mailbox_id: null }) as never);
-    mockListCampaignLeads.mockResolvedValue([
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([
       makeCampaignLead({ id: "lead-1", mailbox_id: null, status: "pending" }),
     ] as never);
     mockListCampaignMailboxes.mockResolvedValue([]);
@@ -766,5 +776,98 @@ describe("removeCampaignMailboxAction", () => {
 
     expect(mockRemoveCampaignMailbox).not.toHaveBeenCalled();
     expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+// Batch G: a lead's explicit timezone moves its first send into the
+// campaign's hours in the lead's local time; a lead without one (or with an
+// invalid one) schedules exactly as before, in the campaign's timezone.
+describe("per-lead timezone scheduling", () => {
+  // Mon-Fri 09:00-17:00 UTC. Enrolled Tue 2026-09-01 00:00 UTC with a
+  // same-day first step:
+  //   UTC (campaign)        -> Tue 09:00 UTC  = 2026-09-01T09:00Z
+  //   America/New_York (-4) -> Mon 20:00 local, next is Tue 09:00 EDT = 13:00Z
+  //   Asia/Tokyo (+9)       -> Tue 09:00 local, already open = 00:00Z
+  const WINDOW = { days: ["mon", "tue", "wed", "thu", "fri"], startHour: 9, endHour: 17, timezone: "UTC" };
+  const CAMPAIGN_TZ_SEND = "2026-09-01T09:00:00.000Z";
+  const NEW_YORK_SEND = "2026-09-01T13:00:00.000Z";
+  const TOKYO_SEND = "2026-09-01T00:00:00.000Z";
+
+  function scheduledAt(campaignLeadId: string) {
+    const call = mockUpdateCampaignLead.mock.calls.find(
+      ([, id, values]) => id === campaignLeadId && typeof values === "object" && values !== null && "next_send_at" in values,
+    );
+    return (call?.[2] as { next_send_at?: string | null } | undefined)?.next_send_at;
+  }
+
+  function useOneStepSequence() {
+    mockListSequences.mockResolvedValue([
+      { id: "seq-1", campaign_id: "campaign-1", name: "Default", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+    ] as never);
+    mockListSequenceSteps.mockResolvedValue([makeSequenceStep()]);
+  }
+
+  const pendingLead = (id: string, leadId = "lead-1") =>
+    makeCampaignLead({ id, lead_id: leadId, status: "pending", current_step_id: null, next_send_at: null });
+
+  describe("enrollLeadAction", () => {
+    beforeEach(() => {
+      mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
+      mockAddLeadToCampaign.mockResolvedValue(pendingLead("cl-1") as never);
+      useOneStepSequence();
+    });
+
+    it.each([
+      ["no timezone (unchanged behavior)", null, CAMPAIGN_TZ_SEND],
+      ["an invalid timezone", "Mars/Olympus_Mons", CAMPAIGN_TZ_SEND],
+      ["a timezone behind the campaign's", "America/New_York", NEW_YORK_SEND],
+      ["a timezone ahead of the campaign's", "Asia/Tokyo", TOKYO_SEND],
+    ])("schedules the first send for a lead with %s", async (_label, timezone, expected) => {
+      mockGetLead.mockResolvedValue({ id: "lead-1", email: "lead-1@example.com", timezone } as never);
+
+      await enrollLeadAction("campaign-1", "lead-1", undefined, true);
+
+      expect(scheduledAt("cl-1")).toBe(expected);
+    });
+  });
+
+  it("enrollLeadListAction schedules each lead in its own timezone", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
+    useOneStepSequence();
+    mockListLeads.mockResolvedValue([
+      { id: "lead-utc", email: "utc@example.com", timezone: null },
+      { id: "lead-ny", email: "ny@example.com", timezone: "America/New_York" },
+      { id: "lead-tokyo", email: "tokyo@example.com", timezone: "Asia/Tokyo" },
+    ] as never);
+    mockAddLeadsToCampaign.mockResolvedValue({
+      inserted: 3,
+      skipped: 0,
+      rows: [pendingLead("cl-utc", "lead-utc"), pendingLead("cl-ny", "lead-ny"), pendingLead("cl-tokyo", "lead-tokyo")],
+    });
+
+    await enrollLeadListAction("campaign-1", "list-1", undefined, true);
+
+    expect(scheduledAt("cl-utc")).toBe(CAMPAIGN_TZ_SEND);
+    expect(scheduledAt("cl-ny")).toBe(NEW_YORK_SEND);
+    expect(scheduledAt("cl-tokyo")).toBe(TOKYO_SEND);
+  });
+
+  it("launchCampaignAction schedules every pending lead in its own timezone", async () => {
+    mockGetCampaign.mockResolvedValue(
+      makeCampaign({ status: "draft", sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never,
+    );
+    mockListMailboxes.mockResolvedValue([makeMailbox()] as never);
+    useOneStepSequence();
+    mockListCampaignLeadsWithTimezones.mockResolvedValue([
+      { ...pendingLead("cl-utc"), mailbox_id: "mailbox-1", leadTimezone: null },
+      { ...pendingLead("cl-ny"), mailbox_id: "mailbox-1", leadTimezone: "America/New_York" },
+      { ...pendingLead("cl-bad"), mailbox_id: "mailbox-1", leadTimezone: "Not/A_Zone" },
+    ]);
+
+    await launchCampaignAction("campaign-1");
+
+    expect(scheduledAt("cl-utc")).toBe(CAMPAIGN_TZ_SEND);
+    expect(scheduledAt("cl-ny")).toBe(NEW_YORK_SEND);
+    expect(scheduledAt("cl-bad")).toBe(CAMPAIGN_TZ_SEND);
   });
 });

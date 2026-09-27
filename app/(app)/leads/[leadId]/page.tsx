@@ -11,6 +11,7 @@ import {
   listMailboxes,
 } from "@/lib/db";
 import { anyFailed, firstError, isNotFoundError, optionalRead, withRetry } from "@/lib/db/resilient-read";
+import { formatLocalTime, isValidIanaTimezone } from "@/lib/timezones";
 import { WidgetErrorBoundary } from "@/components/ui/widget-error-boundary";
 import { ThrowIfFailed } from "@/components/ui/throw-if-failed";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -202,7 +203,22 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
               <CardTitle>Details</CardTitle>
               <CardDescription>Edit this lead&apos;s information.</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+                <p className="text-xs font-medium text-muted-foreground">Sending timezone</p>
+                {lead.timezone && isValidIanaTimezone(lead.timezone) ? (
+                  <p className="mt-1">
+                    <span className="font-medium">{lead.timezone.replace(/_/g, " ")}</span>
+                    <span className="text-muted-foreground"> · now {formatLocalTime(lead.timezone, new Date())}</span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-muted-foreground">
+                    {lead.timezone
+                      ? `"${lead.timezone}" isn't a valid timezone, so each campaign's own timezone is used.`
+                      : "Not set — each campaign's own timezone is used."}
+                  </p>
+                )}
+              </div>
               <WidgetErrorBoundary label="Lead details">
                 {detailsFormFailed ? (
                   <ThrowIfFailed error={leadListsResult.error} />

@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 
+import { isValidIanaTimezone } from "@/lib/timezones";
 import {
   SENDING_WINDOW_DAYS,
   sendingWindowSchema,
@@ -29,6 +30,19 @@ export const DEFAULT_SENDING_WINDOW: SendingWindow = {
 export function resolveSendingWindow(raw: unknown): SendingWindow {
   const parsed = sendingWindowSchema.safeParse(raw);
   return parsed.success ? parsed.data : DEFAULT_SENDING_WINDOW;
+}
+
+// The window a specific lead is sent in: the campaign's days and hours, in
+// the lead's own timezone when it has a valid explicit one (leads.timezone),
+// otherwise the campaign's timezone — so a lead with no timezone schedules
+// exactly as before. Every scheduling function below takes the result as
+// its sending window; there is no separate per-lead scheduling path.
+export function resolveLeadSendingWindow(campaignSendingWindow: unknown, leadTimezone: string | null | undefined): SendingWindow {
+  const window = resolveSendingWindow(campaignSendingWindow);
+  if (leadTimezone && isValidIanaTimezone(leadTimezone)) {
+    return { ...window, timezone: leadTimezone };
+  }
+  return window;
 }
 
 const WEEKDAY_TO_LUXON: Record<SendingWindowDay, number> = {

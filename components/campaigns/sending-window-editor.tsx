@@ -5,7 +5,7 @@ import { useWatch, type Control } from "react-hook-form";
 import type { CampaignInput } from "@/lib/validations/campaigns";
 import { SENDING_WINDOW_DAYS, type SendingWindowDay } from "@/lib/validations/sending-window";
 import { Button } from "@/components/ui/button";
-import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TimezoneSelect } from "./timezone-select";
 
@@ -157,6 +157,10 @@ export function SendingWindowEditor({ control }: { control: Control<CampaignInpu
             <FormControl>
               <TimezoneSelect value={field.value} onChange={field.onChange} />
             </FormControl>
+            <FormDescription>
+              Leads with their own timezone are sent to within these hours in their local time; everyone else in
+              this timezone.
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

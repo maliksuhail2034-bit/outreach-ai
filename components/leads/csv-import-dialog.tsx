@@ -38,7 +38,8 @@ export function CsvImportDialog({ leadLists }: { leadLists: Tables<"lead_lists">
         <DialogHeader>
           <DialogTitle>Import leads from CSV</DialogTitle>
           <DialogDescription>
-            Columns recognized: first_name, last_name, email (required), company, title.
+            Columns recognized: first_name, last_name, email (required), company, title, timezone (an IANA name
+            such as America/New_York — leave it blank to use each campaign&apos;s timezone).
           </DialogDescription>
         </DialogHeader>
 
@@ -76,10 +77,20 @@ export function CsvImportDialog({ leadLists }: { leadLists: Tables<"lead_lists">
                 <li>Imported: {state.imported}</li>
                 <li>Skipped duplicates: {state.skippedDuplicates}</li>
                 <li>Failed: {state.failed}</li>
+                {state.warnings > 0 && <li>Imported with warnings: {state.warnings}</li>}
               </ul>
               {state.failedRows.length > 0 && (
                 <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
                   {state.failedRows.map((row) => (
+                    <li key={row.row}>
+                      Row {row.row}: {row.reason}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {state.warningRows.length > 0 && (
+                <ul className="mt-2 space-y-0.5 text-xs text-warning" aria-label="Import warnings">
+                  {state.warningRows.map((row) => (
                     <li key={row.row}>
                       Row {row.row}: {row.reason}
                     </li>

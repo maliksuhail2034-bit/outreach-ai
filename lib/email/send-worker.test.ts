@@ -663,13 +663,18 @@ describe("rewriteClickTrackingLinks", () => {
 describe("enforceSendingWindow", () => {
   type Call = { method: string; args: unknown[] };
 
-  function createRecordingClient() {
+  // `dueRows` is what a select of due leads returns (with each lead's
+  // timezone, as deferDueCampaignLeads reads them); it also stands in for
+  // the matched row a conditional consume (consumeSendNow) needs.
+  function createRecordingClient(
+    dueRows: { id: string; lead: { timezone: string | null } | null }[] = [{ id: "cl-1", lead: { timezone: null } }],
+  ) {
     const statements: Call[][] = [];
     function from(table: string) {
       const calls: Call[] = [{ method: "from", args: [table] }];
       statements.push(calls);
       const chain: Record<string, unknown> = {};
-      for (const method of ["update", "eq", "lte", "is", "or", "select", "not"]) {
+      for (const method of ["update", "eq", "lte", "is", "or", "select", "not", "in"]) {
         chain[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return chain;
@@ -679,9 +684,8 @@ describe("enforceSendingWindow", () => {
         calls.push({ method: "single", args: [] });
         return { data: makeLead("returned", "mailbox-1"), error: null };
       };
-      // A matched row, so a conditional consume (consumeSendNow) succeeds.
-      chain.then = (resolve: (value: { data: { id: string }[]; error: null }) => void) =>
-        resolve({ data: [{ id: "cl-1" }], error: null });
+      chain.then = (resolve: (value: { data: typeof dueRows; error: null }) => void) =>
+        resolve({ data: dueRows, error: null });
       return chain;
     }
     return { client: { from } as unknown as Client, statements };
@@ -723,23 +727,76 @@ describe("enforceSendingWindow", () => {
     expect(statements[0]).toContainEqual({ method: "eq", args: ["id", "cl-1"] });
   });
 
-  it("defers every other due, active, unleased, non-Send-Now lead of the same campaign to the same opening (D1b)", async () => {
-    const { client, statements } = createRecordingClient();
+  const DUE_FILTERS = (now: Date): Call[] => [
+    { method: "eq", args: ["campaign_id", "campaign-1"] },
+    { method: "eq", args: ["status", "active"] },
+    { method: "lte", args: ["next_send_at", now.toISOString()] },
+    { method: "is", args: ["send_now_step_id", null] },
+    { method: "or", args: [`locked_until.is.null,locked_until.lt.${now.toISOString()}`] },
+  ];
+
+  // Due leads of the same campaign in different timezones. The campaign
+  // window is Asia/Dubai; an invalid timezone falls back to it.
+  const MIXED_DUE = [
+    { id: "cl-campaign-tz", lead: { timezone: null } },
+    { id: "cl-dubai", lead: { timezone: "Asia/Dubai" } },
+    { id: "cl-invalid", lead: { timezone: "Not/A_Zone" } },
+    { id: "cl-new-york", lead: { timezone: "America/New_York" } },
+    { id: "cl-no-lead", lead: null },
+  ];
+
+  it("defers the other due, active, unleased, non-Send-Now leads in the same timezone to the same opening", async () => {
+    const { client, statements } = createRecordingClient(MIXED_DUE);
     const lead = makeLead("cl-1", "mailbox-1");
 
     await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, OUTSIDE);
 
-    const bulk = statements[1];
-    expect(updateValues(bulk)).toEqual({ next_send_at: NEXT_OPENING });
-    expect(bulk).toEqual([
+    // Read the due leads with their timezones...
+    expect(statements[1]).toEqual([
+      { method: "from", args: ["campaign_leads"] },
+      { method: "select", args: ["id, lead:leads(timezone)"] },
+      ...DUE_FILTERS(OUTSIDE),
+    ]);
+    // ...then move only those whose effective timezone is the campaign's,
+    // with the due conditions re-applied by the update itself.
+    expect(statements[2]).toEqual([
       { method: "from", args: ["campaign_leads"] },
       { method: "update", args: [{ next_send_at: NEXT_OPENING }] },
-      { method: "eq", args: ["campaign_id", "campaign-1"] },
-      { method: "eq", args: ["status", "active"] },
-      { method: "lte", args: ["next_send_at", OUTSIDE.toISOString()] },
-      { method: "is", args: ["send_now_step_id", null] },
-      { method: "or", args: [`locked_until.is.null,locked_until.lt.${OUTSIDE.toISOString()}`] },
+      { method: "in", args: ["id", ["cl-campaign-tz", "cl-dubai", "cl-invalid", "cl-no-lead"]] },
+      ...DUE_FILTERS(OUTSIDE),
     ]);
+    expect(statements).toHaveLength(3);
+  });
+
+  it("never moves due leads of other timezones to the claimed lead's opening", async () => {
+    // Fri 2026-09-25 05:06Z is Fri 01:06 in New York; Friday and Saturday
+    // are off, so its own opening is Sun 09:00 EDT (13:00Z) — a different
+    // instant from Dubai's Sun 09:00 (05:00Z).
+    const { client, statements } = createRecordingClient(MIXED_DUE);
+    const newYorkLead = makeLead("cl-new-york", "mailbox-1");
+
+    expect(await enforceSendingWindow(client, newYorkLead, DUBAI_SUN_TO_THU, OUTSIDE, "America/New_York")).toBe(
+      "deferred",
+    );
+
+    const newYorkOpening = "2026-09-27T13:00:00.000Z"; // Sun 09:00 EDT
+    expect(updateValues(statements[0])).toEqual({
+      next_send_at: newYorkOpening,
+      locked_until: null,
+      send_now_step_id: null,
+    });
+    const bulk = statements[2];
+    expect(updateValues(bulk)).toEqual({ next_send_at: newYorkOpening });
+    expect(bulk).toContainEqual({ method: "in", args: ["id", ["cl-new-york"]] });
+  });
+
+  it("writes nothing more when no other due lead shares the timezone", async () => {
+    const { client, statements } = createRecordingClient([{ id: "cl-new-york", lead: { timezone: "America/New_York" } }]);
+
+    await enforceSendingWindow(client, makeLead("cl-1", "mailbox-1"), DUBAI_SUN_TO_THU, OUTSIDE);
+
+    // The claimed lead's own deferral, then the read — no bulk update.
+    expect(statements).toHaveLength(2);
   });
 
   it("lets an explicit Send Now for the current step send outside the window, consuming it first", async () => {
@@ -789,6 +846,61 @@ describe("enforceSendingWindow", () => {
     expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, INSIDE)).toBe("send");
     expect(statements).toHaveLength(1);
     expect(updateValues(statements[0])).toEqual({ send_now_step_id: null });
+  });
+
+  describe("with a lead timezone", () => {
+    // Wed 2026-09-23 06:00Z = Wed 10:00 Dubai (inside) = Wed 02:00 New York (outside).
+    it("decides by the lead's own window: inside the campaign's hours but outside the lead's is deferred", async () => {
+      const { client, statements } = createRecordingClient([]);
+      const lead = makeLead("cl-1", "mailbox-1");
+
+      expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, INSIDE, "America/New_York")).toBe("deferred");
+      expect(updateValues(statements[0])).toEqual({
+        next_send_at: "2026-09-23T13:00:00.000Z", // Wed 09:00 EDT
+        locked_until: null,
+        send_now_step_id: null,
+      });
+    });
+
+    it("sends inside the lead's window even when it's outside the campaign timezone's hours", async () => {
+      const { client, statements } = createRecordingClient([]);
+      const lead = makeLead("cl-1", "mailbox-1");
+      const thursday10amLosAngeles = new Date("2026-09-24T17:00:00.000Z"); // Thu 21:00 Dubai, outside
+
+      expect(
+        await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, thursday10amLosAngeles, "America/Los_Angeles"),
+      ).toBe("send");
+      expect(statements).toHaveLength(0);
+    });
+
+    it("still lets an explicit Send Now bypass the lead's window, for that step only", async () => {
+      const { client } = createRecordingClient();
+      const lead = { ...makeLead("cl-1", "mailbox-1"), send_now_step_id: "step-1" };
+
+      expect(await enforceSendingWindow(client, lead, DUBAI_SUN_TO_THU, INSIDE, "America/New_York")).toBe("send");
+
+      const laterStep = { ...lead, current_step_id: "step-2" };
+      expect(await enforceSendingWindow(client, laterStep, DUBAI_SUN_TO_THU, INSIDE, "America/New_York")).toBe(
+        "deferred",
+      );
+    });
+
+    it("makes a retry after a failed Send Now wait for the lead's window", async () => {
+      const { client, statements } = createRecordingClient([{ id: "cl-1", lead: { timezone: "America/New_York" } }]);
+      const sendNowLead = { ...makeLead("cl-1", "mailbox-1"), send_now_step_id: "step-1" };
+      expect(await enforceSendingWindow(client, sendNowLead, DUBAI_SUN_TO_THU, INSIDE, "America/New_York")).toBe("send");
+
+      const retryLead = { ...sendNowLead, send_now_step_id: null };
+      statements.length = 0;
+      expect(await enforceSendingWindow(client, retryLead, DUBAI_SUN_TO_THU, INSIDE, "America/New_York")).toBe(
+        "deferred",
+      );
+      expect(updateValues(statements[0])).toEqual({
+        next_send_at: "2026-09-23T13:00:00.000Z",
+        locked_until: null,
+        send_now_step_id: null,
+      });
+    });
   });
 
   it("gives a retry after a failed Send Now no bypass (the bypass was consumed before the attempt)", async () => {

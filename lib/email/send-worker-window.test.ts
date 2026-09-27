@@ -122,7 +122,7 @@ describe("send worker: sending-window enforcement ordering", () => {
       locked_until: null,
       send_now_step_id: null,
     });
-    expect(deferDueCampaignLeads).toHaveBeenCalledWith(supabase, "campaign-1", new Date(NEXT_OPENING), OUTSIDE);
+    expect(deferDueCampaignLeads).toHaveBeenCalledWith(supabase, "campaign-1", new Date(NEXT_OPENING), OUTSIDE, expect.any(Function));
     expect(claimSendAttempt).not.toHaveBeenCalled();
     expect(getEmailProvider).not.toHaveBeenCalled();
   });

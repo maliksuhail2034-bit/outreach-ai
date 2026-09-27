@@ -28,7 +28,13 @@ import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
 import { buildAttachmentPayload, type DownloadedAttachment } from "./attachment-payload";
 import { ATTACHMENTS_BUCKET } from "./attachment-validation";
-import { computeNextSchedule, computeRetryDelay, findPreviousStep, resolveSendDecision } from "./scheduling";
+import {
+  computeNextSchedule,
+  computeRetryDelay,
+  findPreviousStep,
+  resolveLeadSendingWindow,
+  resolveSendDecision,
+} from "./scheduling";
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
 import { buildOpenTrackingUrl, type OpenTrackingContext, buildClickTrackingUrl, type ClickTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
@@ -356,12 +362,18 @@ export function rewriteClickTrackingLinks(
 // a retry, a campaign resume, a manual reactivation — is covered in one
 // place. The decision itself is resolveSendDecision (lib/email/scheduling.ts).
 //
+// The window is the lead's own: the campaign's days and hours in the lead's
+// explicit timezone when it has a valid one, otherwise the campaign's
+// timezone (resolveLeadSendingWindow).
+//
 // Outside the window without a valid Send Now: the claimed lead moves to the
 // next window opening and releases its lease, and so does every other lead of
-// this campaign that's due right now (deferDueCampaignLeads) — all of them
-// are outside the same window, so this avoids deferring them one claim at a
-// time. next_send_at lands in the future, so nothing is reclaimed until the
-// window opens. Status, mailbox and step are untouched; a stale Send Now for
+// this campaign that's due right now in the same effective timezone
+// (deferDueCampaignLeads) — they're outside the same window, so this avoids
+// deferring them one claim at a time. Leads in other timezones keep their
+// own next_send_at and are checked against their own window when claimed.
+// next_send_at lands in the future, so nothing is reclaimed until the window
+// opens. Status, mailbox and step are untouched; a stale Send Now for
 // an earlier step is cleared, since it can never apply again.
 //
 // With a valid Send Now: the bypass is consumed here, before the send
@@ -377,10 +389,12 @@ export async function enforceSendingWindow(
   campaignLead: Tables<"campaign_leads">,
   sendingWindow: unknown,
   now: Date = new Date(),
+  leadTimezone: string | null = null,
 ): Promise<"send" | "deferred"> {
+  const leadWindow = resolveLeadSendingWindow(sendingWindow, leadTimezone);
   const decision = resolveSendDecision({
     now,
-    sendingWindow,
+    sendingWindow: leadWindow,
     currentStepId: campaignLead.current_step_id,
     sendNowStepId: campaignLead.send_now_step_id,
   });
@@ -396,7 +410,7 @@ export async function enforceSendingWindow(
         campaignLead.current_step_id,
       );
       if (decision.usesSendNowBypass && !consumed) {
-        return handleLostSendNow(supabase, campaignLead, sendingWindow, now);
+        return handleLostSendNow(supabase, campaignLead, sendingWindow, now, leadTimezone);
       }
     }
     return "send";
@@ -407,7 +421,13 @@ export async function enforceSendingWindow(
     locked_until: null,
     send_now_step_id: null,
   });
-  await deferDueCampaignLeads(supabase, campaignLead.campaign_id, decision.nextSendAt, now);
+  await deferDueCampaignLeads(
+    supabase,
+    campaignLead.campaign_id,
+    decision.nextSendAt,
+    now,
+    (otherTimezone) => resolveLeadSendingWindow(sendingWindow, otherTimezone).timezone === leadWindow.timezone,
+  );
   console.log("[send-worker] outside sending window, deferred", {
     campaignLeadId: campaignLead.id,
     campaignId: campaignLead.campaign_id,
@@ -428,6 +448,7 @@ async function handleLostSendNow(
   campaignLead: Tables<"campaign_leads">,
   sendingWindow: unknown,
   now: Date,
+  leadTimezone: string | null,
 ): Promise<"send" | "deferred"> {
   const campaign = await getCampaignById(supabase, campaignLead.campaign_id);
   if (campaign.status !== "active") {
@@ -439,7 +460,7 @@ async function handleLostSendNow(
     });
     return "deferred";
   }
-  return enforceSendingWindow(supabase, { ...campaignLead, send_now_step_id: null }, sendingWindow, now);
+  return enforceSendingWindow(supabase, { ...campaignLead, send_now_step_id: null }, sendingWindow, now, leadTimezone);
 }
 
 async function processCampaignLead(
@@ -528,7 +549,7 @@ async function processCampaignLead(
     return "skipped";
   }
 
-  if ((await enforceSendingWindow(supabase, campaignLead, campaign.sending_window)) === "deferred") {
+  if ((await enforceSendingWindow(supabase, campaignLead, campaign.sending_window, new Date(), lead.timezone)) === "deferred") {
     return "skipped";
   }
 
@@ -550,7 +571,7 @@ async function processCampaignLead(
         steps,
         currentStepId: targetStep.id,
         from: new Date(existing.resolved_at ?? existing.claimed_at),
-        sendingWindow: campaign.sending_window,
+        sendingWindow: resolveLeadSendingWindow(campaign.sending_window, lead.timezone),
       });
 
       // Guarded like every write from the claimed copy: a lead that replied,
@@ -727,7 +748,7 @@ async function processCampaignLead(
       steps,
       currentStepId: targetStep.id,
       from: new Date(),
-      sendingWindow: campaign.sending_window,
+      sendingWindow: resolveLeadSendingWindow(campaign.sending_window, lead.timezone),
     });
 
     await recordSendSuccess(supabase, {

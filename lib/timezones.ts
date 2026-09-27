@@ -77,3 +77,15 @@ export function getAllIanaTimezones(): string[] {
   }
   return [...new Set([...base, ...TIMEZONES])].sort();
 }
+
+// A timezone's local time at `at`, for display — e.g. "Tue 2:05 PM EDT".
+// The caller passes a zone already checked with isValidIanaTimezone.
+export function formatLocalTime(timezone: string, at: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(at);
+}

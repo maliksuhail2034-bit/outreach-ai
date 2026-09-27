@@ -9,6 +9,7 @@ import type { TablesInsert } from "@/types/database.types";
 import { leadCsvRowSchema } from "@/lib/validations/leads";
 import { getRemainingLeadQuota } from "@/lib/billing/limits";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
+import { isValidIanaTimezone } from "@/lib/timezones";
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -22,9 +23,13 @@ export type ImportLeadsState =
       skippedDuplicates: number;
       failed: number;
       failedRows: { row: number; reason: string }[];
+      // Rows that were imported, but with something left out — an invalid
+      // timezone is imported as unset (the campaign timezone applies).
+      warnings: number;
+      warningRows: { row: number; reason: string }[];
     };
 
-type CsvField = "firstName" | "lastName" | "email" | "company" | "title";
+type CsvField = "firstName" | "lastName" | "email" | "company" | "title" | "timezone";
 
 // Accepts a few common header spellings so a spreadsheet export doesn't have
 // to be hand-edited before import — not a general mapping UI, just aliases
@@ -39,6 +44,8 @@ const HEADER_ALIASES: Record<string, CsvField> = {
   title: "title",
   job_title: "title",
   jobtitle: "title",
+  timezone: "timezone",
+  time_zone: "timezone",
 };
 
 function normalizeHeader(header: string) {
@@ -58,7 +65,14 @@ export async function importLeadsAction(
   _prevState: ImportLeadsState,
   formData: FormData,
 ): Promise<ImportLeadsState> {
-  const empty = { imported: 0, skippedDuplicates: 0, failed: 0, failedRows: [] as { row: number; reason: string }[] };
+  const empty = {
+    imported: 0,
+    skippedDuplicates: 0,
+    failed: 0,
+    failedRows: [] as { row: number; reason: string }[],
+    warnings: 0,
+    warningRows: [] as { row: number; reason: string }[],
+  };
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -112,6 +126,8 @@ export async function importLeadsAction(
   let skippedDuplicates = 0;
   let failed = 0;
   const failedRows: { row: number; reason: string }[] = [];
+  let warnings = 0;
+  const warningRows: { row: number; reason: string }[] = [];
 
   // Validation, dedup, and quota are still resolved one row at a time (they're
   // cheap in-memory checks), but the actual insert is deferred: rows that pass
@@ -148,6 +164,23 @@ export async function importLeadsAction(
       continue;
     }
 
+    // An invalid timezone never becomes a stored value: the row is still
+    // imported, with the timezone left unset so the campaign's applies.
+    let timezone: string | null = null;
+    if (parsed.data.timezone) {
+      if (isValidIanaTimezone(parsed.data.timezone)) {
+        timezone = parsed.data.timezone;
+      } else {
+        warnings += 1;
+        if (warningRows.length < MAX_FAILED_ROWS_SHOWN) {
+          warningRows.push({
+            row: rowNumber,
+            reason: `Unknown timezone "${parsed.data.timezone}" — left unset, the campaign timezone will be used.`,
+          });
+        }
+      }
+    }
+
     candidates.push({
       user_id: user.id,
       list_id: listId,
@@ -156,6 +189,7 @@ export async function importLeadsAction(
       email,
       company: parsed.data.company ? parsed.data.company : null,
       title: parsed.data.title ? parsed.data.title : null,
+      timezone,
     });
     rowNumbers.push(rowNumber);
     // Deliberately reserved optimistically, before this row is actually
@@ -191,5 +225,5 @@ export async function importLeadsAction(
   revalidatePath("/leads");
   revalidatePath("/dashboard");
 
-  return { imported: created.length, skippedDuplicates, failed, failedRows };
+  return { imported: created.length, skippedDuplicates, failed, failedRows, warnings, warningRows };
 }

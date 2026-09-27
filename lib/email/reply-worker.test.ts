@@ -147,6 +147,7 @@ function makeLead(overrides: Partial<Tables<"leads">> = {}): Tables<"leads"> {
     website: null,
     city: null,
     country: null,
+    timezone: null,
     status: "contacted",
     custom_fields: {},
     verification_status: "unknown",

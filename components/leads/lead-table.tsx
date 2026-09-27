@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { BadgeCheckIcon, PencilIcon, Trash2Icon, UserPlusIcon, XIcon } from "lucide-react";
+import { BadgeCheckIcon, GlobeIcon, PencilIcon, Trash2Icon, UserPlusIcon, XIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import {
@@ -12,6 +12,7 @@ import {
   deleteLeadAction,
   deleteLeadsAction,
   queueLeadsVerificationAction,
+  setLeadsTimezoneAction,
   verifyLeadAction,
 } from "@/app/(app)/leads/actions";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ import {
 import { Pagination } from "@/components/ui/pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LEAD_VERIFICATION_STATUSES, type LeadVerificationStatus } from "@/lib/validations/lead-segments";
+import { TimezoneSelect } from "@/components/campaigns/timezone-select";
 import { CsvImportDialog } from "./csv-import-dialog";
 import { LeadForm } from "./lead-form";
 
@@ -119,6 +121,10 @@ export function LeadTable({
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [isDeletingAll, startDeleteAllTransition] = useTransition();
 
+  const [timezoneOpen, setTimezoneOpen] = useState(false);
+  const [bulkTimezone, setBulkTimezone] = useState("");
+  const [isSettingTimezone, startSetTimezoneTransition] = useTransition();
+
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
   const [isQueuingVerification, startQueueVerificationTransition] = useTransition();
 
@@ -208,6 +214,24 @@ export function LeadTable({
         });
       }
     })();
+  }
+
+  // "" is "Use campaign timezone" (stored as null).
+  function handleSetTimezone() {
+    const ids = selectedIds;
+    if (ids.length === 0) return;
+    const timezone = bulkTimezone || null;
+    startSetTimezoneTransition(async () => {
+      try {
+        await setLeadsTimezoneAction({ ids, timezone });
+        const count = `${ids.length} lead${ids.length === 1 ? "" : "s"}`;
+        toast.success(timezone ? `Set ${count} to ${timezone}.` : `${count} now use the campaign timezone.`);
+        setSelected(new Set());
+        setTimezoneOpen(false);
+      } catch {
+        toast.error("Couldn't update the selected leads' timezone. Try again.");
+      }
+    });
   }
 
   // Never verifies inline — this only queues the selected leads for the
@@ -325,9 +349,20 @@ export function LeadTable({
                 <span className="font-medium">
                   {selectedIds.length} selected
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
                     Clear
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setBulkTimezone("");
+                      setTimezoneOpen(true);
+                    }}
+                  >
+                    <GlobeIcon />
+                    Set timezone
                   </Button>
                   <Button
                     variant="outline"
@@ -496,6 +531,29 @@ export function LeadTable({
             </Button>
             <Button variant="destructive" onClick={handleBulkDelete} disabled={isBulkDeleting}>
               {isBulkDeleting ? "Removing…" : `Remove ${selectedIds.length} leads`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={timezoneOpen} onOpenChange={setTimezoneOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Set timezone for {selectedIds.length} lead{selectedIds.length === 1 ? "" : "s"}
+            </DialogTitle>
+            <DialogDescription>
+              Campaigns send to these leads within their sending hours in this timezone. Choose &ldquo;Use campaign
+              timezone&rdquo; to clear it.
+            </DialogDescription>
+          </DialogHeader>
+          <TimezoneSelect value={bulkTimezone} onChange={setBulkTimezone} emptyLabel="Use campaign timezone" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTimezoneOpen(false)} disabled={isSettingTimezone}>
+              Cancel
+            </Button>
+            <Button onClick={handleSetTimezone} disabled={isSettingTimezone}>
+              {isSettingTimezone ? "Saving…" : "Apply"}
             </Button>
           </DialogFooter>
         </DialogContent>

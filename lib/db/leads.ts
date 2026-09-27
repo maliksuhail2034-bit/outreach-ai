@@ -259,6 +259,13 @@ export async function deleteLeads(supabase: Client, userId: string, ids: string[
   if (error) throw error;
 }
 
+// Bulk "Set timezone" / "Use campaign timezone" (null) for selected leads.
+// The caller validates the timezone first (see setLeadsTimezoneAction).
+export async function setLeadsTimezone(supabase: Client, userId: string, ids: string[], timezone: string | null) {
+  const { error } = await supabase.from("leads").update({ timezone }).eq("user_id", userId).in("id", ids);
+  if (error) throw error;
+}
+
 // Deletes every lead for the user, not just the ones currently loaded in the
 // UI (listLeads caps at DEFAULT_LIST_LIMIT) — scoped by user_id alone rather
 // than an id list.

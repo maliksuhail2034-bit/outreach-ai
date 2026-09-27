@@ -7,7 +7,9 @@ import {
   findNextStep,
   findPreviousStep,
   recomputeNextSendAt,
+  resolveLeadSendingWindow,
   resolveSendDecision,
+  resolveSendingWindow,
   type SequenceStepLike,
 } from "./scheduling";
 import type { SendingWindow } from "@/lib/validations/sending-window";
@@ -426,5 +428,144 @@ describe("resolveSendDecision", () => {
   it("gives no bypass once the Send Now has been consumed (a failed send's retry waits for the window)", () => {
     // After the worker consumes it, send_now_step_id is null again.
     expect(decide("2026-09-25T05:06:00.000Z", DUBAI_SUN_TO_THU, null, "step-1").send).toBe(false);
+  });
+});
+
+// Batch G: per-lead timezone. resolveLeadSendingWindow only swaps the
+// window's timezone; every schedule below comes from the existing engine,
+// so DST handling is luxon's IANA arithmetic in the lead's own zone.
+describe("resolveLeadSendingWindow", () => {
+  const CAMPAIGN: SendingWindow = { days: ["mon", "tue", "wed", "thu", "fri"], startHour: 9, endHour: 17, timezone: "Asia/Riyadh" };
+
+  it("uses the campaign timezone when the lead has none (null)", () => {
+    expect(resolveLeadSendingWindow(CAMPAIGN, null)).toEqual(CAMPAIGN);
+    expect(resolveLeadSendingWindow(CAMPAIGN, undefined)).toEqual(CAMPAIGN);
+    expect(resolveLeadSendingWindow(CAMPAIGN, "")).toEqual(CAMPAIGN);
+  });
+
+  it.each(["Not/A_Zone", "EST5EDT-ish", "America/NewYork", " "])("uses the campaign timezone for an invalid lead timezone %j", (tz) => {
+    expect(resolveLeadSendingWindow(CAMPAIGN, tz)).toEqual(CAMPAIGN);
+  });
+
+  it("uses a valid lead timezone, keeping the campaign's days and hours", () => {
+    expect(resolveLeadSendingWindow(CAMPAIGN, "America/New_York")).toEqual({ ...CAMPAIGN, timezone: "America/New_York" });
+  });
+
+  it("applies a lead timezone to the default window when the campaign window is unset/invalid", () => {
+    expect(resolveLeadSendingWindow({}, "Asia/Tokyo")).toEqual({ ...resolveSendingWindow({}), timezone: "Asia/Tokyo" });
+    expect(resolveLeadSendingWindow({}, null)).toEqual(resolveSendingWindow({}));
+  });
+});
+
+describe("scheduling in the lead's timezone", () => {
+  const UTC_WEEKDAYS: SendingWindow = { days: ["mon", "tue", "wed", "thu", "fri"], startHour: 9, endHour: 17, timezone: "UTC" };
+  const EVERY_DAY_8_TO_18_UTC: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 8, endHour: 18 };
+  const step = (dayDelay: number): SequenceStepLike[] => [{ id: "step-1", step_order: 0, day_delay: dayDelay }];
+
+  function nextSend(campaignWindow: SendingWindow, leadTimezone: string | null, from: string, dayDelay = 0) {
+    return computeNextSchedule({
+      steps: step(dayDelay),
+      currentStepId: null,
+      from: new Date(from),
+      sendingWindow: resolveLeadSendingWindow(campaignWindow, leadTimezone),
+    }).nextSendAt?.toISOString();
+  }
+
+  // Tue 2026-09-01 00:00 UTC.
+  const TUE_MIDNIGHT_UTC = "2026-09-01T00:00:00.000Z";
+
+  it("a lead without a timezone schedules exactly as the campaign does", () => {
+    expect(nextSend(UTC_WEEKDAYS, null, TUE_MIDNIGHT_UTC)).toBe("2026-09-01T09:00:00.000Z");
+    expect(nextSend(UTC_WEEKDAYS, null, TUE_MIDNIGHT_UTC)).toBe(
+      computeNextSchedule({ steps: step(0), currentStepId: null, from: new Date(TUE_MIDNIGHT_UTC), sendingWindow: UTC_WEEKDAYS })
+        .nextSendAt?.toISOString(),
+    );
+  });
+
+  it("a lead ahead of the campaign timezone gets the campaign hours in its own local time", () => {
+    // Tue 09:00 in Tokyo (+9) is already open at 00:00 UTC.
+    expect(nextSend(UTC_WEEKDAYS, "Asia/Tokyo", TUE_MIDNIGHT_UTC)).toBe("2026-09-01T00:00:00.000Z");
+    // Tue 18:00 Tokyo (09:00Z) is after hours there: next is Wed 09:00 JST.
+    expect(nextSend(UTC_WEEKDAYS, "Asia/Tokyo", "2026-09-01T09:00:00.000Z")).toBe("2026-09-02T00:00:00.000Z");
+  });
+
+  it("a lead behind the campaign timezone gets the campaign hours in its own local time", () => {
+    // Mon 17:00 in Los Angeles (-7) at 00:00Z: next is Tue 09:00 PDT = 16:00Z.
+    expect(nextSend(UTC_WEEKDAYS, "America/Los_Angeles", TUE_MIDNIGHT_UTC)).toBe("2026-09-01T16:00:00.000Z");
+  });
+
+  it("uses the lead's own weekdays: Friday afternoon UTC is still Friday morning in Los Angeles", () => {
+    // Fri 2026-09-04 16:00Z = Fri 09:00 PDT (open) but Fri 16:00 UTC is also open;
+    // Fri 2026-09-04 23:00Z = Fri 16:00 PDT (open in LA, closed in UTC).
+    expect(nextSend(UTC_WEEKDAYS, "America/Los_Angeles", "2026-09-04T23:00:00.000Z")).toBe("2026-09-04T23:00:00.000Z");
+    expect(nextSend(UTC_WEEKDAYS, null, "2026-09-04T23:00:00.000Z")).toBe("2026-09-07T09:00:00.000Z"); // Mon
+  });
+
+  describe("DST in the lead's timezone", () => {
+    it("US spring-forward: a day's delay keeps the local send time across the missing hour", () => {
+      // Sat 2026-03-07 10:00 EST (15:00Z) + 1 day -> Sun 2026-03-08 10:00 EDT (14:00Z), 23h later.
+      expect(nextSend(EVERY_DAY_8_TO_18_UTC, "America/New_York", "2026-03-07T15:00:00.000Z", 1)).toBe(
+        "2026-03-08T14:00:00.000Z",
+      );
+    });
+
+    it("US spring-forward: a window opening in the skipped hour moves to the first real instant", () => {
+      const twoAm: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 2, endHour: 5 };
+      // Sun 2026-03-08 00:30 EST (05:30Z): 02:00 doesn't exist that night; it opens at 03:00 EDT (07:00Z).
+      expect(nextSend(twoAm, "America/New_York", "2026-03-08T05:30:00.000Z")).toBe("2026-03-08T07:00:00.000Z");
+    });
+
+    it("US fall-back: a day's delay keeps the local send time across the repeated hour", () => {
+      // Sat 2026-10-31 10:00 EDT (14:00Z) + 1 day -> Sun 2026-11-01 10:00 EST (15:00Z), 25h later.
+      expect(nextSend(EVERY_DAY_8_TO_18_UTC, "America/New_York", "2026-10-31T14:00:00.000Z", 1)).toBe(
+        "2026-11-01T15:00:00.000Z",
+      );
+    });
+
+    it("US fall-back: a window opening in the repeated hour uses its first occurrence", () => {
+      const oneAm: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 1, endHour: 5 };
+      // Sun 2026-11-01 00:30 EDT (04:30Z): 01:00 happens twice; the first (EDT) is 05:00Z.
+      expect(nextSend(oneAm, "America/New_York", "2026-11-01T04:30:00.000Z")).toBe("2026-11-01T05:00:00.000Z");
+    });
+
+    it("EU transition (Europe/London, BST starts 2026-03-29)", () => {
+      // Sat 2026-03-28 09:00 GMT (09:00Z) + 1 day -> Sun 2026-03-29 09:00 BST (08:00Z).
+      expect(nextSend(EVERY_DAY_8_TO_18_UTC, "Europe/London", "2026-03-28T09:00:00.000Z", 1)).toBe(
+        "2026-03-29T08:00:00.000Z",
+      );
+    });
+
+    it("southern-hemisphere transition (Australia/Sydney, AEDT starts 2026-10-04)", () => {
+      // Sat 2026-10-03 09:00 AEST (2026-10-02 23:00Z) + 1 day -> Sun 2026-10-04 09:00 AEDT (2026-10-03 22:00Z).
+      expect(nextSend(EVERY_DAY_8_TO_18_UTC, "Australia/Sydney", "2026-10-02T23:00:00.000Z", 1)).toBe(
+        "2026-10-03T22:00:00.000Z",
+      );
+      // And back: Sat 2026-04-04 09:00 AEDT (2026-04-03 22:00Z) + 1 day -> Sun 2026-04-05 09:00 AEST (2026-04-04 23:00Z).
+      expect(nextSend(EVERY_DAY_8_TO_18_UTC, "Australia/Sydney", "2026-04-03T22:00:00.000Z", 1)).toBe(
+        "2026-04-04T23:00:00.000Z",
+      );
+    });
+  });
+
+  it("the final send decision uses the lead's window (inside for the lead, outside for the campaign)", () => {
+    // Fri 2026-09-04 23:00Z: closed in UTC, Fri 16:00 in Los Angeles (open).
+    const now = new Date("2026-09-04T23:00:00.000Z");
+    const base = { now, currentStepId: "step-1", sendNowStepId: null };
+    expect(resolveSendDecision({ ...base, sendingWindow: resolveLeadSendingWindow(UTC_WEEKDAYS, "America/Los_Angeles") })).toEqual({
+      send: true,
+      usesSendNowBypass: false,
+    });
+    expect(resolveSendDecision({ ...base, sendingWindow: resolveLeadSendingWindow(UTC_WEEKDAYS, null) })).toEqual({
+      send: false,
+      nextSendAt: new Date("2026-09-07T09:00:00.000Z"),
+    });
+  });
+
+  it("recompute re-snaps a queued time into the lead's window", () => {
+    // Mon 2026-09-07 10:00Z is inside UTC hours but 03:00 in Los Angeles.
+    expect(
+      recomputeNextSendAt(new Date("2026-09-07T10:00:00.000Z"), resolveLeadSendingWindow(UTC_WEEKDAYS, "America/Los_Angeles"))
+        .toISOString(),
+    ).toBe("2026-09-07T16:00:00.000Z");
   });
 });

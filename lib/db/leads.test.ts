@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { createLeadsBatch, deleteLead, listLeadsAvailableForCampaign, listLeadsPage } from "./leads";
+import { createLeadsBatch, deleteLead, listLeadsAvailableForCampaign, listLeadsPage, setLeadsTimezone } from "./leads";
 
 // Same fake-Client pattern as lib/db/suppressions.test.ts.
 function createMockClient(result: { data?: unknown; error?: unknown }) {
@@ -348,5 +348,32 @@ describe("createLeadsBatch", () => {
     expect(from).toHaveBeenCalledTimes(2);
     expect(result.created).toHaveLength(501);
     expect(result.failedIndexes).toEqual([]);
+  });
+});
+
+// Batch G: bulk "Set timezone" / "Use campaign timezone" for selected leads.
+describe("setLeadsTimezone", () => {
+  it("sets the timezone on exactly the given leads, scoped to the owning user", async () => {
+    const { client, chainable } = createMockClient({ error: null });
+
+    await setLeadsTimezone(client, "user-1", ["lead-1", "lead-2"], "America/New_York");
+
+    expect(client.from).toHaveBeenCalledWith("leads");
+    expect(chainable.update).toHaveBeenCalledWith({ timezone: "America/New_York" });
+    expect(chainable.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(chainable.in).toHaveBeenCalledWith("id", ["lead-1", "lead-2"]);
+  });
+
+  it("clears the timezone (use the campaign timezone) with null", async () => {
+    const { client, chainable } = createMockClient({ error: null });
+
+    await setLeadsTimezone(client, "user-1", ["lead-1"], null);
+
+    expect(chainable.update).toHaveBeenCalledWith({ timezone: null });
+  });
+
+  it("throws when the update errors", async () => {
+    const { client } = createMockClient({ error: new Error("connection lost") });
+    await expect(setLeadsTimezone(client, "user-1", ["lead-1"], null)).rejects.toThrow("connection lost");
   });
 });

@@ -4,6 +4,7 @@ import {
   addLeadsToCampaign,
   consumeSendNow,
   listCampaignLeadsForLead,
+  listCampaignLeadsWithTimezones,
   removeCampaignLead,
   requestSendNow,
   updateClaimedCampaignLead,
@@ -257,5 +258,35 @@ describe("updateClaimedCampaignLead", () => {
   it("throws on a database error", async () => {
     const { client } = createMockClient({ data: null, error: new Error("boom") });
     await expect(updateClaimedCampaignLead(client, "cl-1", { status: "needs_review" })).rejects.toThrow("boom");
+  });
+});
+
+// Batch G: launch and sending-window edits read each enrolled lead's
+// timezone in the same query as the campaign_leads rows (no per-lead reads).
+describe("listCampaignLeadsWithTimezones", () => {
+  it("reads the lead timezone in the same query and flattens it onto each row", async () => {
+    const rows = [
+      { id: "cl-1", campaign_id: "campaign-1", status: "active", lead: { timezone: "America/New_York" } },
+      { id: "cl-2", campaign_id: "campaign-1", status: "active", lead: { timezone: null } },
+      { id: "cl-3", campaign_id: "campaign-1", status: "active", lead: null },
+    ];
+    const { client, chainable } = createMockClient({ data: rows, error: null });
+
+    const result = await listCampaignLeadsWithTimezones(client, "campaign-1", { status: "active" });
+
+    expect(client.from).toHaveBeenCalledTimes(1);
+    expect(chainable.select).toHaveBeenCalledWith("*, lead:leads(timezone)");
+    expect(chainable.eq).toHaveBeenCalledWith("campaign_id", "campaign-1");
+    expect(chainable.eq).toHaveBeenCalledWith("status", "active");
+    expect(result).toEqual([
+      { id: "cl-1", campaign_id: "campaign-1", status: "active", leadTimezone: "America/New_York" },
+      { id: "cl-2", campaign_id: "campaign-1", status: "active", leadTimezone: null },
+      { id: "cl-3", campaign_id: "campaign-1", status: "active", leadTimezone: null },
+    ]);
+  });
+
+  it("throws when the read errors", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("connection lost") });
+    await expect(listCampaignLeadsWithTimezones(client, "campaign-1")).rejects.toThrow("connection lost");
   });
 });

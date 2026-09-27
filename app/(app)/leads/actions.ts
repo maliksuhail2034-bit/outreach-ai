@@ -14,11 +14,17 @@ import {
   getUserOrganization,
   queueAllLeadsForVerification,
   queueLeadsForVerification,
+  setLeadsTimezone,
   updateLead,
   updateLeadList,
 } from "@/lib/db";
 import { leadListSchema, type LeadListInput } from "@/lib/validations/lead-lists";
-import { leadSchema, type LeadInput } from "@/lib/validations/leads";
+import {
+  leadSchema,
+  leadsTimezoneUpdateSchema,
+  type LeadInput,
+  type LeadsTimezoneUpdateInput,
+} from "@/lib/validations/leads";
 import { assertWithinLeadLimit } from "@/lib/billing/limits";
 import { verifyLead } from "@/lib/verification/verify";
 import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
@@ -79,6 +85,9 @@ export async function createLeadAction(input: LeadInput) {
     company: parsed.company ? parsed.company : null,
     title: parsed.title ? parsed.title : null,
     ...(parsed.status ? { status: parsed.status } : {}),
+    // Only written when sent, so a caller that doesn't manage the timezone
+    // never clears it; "" means "use the campaign timezone" (null).
+    ...(parsed.timezone !== undefined ? { timezone: parsed.timezone || null } : {}),
   });
 
   revalidatePath("/leads");
@@ -98,10 +107,27 @@ export async function updateLeadAction(id: string, input: LeadInput) {
     company: parsed.company ? parsed.company : null,
     title: parsed.title ? parsed.title : null,
     ...(parsed.status ? { status: parsed.status } : {}),
+    // Only written when sent, so a caller that doesn't manage the timezone
+    // never clears it; "" means "use the campaign timezone" (null).
+    ...(parsed.timezone !== undefined ? { timezone: parsed.timezone || null } : {}),
   });
 
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
+}
+
+// Bulk "Set timezone" / "Use campaign timezone" (timezone: null) for the
+// leads selected in the lead table. Scoped to the caller's own leads
+// (user_id, plus RLS). Queued sends pick the new timezone up at the send
+// worker's final window check, which schedules in the lead's own window.
+export async function setLeadsTimezoneAction(input: LeadsTimezoneUpdateInput) {
+  const parsed = leadsTimezoneUpdateSchema.parse(input);
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await setLeadsTimezone(supabase, user.id, parsed.ids, parsed.timezone);
+
+  revalidatePath("/leads");
 }
 
 export async function deleteLeadAction(id: string) {

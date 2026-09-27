@@ -122,6 +122,9 @@ export function CampaignReviewStep({
             <dt className="text-sm text-muted-foreground">Sending window</dt>
             <dd className="text-lg font-medium">
               {windowDays}, {sendingWindow.startHour}:00–{sendingWindow.endHour}:00 ({sendingWindow.timezone})
+              <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                Leads with their own timezone get these hours in their local time.
+              </span>
             </dd>
           </div>
           <div>

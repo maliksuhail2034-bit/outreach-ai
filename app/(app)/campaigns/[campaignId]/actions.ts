@@ -28,6 +28,7 @@ import {
   getUserOrganization,
   linkAttachmentsToStep,
   listCampaignLeads,
+  listCampaignLeadsWithTimezones,
   listCampaignMailboxes,
   listDomains,
   listLeads,
@@ -45,7 +46,7 @@ import {
   updateCampaignLead,
   updateSequenceStep,
 } from "@/lib/db";
-import { computeNextSchedule } from "@/lib/email/scheduling";
+import { computeNextSchedule, resolveLeadSendingWindow } from "@/lib/email/scheduling";
 import { checkCampaignReadiness, resolveLeadMailboxId, resolvePoolMailboxId } from "@/lib/campaigns/readiness";
 import {
   ATTACHMENTS_BUCKET,
@@ -102,12 +103,16 @@ async function runUserFacing<T>(action: () => Promise<T>): Promise<T> {
 // write, so this is orchestration only, not a second scheduling algorithm.
 // Only acts when the campaign is already active and has at least one
 // sequence step; otherwise the lead stays exactly as inserted ('pending',
-// no current_step_id/next_send_at) until something schedules it later.
+// no current_step_id/next_send_at) until something schedules it later. The
+// first send lands in the lead's own window (resolveLeadSendingWindow): the
+// campaign's hours in the lead's timezone, or the campaign's timezone when
+// the lead has none.
 async function scheduleOnEnrollment(
   supabase: Client,
   campaign: Tables<"campaigns">,
   campaignLead: Tables<"campaign_leads">,
   steps: Tables<"sequence_steps">[],
+  leadTimezone: string | null,
 ) {
   if (campaign.status !== "active" || steps.length === 0) return;
 
@@ -115,7 +120,7 @@ async function scheduleOnEnrollment(
     steps,
     currentStepId: null,
     from: new Date(campaignLead.enrolled_at),
-    sendingWindow: campaign.sending_window,
+    sendingWindow: resolveLeadSendingWindow(campaign.sending_window, leadTimezone),
   });
 
   await updateCampaignLead(supabase, campaignLead.id, {
@@ -181,7 +186,7 @@ export async function launchCampaignAction(campaignId: string) {
     await checkRateLimit("campaign:launch", organization.id);
 
     const steps = await loadSequenceSteps(supabase, campaignId);
-    const leads = await listCampaignLeads(supabase, campaignId);
+    const leads = await listCampaignLeadsWithTimezones(supabase, campaignId);
     const mailboxes = await listMailboxes(supabase, user.id);
     const domains = await listDomains(supabase, user.id);
     const campaignMailboxes = await listCampaignMailboxes(supabase, campaignId);
@@ -225,7 +230,7 @@ export async function launchCampaignAction(campaignId: string) {
       // enrollment, they never retroactively backfill it. claim_due_sends()
       // requires mailbox_id is not null, so without this a "resolvable" lead
       // would silently never be picked up by the send worker.
-      let scheduledLead = lead;
+      let scheduledLead: Tables<"campaign_leads"> = lead;
       if (!lead.mailbox_id) {
         const resolvedMailboxId = resolvePoolMailboxId(campaignMailboxes, poolBackfillIndex) ?? resolveLeadMailboxId(lead, campaign);
         poolBackfillIndex += 1;
@@ -234,7 +239,7 @@ export async function launchCampaignAction(campaignId: string) {
         });
       }
 
-      await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps);
+      await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps, lead.leadTimezone);
     }
 
     revalidatePath("/campaigns");
@@ -332,8 +337,8 @@ export async function enrollLeadAction(
     const organization = await getUserOrganization(supabase, user);
     await checkRateLimit("campaign:enroll", organization.id);
 
+    const lead = await getLead(supabase, user.id, leadId);
     if (!confirmSuppressed) {
-      const lead = await getLead(supabase, user.id, leadId);
       const suppressed = await getSuppressedEmails(supabase, user.id, [lead.email]);
       const reason = suppressed.get(lead.email);
       if (reason) {
@@ -364,7 +369,7 @@ export async function enrollLeadAction(
     });
 
     const steps = await loadSequenceSteps(supabase, campaignId);
-    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
+    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps, lead.timezone);
 
     revalidatePath(`/campaigns/${campaignId}`);
   });
@@ -412,8 +417,9 @@ async function enrollLeadRows(
   const result = await addLeadsToCampaign(supabase, campaign.id, leadIds, resolveMailboxId);
 
   const steps = await loadSequenceSteps(supabase, campaign.id);
+  const timezoneByLeadId = new Map(leadRows.map((lead) => [lead.id, lead.timezone]));
   for (const campaignLead of result.rows) {
-    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
+    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps, timezoneByLeadId.get(campaignLead.lead_id) ?? null);
   }
 
   revalidatePath(`/campaigns/${campaign.id}`);

@@ -215,6 +215,66 @@ describe("listLeadsPage", () => {
 
     await expect(listLeadsPage(client, "user-1", { page: 99 })).rejects.toThrow("db unavailable");
   });
+
+  // Batch D: filtering moved server-side so page numbers and totals describe
+  // the filtered set, not the unfiltered one.
+  function makeFilterChain(result: { data: unknown; error: unknown; count: unknown }) {
+    const calls: unknown[][] = [];
+    const chain: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "neq", "in", "ilike", "lt", "gte", "order", "range"]) {
+      chain[method] = (...args: unknown[]) => {
+        calls.push([method, ...args]);
+        return chain;
+      };
+    }
+    chain.then = (resolve: (value: typeof result) => void) => resolve(result);
+    return { chain, calls };
+  }
+
+  it("filters by verification status server-side", async () => {
+    const page = makeFilterChain({ data: [], error: null, count: 3 });
+    const client = { from: vi.fn(() => page.chain) } as unknown as Client;
+
+    const result = await listLeadsPage(client, "user-1", { verificationStatus: "valid" });
+
+    expect(page.calls).toContainEqual(["eq", "verification_status", "valid"]);
+    expect(result.totalCount).toBe(3);
+  });
+
+  it("applies segment rules together with the owner scope and range", async () => {
+    const page = makeFilterChain({ data: [], error: null, count: 0 });
+    const client = { from: vi.fn(() => page.chain) } as unknown as Client;
+
+    await listLeadsPage(client, "user-1", {
+      page: 2,
+      pageSize: 10,
+      rules: [{ field: "company", operator: "contains", value: "Acme" }],
+    });
+
+    expect(page.calls).toContainEqual(["eq", "user_id", "user-1"]);
+    expect(page.calls).toContainEqual(["range", 10, 19]);
+    expect(page.calls).toContainEqual(["ilike", "company", "%Acme%"]);
+  });
+
+  it("applies the same filters to the out-of-range fallback count", async () => {
+    const first = makeFilterChain({ data: null, error: { code: "PGRST103" }, count: null });
+    const count = makeFilterChain({ data: null, error: null, count: 4 });
+    const retry = makeFilterChain({ data: [{ id: "lead-1" }], error: null, count: 4 });
+    const from = vi.fn().mockReturnValueOnce(first.chain).mockReturnValueOnce(count.chain).mockReturnValueOnce(retry.chain);
+    const client = { from } as unknown as Client;
+
+    const result = await listLeadsPage(client, "user-1", {
+      page: 9,
+      verificationStatus: "invalid",
+      rules: [{ field: "status", operator: "is", value: "new" }],
+    });
+
+    for (const calls of [count.calls, retry.calls]) {
+      expect(calls).toContainEqual(["eq", "verification_status", "invalid"]);
+      expect(calls).toContainEqual(["eq", "status", "new"]);
+    }
+    expect(result).toEqual({ leads: [{ id: "lead-1" }], page: 1, pageSize: 100, totalCount: 4 });
+  });
 });
 
 // Scalability Track, Phase D (item 10) — wired into

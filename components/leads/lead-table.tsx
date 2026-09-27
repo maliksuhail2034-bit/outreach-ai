@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { BadgeCheckIcon, PencilIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
+import { BadgeCheckIcon, PencilIcon, Trash2Icon, UserPlusIcon, XIcon } from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import {
@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Pagination } from "@/components/ui/pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { LEAD_VERIFICATION_STATUSES, type LeadVerificationStatus } from "@/lib/validations/lead-segments";
 import { CsvImportDialog } from "./csv-import-dialog";
 import { LeadForm } from "./lead-form";
 
@@ -62,8 +63,17 @@ const VERIFICATION_STATUS_LABEL: Record<string, string> = {
   error: "Error",
 };
 
-const VERIFICATION_STATUSES = ["unverified", "pending", "valid", "invalid", "catch_all", "unknown", "error"] as const;
-type VerificationFilter = "all" | (typeof VERIFICATION_STATUSES)[number];
+// Filters live in the URL and are applied server-side (app/(app)/leads/
+// page.tsx), so pagination and totals describe the filtered set. A filter
+// change starts again from page 1.
+function leadsHref(params: { page?: number; segment?: string; verification?: LeadVerificationStatus }) {
+  const search = new URLSearchParams();
+  if (params.segment) search.set("segment", params.segment);
+  if (params.verification) search.set("verification", params.verification);
+  if (params.page && params.page > 1) search.set("page", String(params.page));
+  const query = search.toString();
+  return query ? `/leads?${query}` : "/leads";
+}
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -78,14 +88,24 @@ export function LeadTable({
   leads,
   leadLists,
   leadCount,
+  accountLeadCount,
   page,
   pageSize,
+  verificationStatus,
+  activeSegment,
+  segmentNotice,
 }: {
   leads: Lead[];
   leadLists: LeadList[];
+  // Leads matching the current filters (what the table and pagination show).
   leadCount: number;
+  // Every lead in the account, whatever is filtered — what "Delete all" deletes.
+  accountLeadCount: number;
   page: number;
   pageSize: number;
+  verificationStatus?: LeadVerificationStatus;
+  activeSegment?: { id: string; name: string };
+  segmentNotice?: string;
 }) {
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
@@ -99,22 +119,18 @@ export function LeadTable({
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [isDeletingAll, startDeleteAllTransition] = useTransition();
 
-  const [verificationFilter, setVerificationFilter] = useState<VerificationFilter>("all");
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
   const [isQueuingVerification, startQueueVerificationTransition] = useTransition();
 
   const listNameById = new Map(leadLists.map((list) => [list.id, list.name]));
 
-  const filteredLeads = useMemo(
-    () => (verificationFilter === "all" ? leads : leads.filter((lead) => lead.verification_status === verificationFilter)),
-    [leads, verificationFilter],
-  );
+  const filtersActive = Boolean(activeSegment || verificationStatus);
 
   // Filters out ids from a previous render's leads (e.g. one that was just
   // deleted individually) so the count never shows stale selections.
-  const visibleIds = new Set(filteredLeads.map((lead) => lead.id));
+  const visibleIds = new Set(leads.map((lead) => lead.id));
   const selectedIds = [...selected].filter((id) => visibleIds.has(id));
-  const allSelected = filteredLeads.length > 0 && selectedIds.length === filteredLeads.length;
+  const allSelected = leads.length > 0 && selectedIds.length === leads.length;
 
   function toggleAll() {
     setSelected(allSelected ? new Set() : new Set(visibleIds));
@@ -219,18 +235,45 @@ export function LeadTable({
           <CardTitle>Leads</CardTitle>
           <CardDescription>
             {leadCount > leads.length
-              ? `Showing ${(page - 1) * pageSize + 1}-${(page - 1) * pageSize + leads.length} of ${leadCount} leads.`
-              : `${leadCount} lead${leadCount === 1 ? "" : "s"}.`}
+              ? `Showing ${(page - 1) * pageSize + 1}-${(page - 1) * pageSize + leads.length} of ${leadCount} leads`
+              : `${leadCount} lead${leadCount === 1 ? "" : "s"}`}
+            {filtersActive ? " matching the current filters." : "."}
           </CardDescription>
+          {activeSegment && (
+            <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <Badge variant="secondary">Segment: {activeSegment.name}</Badge>
+              <Button asChild size="sm" variant="ghost" className="h-7 px-2">
+                <Link href={leadsHref({ verification: verificationStatus })}>
+                  <XIcon />
+                  Clear segment
+                </Link>
+              </Button>
+            </p>
+          )}
+          {segmentNotice && (
+            <p role="status" className="mt-2 text-sm text-muted-foreground">
+              {segmentNotice}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={verificationFilter} onValueChange={(value) => setVerificationFilter(value as VerificationFilter)}>
+          <Select
+            value={verificationStatus ?? "all"}
+            onValueChange={(value) =>
+              router.push(
+                leadsHref({
+                  segment: activeSegment?.id,
+                  verification: value === "all" ? undefined : (value as LeadVerificationStatus),
+                }),
+              )
+            }
+          >
             <SelectTrigger size="sm" aria-label="Filter by verification status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All verification statuses</SelectItem>
-              {VERIFICATION_STATUSES.map((value) => (
+              {LEAD_VERIFICATION_STATUSES.map((value) => (
                 <SelectItem key={value} value={value}>
                   {VERIFICATION_STATUS_LABEL[value]}
                 </SelectItem>
@@ -238,7 +281,7 @@ export function LeadTable({
             </SelectContent>
           </Select>
           <CsvImportDialog leadLists={leadLists} />
-          <Button size="sm" variant="outline" disabled={leadCount === 0} onClick={() => setDeleteAllOpen(true)}>
+          <Button size="sm" variant="outline" disabled={accountLeadCount === 0} onClick={() => setDeleteAllOpen(true)}>
             <Trash2Icon />
             Delete all
           </Button>
@@ -261,15 +304,19 @@ export function LeadTable({
       </CardHeader>
 
       <CardContent>
-        {leads.length === 0 ? (
+        {leads.length === 0 && filtersActive ? (
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-sm font-medium">No leads match the current filters</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              <Link href="/leads" className="underline underline-offset-4">
+                Clear all filters
+              </Link>
+            </p>
+          </div>
+        ) : leads.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <p className="text-sm font-medium">No leads yet</p>
             <p className="mt-1 text-sm text-muted-foreground">Add a lead or import a CSV to get started.</p>
-          </div>
-        ) : filteredLeads.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center">
-            <p className="text-sm font-medium">No leads match this verification status</p>
-            <p className="mt-1 text-sm text-muted-foreground">Try a different filter.</p>
           </div>
         ) : (
           <>
@@ -327,7 +374,7 @@ export function LeadTable({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredLeads.map((lead) => (
+                  {leads.map((lead) => (
                     <tr key={lead.id} className={selected.has(lead.id) ? "bg-muted/30" : undefined}>
                       <td className="py-3 pr-2">
                         <input
@@ -401,7 +448,9 @@ export function LeadTable({
             page={page}
             pageSize={pageSize}
             totalCount={leadCount}
-            onPageChange={(nextPage) => router.push(`/leads?page=${nextPage}`)}
+            onPageChange={(nextPage) =>
+              router.push(leadsHref({ page: nextPage, segment: activeSegment?.id, verification: verificationStatus }))
+            }
           />
         </CardContent>
       )}
@@ -457,8 +506,8 @@ export function LeadTable({
           <DialogHeader>
             <DialogTitle>Delete all leads?</DialogTitle>
             <DialogDescription>
-              This permanently deletes all {leadCount} lead{leadCount === 1 ? "" : "s"} in your account, including
-              any not shown on this page. This can&apos;t be undone.
+              This permanently deletes all {accountLeadCount} lead{accountLeadCount === 1 ? "" : "s"} in your account,
+              including any not shown on this page or hidden by a filter. This can&apos;t be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

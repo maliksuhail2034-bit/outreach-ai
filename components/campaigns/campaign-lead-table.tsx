@@ -82,6 +82,7 @@ export function CampaignLeadTable({
   leads,
   availableLeads,
   leadLists,
+  leadSegments,
   mailboxes,
   steps,
   suppressions,
@@ -92,6 +93,7 @@ export function CampaignLeadTable({
   leads: Lead[];
   availableLeads: Lead[];
   leadLists: LeadList[];
+  leadSegments: Tables<"lead_segments">[];
   mailboxes: MailboxSafe[];
   steps: SequenceStep[];
   suppressions: Suppression[];
@@ -265,6 +267,7 @@ export function CampaignLeadTable({
           campaignId={campaignId}
           availableLeads={availableLeads}
           leadLists={leadLists}
+          leadSegments={leadSegments}
           mailboxes={mailboxes}
           suppressionReasonByEmail={suppressionReasonByEmail}
         />

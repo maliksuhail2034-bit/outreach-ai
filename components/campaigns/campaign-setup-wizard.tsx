@@ -56,6 +56,7 @@ export function CampaignSetupWizard({
   leads,
   availableLeads,
   leadLists,
+  leadSegments,
   mailboxes,
   campaignMailboxes,
   sequenceId,
@@ -71,6 +72,7 @@ export function CampaignSetupWizard({
   leads: Lead[];
   availableLeads: Lead[];
   leadLists: LeadList[];
+  leadSegments: Tables<"lead_segments">[];
   mailboxes: MailboxSafe[];
   campaignMailboxes: Tables<"campaign_mailboxes">[];
   sequenceId: string | null;
@@ -142,6 +144,7 @@ export function CampaignSetupWizard({
           leads={leads}
           availableLeads={availableLeads}
           leadLists={leadLists}
+          leadSegments={leadSegments}
           mailboxes={mailboxes}
           steps={sequenceSteps}
           suppressions={suppressions}

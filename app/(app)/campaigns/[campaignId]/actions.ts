@@ -19,6 +19,7 @@ import {
   getCampaign,
   getCampaignLead,
   getLead,
+  getLeadSegment,
   getOrCreateDefaultSequence,
   getSendAttempt,
   getSequence,
@@ -30,6 +31,7 @@ import {
   listCampaignMailboxes,
   listDomains,
   listLeads,
+  listLeadsMatchingRules,
   listMailboxes,
   listOwnedAttachmentsByIds,
   listSequences,
@@ -55,6 +57,7 @@ import {
   validateAttachmentBytes,
 } from "@/lib/email/attachment-validation";
 import { campaignLeadSchema, type CampaignLeadInput } from "@/lib/validations/campaign-leads";
+import { leadSegmentRulesSchema } from "@/lib/validations/lead-segments";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 
@@ -367,6 +370,56 @@ export async function enrollLeadAction(
   });
 }
 
+// Same cap for every bulk enrollment source (a list or a segment's matches).
+const BULK_ENROLLMENT_LIMIT = 10000;
+
+// The shared tail of list and segment enrollment, once the caller has
+// checked campaign ownership, the rate limit, and resolved which leads to
+// enroll: suppression confirmation, then addLeadsToCampaign (which skips
+// leads already enrolled) and first-send scheduling.
+async function enrollLeadRows(
+  supabase: Client,
+  userId: string,
+  campaign: Tables<"campaigns">,
+  leadRows: Tables<"leads">[],
+  source: "list" | "segment",
+  mailboxId: string | undefined,
+  confirmSuppressed: boolean,
+) {
+  // Batch 8: explicit override wins outright for every lead in this batch;
+  // otherwise round-robin across the configured pool, falling back to
+  // campaign.default_mailbox_id per lead when there's no pool — see
+  // addLeadsToCampaign's resolver contract and resolvePoolMailboxId.
+  const pool = mailboxId ? [] : await listCampaignMailboxes(supabase, campaign.id);
+  const resolveMailboxId = (enrollmentIndex: number): string | null =>
+    mailboxId ? mailboxId : (resolvePoolMailboxId(pool, enrollmentIndex) ?? campaign.default_mailbox_id);
+
+  if (!confirmSuppressed) {
+    const suppressed = await getSuppressedEmails(
+      supabase,
+      userId,
+      leadRows.map((lead) => lead.email),
+    );
+    const suppressedCount = leadRows.filter((lead) => suppressed.has(lead.email)).length;
+    if (suppressedCount > 0) {
+      throw new UserFacingError(
+        `${suppressedCount} lead${suppressedCount === 1 ? "" : "s"} in this ${source} ${suppressedCount === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). Confirm to enroll anyway.`,
+      );
+    }
+  }
+
+  const leadIds = leadRows.map((lead) => lead.id);
+  const result = await addLeadsToCampaign(supabase, campaign.id, leadIds, resolveMailboxId);
+
+  const steps = await loadSequenceSteps(supabase, campaign.id);
+  for (const campaignLead of result.rows) {
+    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
+  }
+
+  revalidatePath(`/campaigns/${campaign.id}`);
+  return { inserted: result.inserted, skipped: result.skipped };
+}
+
 export async function enrollLeadListAction(
   campaignId: string,
   listId: string,
@@ -381,41 +434,37 @@ export async function enrollLeadListAction(
     const organization = await getUserOrganization(supabase, user);
     await checkRateLimit("campaign:enroll", organization.id);
 
-    // Batch 8: explicit override wins outright for every lead in this batch;
-    // otherwise round-robin across the configured pool, falling back to
-    // campaign.default_mailbox_id per lead when there's no pool — see
-    // addLeadsToCampaign's resolver contract and resolvePoolMailboxId.
-    const pool = mailboxId ? [] : await listCampaignMailboxes(supabase, campaignId);
-    const resolveMailboxId = (enrollmentIndex: number): string | null =>
-      mailboxId ? mailboxId : (resolvePoolMailboxId(pool, enrollmentIndex) ?? campaign.default_mailbox_id);
+    const leads = await listLeads(supabase, user.id, { listId, limit: BULK_ENROLLMENT_LIMIT });
+    return enrollLeadRows(supabase, user.id, campaign, leads ?? [], "list", mailboxId, confirmSuppressed);
+  });
+}
 
-    const leads = await listLeads(supabase, user.id, { listId, limit: 10000 });
-    const leadRows = leads ?? [];
+// A snapshot: enrolls the leads matching the segment's rules right now.
+// Nothing links the campaign to the segment afterwards, so leads that match
+// later are never auto-enrolled. The segment is loaded scoped to the caller
+// (plus RLS), and its stored rules are re-validated before they're used.
+export async function enrollLeadSegmentAction(
+  campaignId: string,
+  segmentId: string,
+  mailboxId?: string,
+  confirmSuppressed = false,
+) {
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
 
-    if (!confirmSuppressed) {
-      const suppressed = await getSuppressedEmails(
-        supabase,
-        user.id,
-        leadRows.map((lead) => lead.email),
-      );
-      const suppressedCount = leadRows.filter((lead) => suppressed.has(lead.email)).length;
-      if (suppressedCount > 0) {
-        throw new UserFacingError(
-          `${suppressedCount} lead${suppressedCount === 1 ? "" : "s"} in this list ${suppressedCount === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). Confirm to enroll anyway.`,
-        );
-      }
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:enroll", organization.id);
+
+    const segment = await getLeadSegment(supabase, user.id, segmentId);
+    const rules = leadSegmentRulesSchema.safeParse(segment.rules);
+    if (!rules.success) {
+      throw new UserFacingError("This segment's rules are no longer valid. Edit the segment and try again.");
     }
 
-    const leadIds = leadRows.map((lead) => lead.id);
-    const result = await addLeadsToCampaign(supabase, campaignId, leadIds, resolveMailboxId);
-
-    const steps = await loadSequenceSteps(supabase, campaignId);
-    for (const campaignLead of result.rows) {
-      await scheduleOnEnrollment(supabase, campaign, campaignLead, steps);
-    }
-
-    revalidatePath(`/campaigns/${campaignId}`);
-    return { inserted: result.inserted, skipped: result.skipped };
+    const leads = await listLeadsMatchingRules(supabase, user.id, rules.data, { limit: BULK_ENROLLMENT_LIMIT });
+    return enrollLeadRows(supabase, user.id, campaign, leads ?? [], "segment", mailboxId, confirmSuppressed);
   });
 }
 

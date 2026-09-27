@@ -1,4 +1,6 @@
 import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types";
+import type { LeadSegmentRule, LeadVerificationStatus } from "@/lib/validations/lead-segments";
+import { applySegmentRules, type LeadsQuery } from "./lead-segments";
 import type { Client } from "./shared";
 import { unwrap } from "./shared";
 
@@ -50,24 +52,41 @@ export interface PaginatedLeads {
 // last real page instead of throwing, so a page number that's gone stale
 // (e.g. leads were deleted since the URL was bookmarked) self-corrects
 // instead of crashing.
+//
+// `rules` (a segment's, already run through parseSegmentRules) and
+// `verificationStatus` filter server-side, in both the page query and the
+// fallback count, so page numbers and totals describe the filtered set.
 export async function listLeadsPage(
   supabase: Client,
   userId: string,
-  options?: { page?: number; pageSize?: number; listId?: string },
+  options?: {
+    page?: number;
+    pageSize?: number;
+    listId?: string;
+    rules?: readonly LeadSegmentRule[];
+    verificationStatus?: LeadVerificationStatus;
+  },
 ): Promise<PaginatedLeads> {
   const pageSize = options?.pageSize ?? DEFAULT_PAGE_SIZE;
   let page = Math.max(options?.page ?? 1, 1);
 
-  const buildQuery = (from: number, to: number) => {
-    let query = supabase
-      .from("leads")
-      .select("*", { count: "exact" })
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .range(from, to);
-    if (options?.listId) query = query.eq("list_id", options.listId);
-    return query;
+  const applyFilters = (query: LeadsQuery) => {
+    let filtered = query;
+    if (options?.listId) filtered = filtered.eq("list_id", options.listId);
+    if (options?.verificationStatus) filtered = filtered.eq("verification_status", options.verificationStatus);
+    if (options?.rules) filtered = applySegmentRules(filtered, options.rules);
+    return filtered;
   };
+
+  const buildQuery = (from: number, to: number) =>
+    applyFilters(
+      supabase
+        .from("leads")
+        .select("*", { count: "exact" })
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .range(from, to),
+    );
 
   let from = (page - 1) * pageSize;
   let to = from + pageSize - 1;
@@ -76,8 +95,9 @@ export async function listLeadsPage(
   if (result.error) {
     if ((result.error as { code?: string }).code !== "PGRST103") throw result.error;
 
-    let countQuery = supabase.from("leads").select("*", { count: "exact", head: true }).eq("user_id", userId);
-    if (options?.listId) countQuery = countQuery.eq("list_id", options.listId);
+    const countQuery = applyFilters(
+      supabase.from("leads").select("*", { count: "exact", head: true }).eq("user_id", userId),
+    );
     const { count: totalCount, error: countError } = await countQuery;
     if (countError) throw countError;
 

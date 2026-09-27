@@ -37,6 +37,9 @@ vi.mock("@/lib/db", () => ({
   removeCampaignMailbox: vi.fn(),
   // Batch B: Send Now's atomic RPC wrapper.
   requestSendNow: vi.fn(),
+  // Batch D: segment enrollment.
+  getLeadSegment: vi.fn(),
+  listLeadsMatchingRules: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
   checkRateLimit: vi.fn(),
@@ -56,12 +59,14 @@ import {
   addLeadToCampaign,
   getCampaign,
   getCampaignLead,
+  getLeadSegment,
   getSuppressedEmails,
   getUserOrganization,
   listCampaignLeads,
   listCampaignMailboxes,
   listDomains,
   listLeads,
+  listLeadsMatchingRules,
   listMailboxes,
   listSequences,
   listSequenceSteps,
@@ -70,11 +75,12 @@ import {
   updateCampaign,
   updateCampaignLead,
 } from "@/lib/db";
-import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
+import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import {
   addCampaignMailboxAction,
   enrollLeadAction,
   enrollLeadListAction,
+  enrollLeadSegmentAction,
   launchCampaignAction,
   pauseCampaignAction,
   removeCampaignMailboxAction,
@@ -103,6 +109,8 @@ const mockAddCampaignMailbox = vi.mocked(addCampaignMailbox);
 const mockRemoveCampaignMailbox = vi.mocked(removeCampaignMailbox);
 const mockRevalidatePath = vi.mocked(revalidatePath);
 const mockRequestSendNow = vi.mocked(requestSendNow);
+const mockGetLeadSegment = vi.mocked(getLeadSegment);
+const mockListLeadsMatchingRules = vi.mocked(listLeadsMatchingRules);
 
 const USER = { id: "user-1", email: "owner@example.com" };
 const ORGANIZATION = { id: "org-1" };
@@ -479,6 +487,155 @@ describe("enrollLeadListAction", () => {
 
     const resolver = mockAddLeadsToCampaign.mock.calls[0][3];
     expect(resolver(0)).toBe("mailbox-default");
+  });
+});
+
+// Batch D: segment enrollment. Ownership, rate limit, suppression
+// confirmation and addLeadsToCampaign are the same path list enrollment
+// uses (enrollLeadRows); what's specific is loading the segment scoped to
+// the caller, re-validating its stored rules, and snapshotting its matches.
+describe("enrollLeadSegmentAction", () => {
+  const RULES = [{ field: "status", operator: "is", value: "new" }];
+
+  function makeSegment(overrides: Partial<Tables<"lead_segments">> = {}): Tables<"lead_segments"> {
+    return {
+      id: "seg-1",
+      user_id: "user-1",
+      name: "New leads",
+      description: null,
+      rules: RULES,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function makeLead(id: string): Tables<"leads"> {
+    return {
+      id,
+      user_id: "user-1",
+      email: `${id}@example.com`,
+      first_name: null,
+      last_name: null,
+      company: null,
+      title: null,
+      city: null,
+      country: null,
+      linkedin: null,
+      phone: null,
+      website: null,
+      status: "new",
+      list_id: null,
+      custom_fields: {},
+      verification_status: "unverified",
+      verification_detail: null,
+      verification_locked_until: null,
+      verification_risk_score: null,
+      verified_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+  }
+
+  beforeEach(() => {
+    mockGetLeadSegment.mockResolvedValue(makeSegment() as never);
+    mockListLeadsMatchingRules.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b")] as never);
+    mockAddLeadsToCampaign.mockResolvedValue({ inserted: 2, skipped: 0, rows: [] });
+  });
+
+  it("enrolls the leads matching the segment right now, scoped to the caller, capped at 10,000", async () => {
+    const result = await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
+
+    expect(mockGetCampaign).toHaveBeenCalledWith(expect.anything(), "user-1", "campaign-1");
+    expect(mockGetLeadSegment).toHaveBeenCalledWith(expect.anything(), "user-1", "seg-1");
+    expect(mockListLeadsMatchingRules).toHaveBeenCalledWith(expect.anything(), "user-1", RULES, { limit: 10000 });
+    expect(mockAddLeadsToCampaign).toHaveBeenCalledWith(
+      expect.anything(),
+      "campaign-1",
+      ["lead-a", "lead-b"],
+      expect.any(Function),
+    );
+    expect(result).toEqual({ inserted: 2, skipped: 0 });
+    expect(mockRevalidatePath).toHaveBeenCalledWith("/campaigns/campaign-1");
+  });
+
+  it("is a snapshot: each enrollment takes only the then-current matches, and nothing links the campaign to the segment", async () => {
+    await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
+    mockListLeadsMatchingRules.mockResolvedValue([makeLead("lead-c")] as never);
+    await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
+
+    expect(mockAddLeadsToCampaign.mock.calls[0][2]).toEqual(["lead-a", "lead-b"]);
+    expect(mockAddLeadsToCampaign.mock.calls[1][2]).toEqual(["lead-c"]);
+    // No campaign or segment is written to remember the segment.
+    expect(mockUpdateCampaign).not.toHaveBeenCalled();
+    expect(JSON.stringify(mockAddLeadsToCampaign.mock.calls)).not.toContain("seg-1");
+  });
+
+  it("checks the campaign:enroll rate limit before loading the segment", async () => {
+    await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
+
+    expect(mockCheckRateLimit).toHaveBeenCalledWith("campaign:enroll", "org-1");
+    expect(mockCheckRateLimit.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGetLeadSegment.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("enrolls nothing when rate limited", async () => {
+    mockCheckRateLimit.mockRejectedValue(new RateLimitError(60));
+
+    await expect(enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true)).rejects.toThrow(/too many attempts/i);
+    expect(mockGetLeadSegment).not.toHaveBeenCalled();
+    expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
+  });
+
+  it("enrolls nothing into a campaign the caller doesn't own", async () => {
+    mockGetCampaign.mockRejectedValue(new Error("Expected a row, received none."));
+
+    await expect(enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true)).rejects.toThrow(/something went wrong/i);
+    expect(mockGetLeadSegment).not.toHaveBeenCalled();
+    expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
+  });
+
+  it("enrolls nothing from a segment the caller doesn't own", async () => {
+    mockGetLeadSegment.mockRejectedValue(new Error("Expected a row, received none."));
+
+    await expect(enrollLeadSegmentAction("campaign-1", "seg-other", undefined, true)).rejects.toThrow(
+      /something went wrong/i,
+    );
+    expect(mockListLeadsMatchingRules).not.toHaveBeenCalled();
+    expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
+  });
+
+  it("refuses stored rules that no longer validate, without querying leads", async () => {
+    mockGetLeadSegment.mockResolvedValue(
+      makeSegment({ rules: [{ field: "custom_fields", operator: "equals", value: "x" }] }) as never,
+    );
+
+    await expect(enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true)).rejects.toThrow(/no longer valid/i);
+    expect(mockListLeadsMatchingRules).not.toHaveBeenCalled();
+    expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation when a matching lead is suppressed, and enrolls once confirmed", async () => {
+    mockGetSuppressedEmails.mockResolvedValue(new Map([["lead-b@example.com", "unsubscribed"]]) as never);
+
+    await expect(enrollLeadSegmentAction("campaign-1", "seg-1")).rejects.toThrow(
+      "1 lead in this segment is suppressed (bounced/unsubscribed). Confirm to enroll anyway.",
+    );
+    expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
+
+    await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
+    expect(mockAddLeadsToCampaign).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps list enrollment's own wording and cap after sharing the enrollment path", async () => {
+    mockListLeads.mockResolvedValue([makeLead("lead-a")]);
+    mockGetSuppressedEmails.mockResolvedValue(new Map([["lead-a@example.com", "bounced"]]) as never);
+
+    await expect(enrollLeadListAction("campaign-1", "list-1")).rejects.toThrow(
+      "1 lead in this list is suppressed (bounced/unsubscribed). Confirm to enroll anyway.",
+    );
+    expect(mockListLeads).toHaveBeenCalledWith(expect.anything(), "user-1", { listId: "list-1", limit: 10000 });
   });
 });
 

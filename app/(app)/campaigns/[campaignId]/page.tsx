@@ -24,6 +24,7 @@ import {
   listDomains,
   listEmailEvents,
   listLeadLists,
+  listLeadSegments,
   listLeads,
   listLeadsAvailableForCampaign,
   listMailboxes,
@@ -113,6 +114,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     leadsResult,
     availableLeadsRead,
     leadListsResult,
+    leadSegmentsResult,
     mailboxesResult,
     campaignMailboxesResult,
     sequencesResult,
@@ -138,6 +140,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     // function's own smaller default.
     optionalRead(() => listLeadsAvailableForCampaign(supabase, user.id, campaignId, { limit: 10000 }), []),
     optionalRead(() => listLeadLists(supabase, user.id), []),
+    optionalRead(() => listLeadSegments(supabase, user.id), []),
     optionalRead(() => listMailboxes(supabase, user.id), []),
     optionalRead(() => listCampaignMailboxes(supabase, campaignId), []),
     optionalRead(() => listSequences(supabase, campaignId), []),
@@ -159,6 +162,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   const allLeads = leadsResult.data ?? [];
   const availableLeads = availableLeadsRead.data ?? [];
   const leadLists = leadListsResult.data;
+  const leadSegments = leadSegmentsResult.data;
   const mailboxes = mailboxesResult.data;
   const campaignMailboxes = campaignMailboxesResult.data;
   const sequences = sequencesResult.data;
@@ -202,10 +206,10 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   const queueFailed = anyFailed(leadsResult, mailboxesResult) || sequenceDataFailed;
   const queueError = firstError(leadsResult, mailboxesResult) ?? firstError(sequencesResult, sequenceStepsResult);
   const leadTableFailed =
-    anyFailed(leadsResult, availableLeadsRead, leadListsResult, mailboxesResult, suppressionsResult) ||
+    anyFailed(leadsResult, availableLeadsRead, leadListsResult, leadSegmentsResult, mailboxesResult, suppressionsResult) ||
     sequenceDataFailed;
   const leadTableError =
-    firstError(leadsResult, availableLeadsRead, leadListsResult, mailboxesResult, suppressionsResult) ??
+    firstError(leadsResult, availableLeadsRead, leadListsResult, leadSegmentsResult, mailboxesResult, suppressionsResult) ??
     firstError(sequencesResult, sequenceStepsResult);
   const settingsFormFailed = mailboxesResult.failed;
   const sequencePanelFailed = sequenceDataFailed || templatesResult.failed || attachmentsResult.failed;
@@ -215,6 +219,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       leadsResult,
       availableLeadsRead,
       leadListsResult,
+      leadSegmentsResult,
       mailboxesResult,
       campaignMailboxesResult,
       templatesResult,
@@ -227,6 +232,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       leadsResult,
       availableLeadsRead,
       leadListsResult,
+      leadSegmentsResult,
       mailboxesResult,
       campaignMailboxesResult,
       templatesResult,
@@ -316,6 +322,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 leads={allLeads}
                 availableLeads={availableLeads}
                 leadLists={leadLists ?? []}
+                leadSegments={leadSegments ?? []}
                 mailboxes={mailboxes}
                 campaignMailboxes={campaignMailboxes ?? []}
                 sequenceId={sequence?.id ?? null}
@@ -407,6 +414,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                     leads={allLeads}
                     availableLeads={availableLeads}
                     leadLists={leadLists ?? []}
+                    leadSegments={leadSegments ?? []}
                     mailboxes={mailboxes}
                     steps={sequenceSteps ?? []}
                     suppressions={suppressions ?? []}

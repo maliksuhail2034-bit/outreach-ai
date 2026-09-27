@@ -46,7 +46,7 @@ export function LeadListsPanel({ leadLists }: { leadLists: LeadList[] }) {
       <CardHeader className="flex-row items-center justify-between gap-4">
         <div>
           <CardTitle>Lists</CardTitle>
-          <CardDescription>Group leads into named segments.</CardDescription>
+          <CardDescription>Group leads into named lists.</CardDescription>
         </div>
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
@@ -58,7 +58,7 @@ export function LeadListsPanel({ leadLists }: { leadLists: LeadList[] }) {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>New lead list</DialogTitle>
-              <DialogDescription>Give this segment a name to group leads under it.</DialogDescription>
+              <DialogDescription>Give this list a name to group leads under it.</DialogDescription>
             </DialogHeader>
             <LeadListForm mode="create" onSuccess={() => setAddOpen(false)} />
           </DialogContent>

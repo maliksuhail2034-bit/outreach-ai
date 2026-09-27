@@ -6,7 +6,11 @@ import { ShieldAlertIcon, UserPlusIcon } from "lucide-react";
 
 import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
-import { enrollLeadAction, enrollLeadListAction } from "@/app/(app)/campaigns/[campaignId]/actions";
+import {
+  enrollLeadAction,
+  enrollLeadListAction,
+  enrollLeadSegmentAction,
+} from "@/app/(app)/campaigns/[campaignId]/actions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,6 +29,12 @@ function reasonLabel(reason: string) {
 
 type Lead = Tables<"leads">;
 type LeadList = Tables<"lead_lists">;
+type LeadSegment = Tables<"lead_segments">;
+
+// A segment's matches are only known on the server, so its suppression
+// warning comes from enrollLeadSegmentAction's refusal (same wording as the
+// list check) rather than being counted here up front.
+const SUPPRESSION_REFUSAL = /suppressed \(bounced\/unsubscribed\)\. Confirm to enroll anyway\.$/;
 
 const USE_DEFAULT = "default";
 
@@ -37,19 +47,23 @@ export function EnrollDialog({
   campaignId,
   availableLeads,
   leadLists,
+  leadSegments,
   mailboxes,
   suppressionReasonByEmail,
 }: {
   campaignId: string;
   availableLeads: Lead[];
   leadLists: LeadList[];
+  leadSegments: LeadSegment[];
   mailboxes: MailboxSafe[];
   suppressionReasonByEmail: Map<string, string>;
 }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"lead" | "list">("lead");
+  const [mode, setMode] = useState<"lead" | "list" | "segment">("lead");
   const [leadId, setLeadId] = useState("");
   const [listId, setListId] = useState("");
+  const [segmentId, setSegmentId] = useState("");
+  const [segmentSuppressionMessage, setSegmentSuppressionMessage] = useState<string | null>(null);
   const [mailboxId, setMailboxId] = useState(USE_DEFAULT);
   const [confirmSuppressed, setConfirmSuppressed] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -57,6 +71,8 @@ export function EnrollDialog({
   function reset() {
     setLeadId("");
     setListId("");
+    setSegmentId("");
+    setSegmentSuppressionMessage(null);
     setMailboxId(USE_DEFAULT);
     setConfirmSuppressed(false);
   }
@@ -71,7 +87,11 @@ export function EnrollDialog({
       ? availableLeads.filter((lead) => lead.list_id === listId && suppressionReasonByEmail.has(lead.email)).length
       : 0;
   const hasSuppressionWarning =
-    mode === "lead" ? Boolean(selectedLeadSuppressionReason) : suppressedInSelectedList > 0;
+    mode === "lead"
+      ? Boolean(selectedLeadSuppressionReason)
+      : mode === "list"
+        ? suppressedInSelectedList > 0
+        : Boolean(segmentSuppressionMessage);
 
   function handleSubmit() {
     const override = mailboxId === USE_DEFAULT ? undefined : mailboxId;
@@ -86,11 +106,15 @@ export function EnrollDialog({
           await enrollLeadAction(campaignId, leadId, override, confirmSuppressed);
           toast.success("Lead enrolled.");
         } else {
-          if (!listId) {
-            toast.error("Choose a list to enroll.");
+          const sourceId = mode === "list" ? listId : segmentId;
+          if (!sourceId) {
+            toast.error(mode === "list" ? "Choose a list to enroll." : "Choose a segment to enroll.");
             return;
           }
-          const result = await enrollLeadListAction(campaignId, listId, override, confirmSuppressed);
+          const result =
+            mode === "list"
+              ? await enrollLeadListAction(campaignId, sourceId, override, confirmSuppressed)
+              : await enrollLeadSegmentAction(campaignId, sourceId, override, confirmSuppressed);
           toast.success(
             result.skipped > 0
               ? `${result.inserted} lead${result.inserted === 1 ? "" : "s"} enrolled, ${result.skipped} already enrolled.`
@@ -100,7 +124,12 @@ export function EnrollDialog({
         reset();
         setOpen(false);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Couldn't enroll. Try again.");
+        const message = error instanceof Error ? error.message : "";
+        if (mode === "segment" && SUPPRESSION_REFUSAL.test(message)) {
+          setSegmentSuppressionMessage(message);
+          return;
+        }
+        toast.error(message || "Couldn't enroll. Try again.");
       }
     });
   }
@@ -122,7 +151,7 @@ export function EnrollDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Enroll leads</DialogTitle>
-          <DialogDescription>Add a single lead or an entire list to this campaign.</DialogDescription>
+          <DialogDescription>Add a single lead, an entire list, or a segment&apos;s matching leads to this campaign.</DialogDescription>
         </DialogHeader>
 
         <div className="flex gap-2">
@@ -147,6 +176,17 @@ export function EnrollDialog({
             }}
           >
             Entire list
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === "segment" ? "default" : "outline"}
+            onClick={() => {
+              setMode("segment");
+              setConfirmSuppressed(false);
+            }}
+          >
+            Segment
           </Button>
         </div>
 
@@ -174,6 +214,35 @@ export function EnrollDialog({
               )}
             </SelectContent>
           </Select>
+        ) : mode === "segment" ? (
+          <div className="space-y-2">
+            <Select
+              value={segmentId}
+              onValueChange={(value) => {
+                setSegmentId(value);
+                setSegmentSuppressionMessage(null);
+                setConfirmSuppressed(false);
+              }}
+            >
+              <SelectTrigger className="w-full" aria-label="Segment to enroll">
+                <SelectValue placeholder="Choose a segment" />
+              </SelectTrigger>
+              <SelectContent>
+                {leadSegments.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">No segments yet.</div>
+                ) : (
+                  leadSegments.map((segment) => (
+                    <SelectItem key={segment.id} value={segment.id}>
+                      {segment.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              Enrolls the leads matching this segment right now. Leads that match later aren&apos;t added automatically.
+            </p>
+          </div>
         ) : (
           <Select
             value={listId}
@@ -206,7 +275,9 @@ export function EnrollDialog({
               <p>
                 {mode === "lead"
                   ? `This lead is suppressed (${reasonLabel(selectedLeadSuppressionReason ?? "")}). They won't receive emails unless this is intended.`
-                  : `${suppressedInSelectedList} lead${suppressedInSelectedList === 1 ? "" : "s"} in this list ${suppressedInSelectedList === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). They won't receive emails unless this is intended.`}
+                  : mode === "list"
+                    ? `${suppressedInSelectedList} lead${suppressedInSelectedList === 1 ? "" : "s"} in this list ${suppressedInSelectedList === 1 ? "is" : "are"} suppressed (bounced/unsubscribed). They won't receive emails unless this is intended.`
+                    : (segmentSuppressionMessage ?? "").replace("Confirm to enroll anyway.", "They won't receive emails unless this is intended.")}
               </p>
               <label className="flex items-center gap-2 text-foreground">
                 <input

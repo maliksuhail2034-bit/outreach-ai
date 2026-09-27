@@ -10,6 +10,7 @@ export * from "./warmup";
 export * from "./analytics";
 export * from "./mailboxes";
 export * from "./lead-lists";
+export * from "./lead-segments";
 export * from "./leads";
 export * from "./organizations";
 export * from "./campaigns";

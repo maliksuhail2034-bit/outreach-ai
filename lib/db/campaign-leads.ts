@@ -99,6 +99,31 @@ export async function updateCampaignLead(supabase: Client, id: string, values: T
   return unwrap<Tables<"campaign_leads">>(result);
 }
 
+// A send-worker write based on its claimed copy of the row (needs_review,
+// or the "already sent" self-heal). One conditional UPDATE: applied only
+// while the lead is still 'active' — and, when expectedStepId is given,
+// still on that step — so a reply, unsubscribe, stop or removal that landed
+// after the claim is never overwritten with stale worker state (same guard
+// as record_send_success, 20260927100000_send_status_race_guard.sql). When
+// nothing matched, only the worker's lease is released. Returns whether the
+// write was applied.
+export async function updateClaimedCampaignLead(
+  supabase: Client,
+  id: string,
+  values: TablesUpdate<"campaign_leads">,
+  expectedStepId?: string,
+) {
+  let query = supabase.from("campaign_leads").update(values).eq("id", id).eq("status", "active");
+  if (expectedStepId) query = query.eq("current_step_id", expectedStepId);
+  const { data, error } = await query.select("id");
+  if (error) throw error;
+  if (data.length > 0) return true;
+
+  const { error: releaseError } = await supabase.from("campaign_leads").update({ locked_until: null }).eq("id", id);
+  if (releaseError) throw releaseError;
+  return false;
+}
+
 export async function removeCampaignLead(supabase: Client, id: string) {
   const { error } = await supabase.from("campaign_leads").delete().eq("id", id);
   if (error) throw error;

@@ -32,6 +32,26 @@ export async function getSendAttempt(supabase: Client, campaignLeadId: string, s
   return data;
 }
 
+// The last check before the provider call — see
+// supabase/migrations/20260927100000_send_status_race_guard.sql. Returns
+// "ok", or the reason the claimed lead may no longer be sent to (in which
+// case the RPC has already deleted the unsent pending attempt and released
+// the lease).
+export async function confirmSendAttemptEligible(
+  supabase: Client,
+  sendAttemptId: string,
+  campaignLeadId: string,
+  sequenceStepId: string,
+) {
+  const { data, error } = await supabase.rpc("confirm_send_attempt_eligible", {
+    p_send_attempt_id: sendAttemptId,
+    p_campaign_lead_id: campaignLeadId,
+    p_sequence_step_id: sequenceStepId,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function recordSendSuccess(
   supabase: Client,
   params: {

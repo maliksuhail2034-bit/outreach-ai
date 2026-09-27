@@ -3,6 +3,7 @@ import type { Tables } from "@/types/database.types";
 import {
   claimDueSends,
   claimSendAttempt,
+  confirmSendAttemptEligible,
   consumeSendNow,
   deferDueCampaignLeads,
   getCampaignById,
@@ -17,6 +18,7 @@ import {
   recordSendFailure,
   recordSendSuccess,
   updateCampaignLead,
+  updateClaimedCampaignLead,
 } from "@/lib/db";
 import { isWithinMonthlyEmailLimit } from "@/lib/billing/limits";
 import { getEmailProvider } from "./get-provider";
@@ -450,12 +452,12 @@ async function processCampaignLead(
   if (!campaignLead.current_step_id || !campaignLead.mailbox_id) {
     const errorMessage = "Claimed with no current_step_id or mailbox_id.";
     console.error("[send-worker] needs_review", { campaignLeadId: campaignLead.id, error: errorMessage });
-    await updateCampaignLead(supabase, campaignLead.id, {
+    const flagged = await updateClaimedCampaignLead(supabase, campaignLead.id, {
       status: "needs_review",
       last_error: errorMessage,
       locked_until: null,
     });
-    return "needsReview";
+    return flagged ? "needsReview" : "skipped";
   }
 
   const [campaign, lead, mailbox, sequences] = await Promise.all([
@@ -472,12 +474,13 @@ async function processCampaignLead(
   if (!targetStep) {
     const errorMessage = "current_step_id does not match any step in this sequence.";
     console.error("[send-worker] needs_review", { campaignLeadId: campaignLead.id, error: errorMessage });
-    await updateCampaignLead(supabase, campaignLead.id, {
-      status: "needs_review",
-      last_error: errorMessage,
-      locked_until: null,
-    });
-    return "needsReview";
+    const flagged = await updateClaimedCampaignLead(
+      supabase,
+      campaignLead.id,
+      { status: "needs_review", last_error: errorMessage, locked_until: null },
+      campaignLead.current_step_id,
+    );
+    return flagged ? "needsReview" : "skipped";
   }
 
   // Defense in depth: claim_due_sends() already excludes suppressed
@@ -550,12 +553,20 @@ async function processCampaignLead(
         sendingWindow: campaign.sending_window,
       });
 
-      await updateCampaignLead(supabase, campaignLead.id, {
-        status: schedule.completed ? "completed" : "active",
-        current_step_id: schedule.nextStepId,
-        next_send_at: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
-        locked_until: null,
-      });
+      // Guarded like every write from the claimed copy: a lead that replied,
+      // unsubscribed or was stopped since the claim keeps that state instead
+      // of being advanced (see updateClaimedCampaignLead).
+      await updateClaimedCampaignLead(
+        supabase,
+        campaignLead.id,
+        {
+          status: schedule.completed ? "completed" : "active",
+          current_step_id: schedule.nextStepId,
+          next_send_at: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
+          locked_until: null,
+        },
+        targetStep.id,
+      );
 
       return "skipped";
     }
@@ -569,12 +580,14 @@ async function processCampaignLead(
       sequenceStepId: targetStep.id,
       existingAttemptStatus: existing?.status ?? "missing",
     });
-    await updateCampaignLead(supabase, campaignLead.id, {
-      status: "needs_review",
-      locked_until: null,
-    });
+    const flagged = await updateClaimedCampaignLead(
+      supabase,
+      campaignLead.id,
+      { status: "needs_review", locked_until: null },
+      targetStep.id,
+    );
 
-    return "needsReview";
+    return flagged ? "needsReview" : "skipped";
   }
 
   const unsubscribeUrl = buildUnsubscribeUrl(campaignLead.id);
@@ -673,6 +686,26 @@ async function processCampaignLead(
     });
 
     const threadingHeaders = await resolveThreadingHeaders(supabase, steps, targetStep, campaignLead.id);
+
+    // Last check before the provider call: everything above ran on the
+    // claimed copy of the row, and a reply, unsubscribe, stop, removal or
+    // pause can land while it ran. On refusal the RPC has already deleted the
+    // unsent pending attempt and released the lease, leaving the lead's own
+    // state alone — see 20260927100000_send_status_race_guard.sql.
+    const eligibility = await confirmSendAttemptEligible(
+      supabase,
+      claimedAttempt.id,
+      campaignLead.id,
+      targetStep.id,
+    );
+    if (eligibility !== "ok") {
+      console.log("[send-worker] not sent, lead no longer eligible since claim", {
+        campaignLeadId: campaignLead.id,
+        sequenceStepId: targetStep.id,
+        reason: eligibility,
+      });
+      return "skipped";
+    }
 
     const result = await provider.send({
       from: { name: mailbox.display_name ?? undefined, email: mailbox.email },

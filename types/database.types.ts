@@ -2161,6 +2161,14 @@ export type Database = {
           subject_type: string
         }[]
       }
+      confirm_send_attempt_eligible: {
+        Args: {
+          p_campaign_lead_id: string
+          p_send_attempt_id: string
+          p_sequence_step_id: string
+        }
+        Returns: string
+      }
       is_organization_member: {
         Args: { p_organization_id: string }
         Returns: boolean

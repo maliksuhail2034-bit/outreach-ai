@@ -6,6 +6,7 @@ import {
   listCampaignLeadsForLead,
   removeCampaignLead,
   requestSendNow,
+  updateClaimedCampaignLead,
 } from "./campaign-leads";
 import type { Tables } from "@/types/database.types";
 
@@ -210,5 +211,51 @@ describe("consumeSendNow", () => {
   it("throws on a database error", async () => {
     const { client } = createMockClient({ data: null, error: new Error("boom") });
     await expect(consumeSendNow(client, "cl-1", "step-1", "step-1")).rejects.toThrow("boom");
+  });
+});
+
+describe("updateClaimedCampaignLead", () => {
+  it("writes only while the lead is still active on the expected step, in one conditional UPDATE", async () => {
+    const { client, chainable } = createMockClient({ data: [{ id: "cl-1" }], error: null });
+
+    await expect(
+      updateClaimedCampaignLead(client, "cl-1", { status: "needs_review", locked_until: null }, "step-1"),
+    ).resolves.toBe(true);
+    expect(chainable.update).toHaveBeenCalledTimes(1);
+    expect(chainable.update).toHaveBeenCalledWith({ status: "needs_review", locked_until: null });
+    expect(chainable.eq.mock.calls).toEqual([
+      ["id", "cl-1"],
+      ["status", "active"],
+      ["current_step_id", "step-1"],
+    ]);
+    expect(chainable.select).toHaveBeenCalledWith("id");
+  });
+
+  it("without an expected step, guards on status alone", async () => {
+    const { client, chainable } = createMockClient({ data: [{ id: "cl-1" }], error: null });
+
+    await updateClaimedCampaignLead(client, "cl-1", { status: "needs_review" });
+    expect(chainable.eq.mock.calls).toEqual([
+      ["id", "cl-1"],
+      ["status", "active"],
+    ]);
+  });
+
+  it("when the lead left 'active' since the claim, applies nothing but releases the lease", async () => {
+    const { client, chainable } = createMockClient({ data: [], error: null });
+
+    await expect(
+      updateClaimedCampaignLead(client, "cl-1", { status: "active", current_step_id: "step-2" }, "step-1"),
+    ).resolves.toBe(false);
+    expect(chainable.update.mock.calls).toEqual([
+      [{ status: "active", current_step_id: "step-2" }],
+      [{ locked_until: null }],
+    ]);
+    expect(chainable.eq.mock.calls.slice(3)).toEqual([["id", "cl-1"]]);
+  });
+
+  it("throws on a database error", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(updateClaimedCampaignLead(client, "cl-1", { status: "needs_review" })).rejects.toThrow("boom");
   });
 });

@@ -767,6 +767,7 @@ export type Database = {
           id: string
           lead_id: string
           mailbox_id: string
+          read_at: string | null
           received_at: string
           subject: string | null
           to_emails: string[]
@@ -782,6 +783,7 @@ export type Database = {
           id?: string
           lead_id: string
           mailbox_id: string
+          read_at?: string | null
           received_at: string
           subject?: string | null
           to_emails?: string[]
@@ -797,6 +799,7 @@ export type Database = {
           id?: string
           lead_id?: string
           mailbox_id?: string
+          read_at?: string | null
           received_at?: string
           subject?: string | null
           to_emails?: string[]

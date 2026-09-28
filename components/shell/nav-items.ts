@@ -2,6 +2,7 @@ import {
   BarChart3Icon,
   CreditCardIcon,
   FlameIcon,
+  InboxIcon,
   LayoutDashboardIcon,
   MailIcon,
   MegaphoneIcon,
@@ -21,6 +22,7 @@ export type NavItem = {
 // placeholder links to routes that don't exist yet.
 export const navItems: NavItem[] = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboardIcon },
+  { title: "Inbox", href: "/inbox", icon: InboxIcon },
   { title: "Leads", href: "/leads", icon: UsersIcon },
   { title: "Campaigns", href: "/campaigns", icon: MegaphoneIcon },
   { title: "Mailboxes", href: "/mailboxes", icon: MailIcon },

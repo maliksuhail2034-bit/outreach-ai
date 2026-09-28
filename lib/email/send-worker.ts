@@ -102,7 +102,34 @@ export async function runSendWorker(
 
   await processClaimedLeads(supabase, claimed, concurrency, startedAt, summary, processCampaignLead);
 
+  await reportDegradedSendRun(summary);
+
   return summary;
+}
+
+// A run that completes still counts as a success (runCronJob pings the
+// heartbeat and returns 200), so a run that left leads needing review or
+// failed more than half of what it claimed is forwarded to error tracking
+// here — the same thresholds the retired GitHub send-emails workflow
+// applied to one run in every few hundred. Monitoring only: never throws,
+// and changes nothing about the run or its summary.
+export async function reportDegradedSendRun(summary: SendWorkerSummary): Promise<void> {
+  const reasons: string[] = [];
+  if (summary.needsReview > 0) reasons.push(`${summary.needsReview} lead(s) need manual review`);
+  if (summary.claimed > 0 && summary.failed * 2 > summary.claimed) {
+    reasons.push(`high failure rate: ${summary.failed}/${summary.claimed} sends failed`);
+  }
+  if (reasons.length === 0) return;
+
+  try {
+    await captureError({
+      job: "send-emails",
+      message: `Degraded send run: ${reasons.join("; ")}`,
+      context: { claimed: summary.claimed, sent: summary.sent, failed: summary.failed, needsReview: summary.needsReview },
+    });
+  } catch (error) {
+    console.error("[send-worker] degraded-run alert failed", error instanceof Error ? error.message : error);
+  }
 }
 
 // Processes claimed leads with up to `concurrency` in flight at once, with

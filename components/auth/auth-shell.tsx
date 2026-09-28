@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { PolimatiqLogo } from "@/components/shell/polimatiq-logo";
+
 // Shared visual shell for every auth screen. Deliberately has no auth logic
 // of its own — app/(auth)/layout.tsx redirects authenticated users away,
 // but app/reset-password/page.tsx *requires* an authenticated (recovery)
@@ -12,11 +14,8 @@ export function AuthShell({ children }: { children: ReactNode }) {
           aria-hidden
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,_hsl(var(--primary)/0.25),_transparent_55%)]"
         />
-        <div className="relative z-10 flex items-center gap-2 text-lg font-semibold">
-          <span className="flex size-8 items-center justify-center rounded-md bg-primary text-sm text-primary-foreground">
-            P
-          </span>
-          Polimatiq
+        <div className="relative z-10 flex items-center">
+          <PolimatiqLogo width={140} />
         </div>
         <blockquote className="relative z-10 space-y-2">
           <p className="text-lg leading-relaxed">&ldquo;Cold email outreach from one workspace.&rdquo;</p>

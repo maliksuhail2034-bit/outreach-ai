@@ -3,8 +3,8 @@ import { MenuIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { PolimatiqLogo } from "@/components/shell/polimatiq-logo";
 import { Container } from "./container";
-import { PRODUCT_NAME } from "./product-name";
 
 const NAV_LINKS = [
   { label: "Features", href: "#features" },
@@ -19,11 +19,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
       <Container className="flex h-16 items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs text-primary-foreground">
-            P
-          </span>
-          {PRODUCT_NAME}
+        <Link href="/" className="flex items-center">
+          <PolimatiqLogo width={120} />
         </Link>
 
         <nav className="hidden items-center gap-8 text-sm font-medium text-muted-foreground md:flex">
@@ -52,7 +49,9 @@ export function SiteHeader() {
             </SheetTrigger>
             <SheetContent side="right" className="w-72">
               <SheetHeader>
-                <SheetTitle>{PRODUCT_NAME}</SheetTitle>
+                <SheetTitle className="flex items-center">
+                  <PolimatiqLogo width={120} />
+                </SheetTitle>
               </SheetHeader>
               <nav className="flex flex-col gap-1 px-4">
                 {NAV_LINKS.map((link) => (

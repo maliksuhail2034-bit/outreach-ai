@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { PolimatiqLogo } from "@/components/shell/polimatiq-logo";
 import { Container } from "./container";
 import { PRODUCT_NAME } from "./product-name";
 
@@ -8,11 +9,8 @@ export function SiteFooter() {
     <footer className="border-t border-border">
       <Container className="flex flex-col gap-8 py-12 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-xs">
-          <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs text-primary-foreground">
-              P
-            </span>
-            {PRODUCT_NAME}
+          <Link href="/" className="flex items-center">
+            <PolimatiqLogo width={120} />
           </Link>
           <p className="mt-3 text-sm text-muted-foreground">
             One workspace for the entire cold email outreach workflow.

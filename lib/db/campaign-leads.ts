@@ -1,6 +1,6 @@
 import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types";
 import type { Client } from "./shared";
-import { unwrap } from "./shared";
+import { countOrThrow, unwrap } from "./shared";
 
 // No userId parameter: ownership is derived from campaign_id via RLS (and
 // the DB-level ownership-consistency trigger), not stored on this table.
@@ -73,12 +73,12 @@ export async function getCampaignLeadActivitySummary(
       .maybeSingle(),
   ]);
 
-  if (countResult.error) throw countResult.error;
+  const leadsCount = countOrThrow(countResult);
   if (nextSendResult.error) throw nextSendResult.error;
   if (lastActivityResult.error) throw lastActivityResult.error;
 
   return {
-    leadsCount: countResult.count ?? 0,
+    leadsCount,
     nextSendAt: nextSendResult.data?.next_send_at ?? null,
     lastActivityAt: lastActivityResult.data?.updated_at ?? null,
   };

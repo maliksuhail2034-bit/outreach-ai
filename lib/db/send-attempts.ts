@@ -1,4 +1,5 @@
 import type { Client } from "./shared";
+import { countOrThrow } from "./shared";
 
 // send_attempts is the idempotency ledger for the send pipeline (see
 // supabase/migrations/20260730100030_send_attempts.sql). Every function here
@@ -99,9 +100,7 @@ export async function listSendAttempts(supabase: Client, limit = 10) {
 export async function countSendAttemptsByStatus(supabase: Client, status?: string) {
   let query = supabase.from("send_attempts").select("*", { count: "exact", head: true });
   if (status) query = query.eq("status", status);
-  const { count, error } = await query;
-  if (error) throw error;
-  return count ?? 0;
+  return countOrThrow(await query);
 }
 
 // Analytics-only: per-campaign attempt/failure counts for the campaign

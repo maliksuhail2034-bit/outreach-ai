@@ -2,7 +2,7 @@ import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types"
 import type { LeadSegmentRule, LeadVerificationStatus } from "@/lib/validations/lead-segments";
 import { applySegmentRules, type LeadsQuery } from "./lead-segments";
 import type { Client } from "./shared";
-import { unwrap } from "./shared";
+import { countOrThrow, unwrap } from "./shared";
 
 const DEFAULT_LIST_LIMIT = 100;
 
@@ -156,12 +156,7 @@ export async function listLeadsAvailableForCampaign(
 }
 
 export async function countLeads(supabase: Client, userId: string) {
-  const { count, error } = await supabase
-    .from("leads")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId);
-  if (error) throw error;
-  return count ?? 0;
+  return countOrThrow(await supabase.from("leads").select("*", { count: "exact", head: true }).eq("user_id", userId));
 }
 
 export async function getLead(supabase: Client, userId: string, id: string) {

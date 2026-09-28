@@ -1,4 +1,5 @@
 import type { PostgrestError } from "@supabase/supabase-js";
+import { CountQueryError } from "./shared";
 
 // Bounded resilience helpers for READ paths only — see app/(app)/dashboard/
 // page.tsx and app/(app)/campaigns/[campaignId]/page.tsx, whose large
@@ -43,6 +44,12 @@ const TRANSIENT_POSTGRES_CLASSES = new Set(["08", "57"]);
 export function isTransientError(error: unknown): boolean {
   if (isPostgrestError(error)) {
     return TRANSIENT_POSTGRES_CLASSES.has(error.code.slice(0, 2));
+  }
+  // A failed count query only has its HTTP status (see CountQueryError):
+  // 5xx, 408 and 429 are the server/gateway being transiently unavailable;
+  // anything else (400/401/403, ...) is a real error and propagates.
+  if (error instanceof CountQueryError) {
+    return (error.status >= 500 && error.status <= 599) || error.status === 408 || error.status === 429;
   }
   if (error instanceof TypeError) return true;
   if (error instanceof Error && error.name === "AbortError") return true;

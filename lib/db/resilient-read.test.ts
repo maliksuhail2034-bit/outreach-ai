@@ -7,6 +7,7 @@ import {
   optionalRead,
   withRetry,
 } from "./resilient-read";
+import { CountQueryError } from "./shared";
 
 function postgrestError(code: string, message = "db error"): { code: string; message: string; details: string; hint: string } {
   return { code, message, details: "", hint: "" };
@@ -45,6 +46,18 @@ describe("isTransientError", () => {
 
   it("does not treat a plain application Error as transient", () => {
     expect(isTransientError(new Error("Expected a row, received none."))).toBe(false);
+  });
+
+  it.each([500, 502, 503, 504, 408, 429])("treats a failed count query with HTTP %i as transient", (status) => {
+    expect(isTransientError(new CountQueryError(status, ""))).toBe(true);
+  });
+
+  it.each([400, 401, 403, 404])("does not treat a failed count query with HTTP %i as transient", (status) => {
+    expect(isTransientError(new CountQueryError(status, ""))).toBe(false);
+  });
+
+  it("does not treat postgrest-js's bare bodyless { message: \"\" } as transient on its own", () => {
+    expect(isTransientError({ message: "" })).toBe(false);
   });
 });
 
@@ -139,6 +152,29 @@ describe("optionalRead", () => {
     const fn = vi.fn().mockRejectedValue(error);
 
     await expect(optionalRead(fn, [] as string[], { baseDelayMs: 0 })).rejects.toBe(error);
+  });
+
+  it("retries a bodyless count failure with HTTP 503, then falls back (the widget's couldn't-load state)", async () => {
+    const error = new CountQueryError(503, "Service Unavailable");
+    const fn = vi.fn().mockRejectedValue(error);
+
+    const result = await optionalRead(fn, 0, { retries: 2, baseDelayMs: 0 });
+
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(result).toEqual({ data: 0, failed: true, error });
+  });
+
+  it("recovers when a bodyless 503 count failure clears on retry", async () => {
+    const fn = vi.fn().mockRejectedValueOnce(new CountQueryError(503, "")).mockResolvedValueOnce(7);
+
+    expect(await optionalRead(fn, 0, { baseDelayMs: 0 })).toEqual({ data: 7, failed: false });
+  });
+
+  it("rethrows a bodyless count failure with HTTP 401 immediately, with a non-empty message", async () => {
+    const fn = vi.fn().mockRejectedValue(new CountQueryError(401, "Unauthorized"));
+
+    await expect(optionalRead(fn, 0, { baseDelayMs: 0 })).rejects.toThrow("Count query failed (HTTP 401 Unauthorized).");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("one optional query failing does not affect a sibling optional query succeeding", async () => {

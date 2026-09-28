@@ -1,6 +1,6 @@
 import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types";
 import type { Client } from "./shared";
-import { unwrap } from "./shared";
+import { countOrThrow, unwrap } from "./shared";
 
 type Mailbox = Tables<"mailboxes">;
 export type MailboxSafe = Omit<
@@ -34,12 +34,7 @@ export async function listMailboxes(supabase: Client, userId: string): Promise<M
 }
 
 export async function countMailboxes(supabase: Client, userId: string) {
-  const { count, error } = await supabase
-    .from("mailboxes")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId);
-  if (error) throw error;
-  return count ?? 0;
+  return countOrThrow(await supabase.from("mailboxes").select("*", { count: "exact", head: true }).eq("user_id", userId));
 }
 
 export async function getMailbox(supabase: Client, userId: string, id: string): Promise<MailboxSafe> {

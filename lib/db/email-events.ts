@@ -1,6 +1,6 @@
 import type { Tables, TablesInsert } from "@/types/database.types";
 import type { Client } from "./shared";
-import { unwrap } from "./shared";
+import { countOrThrow, unwrap } from "./shared";
 
 const DEFAULT_LIST_LIMIT = 200;
 
@@ -49,12 +49,9 @@ export async function listEmailEvents(
 // Dashboard KPI helper — total count across all of the caller's campaigns
 // (RLS-scoped), not limited to one campaign like listEmailEvents above.
 export async function countEmailEventsByType(supabase: Client, eventType: string) {
-  const { count, error } = await supabase
-    .from("email_events")
-    .select("*", { count: "exact", head: true })
-    .eq("event_type", eventType);
-  if (error) throw error;
-  return count ?? 0;
+  return countOrThrow(
+    await supabase.from("email_events").select("*", { count: "exact", head: true }).eq("event_type", eventType),
+  );
 }
 
 // Plan-limit helper for lib/billing/limits.ts's isWithinMonthlyEmailLimit —

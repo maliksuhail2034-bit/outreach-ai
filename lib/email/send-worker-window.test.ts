@@ -219,3 +219,51 @@ describe("send worker: sending-window enforcement ordering", () => {
     expect(claimSendAttempt).not.toHaveBeenCalled();
   });
 });
+
+describe("send worker: overnight sending window (Mon-Fri 22:00 -> 06:00 UTC)", () => {
+  const WEEKDAYS_22_TO_6_UTC = { days: ["mon", "tue", "wed", "thu", "fri"], startHour: 22, endHour: 6, timezone: "UTC" };
+  const SAT_AFTER_MIDNIGHT = new Date("2026-09-05T03:00:00.000Z"); // inside Friday's window
+  const TUE_DAYTIME = new Date("2026-09-01T12:00:00.000Z"); // blocked
+
+  beforeEach(() => {
+    vi.mocked(getCampaignById).mockResolvedValue({
+      id: "campaign-1",
+      user_id: "user-1",
+      status: "active",
+      sending_window: WEEKDAYS_22_TO_6_UTC,
+    } as never);
+  });
+
+  it("sends a due lead after midnight inside the previous start day's window", async () => {
+    vi.setSystemTime(SAT_AFTER_MIDNIGHT);
+    claim(makeLead());
+
+    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    expect(updateCampaignLead).not.toHaveBeenCalled();
+    expect(deferDueCampaignLeads).not.toHaveBeenCalled();
+  });
+
+  it("defers a manual retry (next_send_at = now) in the blocked daytime period to that evening's opening, without sending", async () => {
+    vi.setSystemTime(TUE_DAYTIME);
+    claim(makeLead({ next_send_at: TUE_DAYTIME.toISOString() }));
+
+    await expect(runSendWorker(supabase, 25, 1)).resolves.toMatchObject({ claimed: 1, skipped: 1, sent: 0 });
+    expect(updateCampaignLead).toHaveBeenCalledWith(supabase, "cl-1", {
+      next_send_at: "2026-09-01T22:00:00.000Z",
+      locked_until: null,
+      send_now_step_id: null,
+    });
+    expect(claimSendAttempt).not.toHaveBeenCalled();
+    expect(getEmailProvider).not.toHaveBeenCalled();
+  });
+
+  it("still lets a Send Now for the current step through in the blocked period, consuming it before claimSendAttempt", async () => {
+    vi.setSystemTime(TUE_DAYTIME);
+    claim(makeLead({ send_now_step_id: "step-1" }));
+
+    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    expect(consumeSendNow).toHaveBeenCalledWith(supabase, "cl-1", "step-1", "step-1");
+    expect(callOrder(consumeSendNow)[0]).toBeLessThan(callOrder(claimSendAttempt)[0]);
+    expect(updateCampaignLead).not.toHaveBeenCalled();
+  });
+});

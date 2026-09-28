@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 
 import { isValidIanaTimezone } from "@/lib/timezones";
 import {
+  isOvernightWindow,
   SENDING_WINDOW_DAYS,
   sendingWindowSchema,
   type SendingWindow,
@@ -58,23 +59,30 @@ const WEEKDAY_TO_LUXON: Record<SendingWindowDay, number> = {
 // Rolls `from` forward to the next instant that falls inside `window`,
 // walking day-by-day in the window's timezone. Terminates within one week
 // since sendingWindowSchema guarantees at least one allowed day.
+//
+// An overnight window belongs to the day it starts and ends on the next day
+// (isOvernightWindow), so the walk starts one day back: yesterday's window
+// may still be open at `from`. A same-day window starts at today, exactly as
+// before.
 function nextTimeWithinWindow(from: DateTime, window: SendingWindow): DateTime {
   const allowedWeekdays = new Set(window.days.map((day) => WEEKDAY_TO_LUXON[day]));
+  const overnight = isOvernightWindow(window);
 
-  for (let offset = 0; offset <= 7; offset++) {
+  for (let offset = overnight ? -1 : 0; offset <= 7; offset++) {
     const candidateDay = from.plus({ days: offset }).startOf("day");
     if (!allowedWeekdays.has(candidateDay.weekday)) continue;
 
     const windowStart = candidateDay.set({ hour: window.startHour, minute: 0, second: 0, millisecond: 0 });
-    const windowEnd = candidateDay.set({ hour: window.endHour, minute: 0, second: 0, millisecond: 0 });
+    const windowEnd = (overnight ? candidateDay.plus({ days: 1 }) : candidateDay).set({
+      hour: window.endHour,
+      minute: 0,
+      second: 0,
+      millisecond: 0,
+    });
 
-    if (offset === 0) {
-      if (from >= windowStart && from < windowEnd) return from;
-      if (from < windowStart) return windowStart;
-      continue; // Today's window has already closed — keep looking.
-    }
-
-    return windowStart;
+    if (from < windowStart) return windowStart;
+    if (from < windowEnd) return from;
+    // This day's window has already closed — keep looking.
   }
 
   // Unreachable given sendingWindowSchema enforces days.min(1), but keeps

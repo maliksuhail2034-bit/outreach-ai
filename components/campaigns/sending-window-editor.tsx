@@ -3,7 +3,7 @@
 import { useWatch, type Control } from "react-hook-form";
 
 import type { CampaignInput } from "@/lib/validations/campaigns";
-import { SENDING_WINDOW_DAYS, type SendingWindowDay } from "@/lib/validations/sending-window";
+import { isOvernightWindow, SENDING_WINDOW_DAYS, type SendingWindowDay } from "@/lib/validations/sending-window";
 import { Button } from "@/components/ui/button";
 import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -55,7 +55,8 @@ export function SendingWindowEditor({ control }: { control: Control<CampaignInpu
           <span className="text-muted-foreground">No days selected yet.</span>
         ) : (
           <span className="text-muted-foreground">
-            {orderedDayLabels.join(", ")}, {formatHour(startHour)}–{formatHour(endHour)} ({timezone || "no timezone set"})
+            {orderedDayLabels.join(", ")}, {formatHour(startHour)}–{formatHour(endHour)}
+            {isOvernightWindow({ startHour, endHour }) && " (next day)"} ({timezone || "no timezone set"})
           </span>
         )}
       </div>

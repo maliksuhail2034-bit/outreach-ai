@@ -569,3 +569,222 @@ describe("scheduling in the lead's timezone", () => {
     ).toBe("2026-09-07T16:00:00.000Z");
   });
 });
+
+// Overnight windows (endHour < startHour) belong to the day they start and
+// end on the next day. Dates: Tue 2026-09-01 ... Fri 09-04, Sat 09-05,
+// Sun 09-06, Mon 09-07 (no DST in September for UTC/Riyadh/New York).
+describe("overnight sending windows", () => {
+  const WEEKDAYS_22_TO_6_UTC: SendingWindow = { days: ["mon", "tue", "wed", "thu", "fri"], startHour: 22, endHour: 6, timezone: "UTC" };
+  const ALL_DAYS_23_TO_1_UTC: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 23, endHour: 1 };
+
+  function decide(nowIso: string, sendingWindow: unknown, sendNowStepId: string | null = null) {
+    return resolveSendDecision({ now: new Date(nowIso), sendingWindow, currentStepId: "step-1", sendNowStepId });
+  }
+  const SEND = { send: true, usesSendNowBypass: false };
+  const deferTo = (iso: string) => ({ send: false, nextSendAt: new Date(iso) });
+
+  describe("22:00 -> 06:00, Mon-Fri (start-day rule)", () => {
+    it("sends inside the window, before and after midnight", () => {
+      expect(decide("2026-09-01T23:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND); // Tue 23:00
+      expect(decide("2026-09-02T03:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND); // Wed 03:00, Tue's window
+    });
+
+    it("defers the blocked daytime period to that evening's opening", () => {
+      expect(decide("2026-09-01T12:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-01T22:00:00.000Z"));
+    });
+
+    it("treats the window as [22:00, 06:00 next day): 21:59 defers, 22:00 sends, 05:59 sends, 06:00 defers", () => {
+      expect(decide("2026-09-01T21:59:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-01T22:00:00.000Z"));
+      expect(decide("2026-09-01T22:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+      expect(decide("2026-09-02T05:59:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+      expect(decide("2026-09-02T06:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-02T22:00:00.000Z"));
+    });
+
+    it("stays open across the midnight boundary", () => {
+      expect(decide("2026-09-01T23:59:59.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+      expect(decide("2026-09-02T00:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+    });
+
+    it("Friday 23:00 is allowed", () => {
+      expect(decide("2026-09-04T23:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+    });
+
+    it("Saturday 03:00 is allowed — it belongs to Friday's window", () => {
+      expect(decide("2026-09-05T03:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+    });
+
+    it("Saturday 06:00 (Friday's window closed) defers to Monday 22:00", () => {
+      expect(decide("2026-09-05T06:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-07T22:00:00.000Z"));
+    });
+
+    it("Saturday 22:00 is not allowed — Saturday isn't a start day — and defers to Monday 22:00", () => {
+      expect(decide("2026-09-05T22:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-07T22:00:00.000Z"));
+    });
+
+    it("Monday 03:00 is not allowed — Sunday isn't a start day — and defers to Monday 22:00", () => {
+      expect(decide("2026-09-07T03:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-07T22:00:00.000Z"));
+    });
+
+    it("Tuesday 03:00 is allowed — it belongs to Monday's window", () => {
+      expect(decide("2026-09-08T03:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(SEND);
+    });
+  });
+
+  describe("23:00 -> 01:00 (closest whole-hour form of 23:30 -> 00:30)", () => {
+    it("sends at 23:30 and 00:30, defers at 22:59 and 01:00", () => {
+      expect(decide("2026-09-01T23:30:00.000Z", ALL_DAYS_23_TO_1_UTC)).toEqual(SEND);
+      expect(decide("2026-09-02T00:30:00.000Z", ALL_DAYS_23_TO_1_UTC)).toEqual(SEND);
+      expect(decide("2026-09-01T22:59:00.000Z", ALL_DAYS_23_TO_1_UTC)).toEqual(deferTo("2026-09-01T23:00:00.000Z"));
+      expect(decide("2026-09-02T01:00:00.000Z", ALL_DAYS_23_TO_1_UTC)).toEqual(deferTo("2026-09-02T23:00:00.000Z"));
+    });
+  });
+
+  it("17:00 -> 09:00 sends in the evening and defers mid-morning to 17:00", () => {
+    const eveningToMorning: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 17, endHour: 9 };
+    expect(decide("2026-09-01T20:00:00.000Z", eveningToMorning)).toEqual(SEND);
+    expect(decide("2026-09-02T08:59:00.000Z", eveningToMorning)).toEqual(SEND);
+    expect(decide("2026-09-02T10:00:00.000Z", eveningToMorning)).toEqual(deferTo("2026-09-02T17:00:00.000Z"));
+  });
+
+  it("a same-day 09:00 -> 17:00 window is unchanged: no carry-over from the previous day", () => {
+    expect(decide("2026-09-02T03:00:00.000Z", ALL_DAYS_9_TO_5_UTC)).toEqual(deferTo("2026-09-02T09:00:00.000Z"));
+    expect(decide("2026-09-02T09:00:00.000Z", ALL_DAYS_9_TO_5_UTC)).toEqual(SEND);
+    expect(decide("2026-09-02T17:00:00.000Z", ALL_DAYS_9_TO_5_UTC)).toEqual(deferTo("2026-09-03T09:00:00.000Z"));
+    expect(decide("2026-09-04T18:00:00.000Z", WEEKDAYS_ONLY_9_TO_5_UTC)).toEqual(deferTo("2026-09-07T09:00:00.000Z"));
+  });
+
+  it("an equal start/end window is invalid and falls back to the default 09:00-17:00 UTC", () => {
+    expect(resolveSendingWindow({ ...ALL_DAYS_9_TO_5_UTC, startHour: 9, endHour: 9 })).toEqual(resolveSendingWindow({}));
+  });
+
+  it("sweeping every 30 minutes across a full week always lands inside the local overnight window, on an allowed start day", () => {
+    const window: SendingWindow = { ...WEEKDAYS_22_TO_6_UTC, timezone: "America/New_York" };
+    const allowed = new Set([1, 2, 3, 4, 5]);
+    const isInside = (local: DateTime) =>
+      (local.hour >= 22 && allowed.has(local.weekday)) || (local.hour < 6 && allowed.has(local.minus({ days: 1 }).weekday));
+
+    let from = DateTime.fromISO("2026-09-06T00:00:00", { zone: "America/New_York" }); // Sun
+    for (let i = 0; i < 7 * 48; i++, from = from.plus({ minutes: 30 })) {
+      const result = DateTime.fromJSDate(computeNextSendTime({ from: from.toJSDate(), dayDelay: 0, window })).setZone(window.timezone);
+      expect(isInside(result), `from ${from.toISO()} -> ${result.toISO()}`).toBe(true);
+      expect(result.toMillis()).toBeGreaterThanOrEqual(from.toMillis());
+      // Minimal: an instant already inside comes back unchanged, one outside goes to the next opening.
+      if (isInside(from)) expect(result.toMillis()).toBe(from.toMillis());
+      else expect([result.hour, result.minute]).toEqual([22, 0]);
+    }
+  });
+
+  describe("follow-ups (computeNextSchedule)", () => {
+    const steps: SequenceStepLike[] = [
+      { id: "step-1", step_order: 0, day_delay: 0 },
+      { id: "step-2", step_order: 1, day_delay: 1 },
+    ];
+    const next = (from: string) =>
+      computeNextSchedule({ steps, currentStepId: "step-1", from: new Date(from), sendingWindow: WEEKDAYS_22_TO_6_UTC });
+
+    it("a follow-up a day after a 23:30 send is due at 23:30 the next night", () => {
+      expect(next("2026-09-01T23:30:00.000Z")).toEqual({ nextStepId: "step-2", nextSendAt: new Date("2026-09-02T23:30:00.000Z"), completed: false });
+    });
+
+    it("a follow-up a day after a 04:00 send is due at 04:00 the next morning (the following night's window)", () => {
+      expect(next("2026-09-02T04:00:00.000Z").nextSendAt).toEqual(new Date("2026-09-03T04:00:00.000Z"));
+    });
+
+    it("a follow-up landing on the weekend waits for Monday 22:00", () => {
+      expect(next("2026-09-04T23:30:00.000Z").nextSendAt).toEqual(new Date("2026-09-07T22:00:00.000Z")); // -> Sat 23:30
+      expect(next("2026-09-05T04:00:00.000Z").nextSendAt).toEqual(new Date("2026-09-07T22:00:00.000Z")); // -> Sun 04:00
+    });
+
+    it("a same-day (day_delay 0) first step inside the window is due immediately", () => {
+      expect(
+        computeNextSchedule({ steps, currentStepId: null, from: new Date("2026-09-02T04:00:00.000Z"), sendingWindow: WEEKDAYS_22_TO_6_UTC }).nextSendAt,
+      ).toEqual(new Date("2026-09-02T04:00:00.000Z"));
+    });
+  });
+
+  describe("schedule edits (recomputeNextSendAt)", () => {
+    it("re-snaps a queued daytime send into the new overnight window, idempotently", () => {
+      const once = recomputeNextSendAt(new Date("2026-09-01T10:00:00.000Z"), WEEKDAYS_22_TO_6_UTC);
+      expect(once.toISOString()).toBe("2026-09-01T22:00:00.000Z");
+      expect(recomputeNextSendAt(once, WEEKDAYS_22_TO_6_UTC).getTime()).toBe(once.getTime());
+    });
+
+    it("leaves a queued time already inside the overnight window unchanged", () => {
+      expect(recomputeNextSendAt(new Date("2026-09-02T03:00:00.000Z"), WEEKDAYS_22_TO_6_UTC).toISOString()).toBe("2026-09-02T03:00:00.000Z");
+    });
+
+    it("re-snaps an overnight queued time back into a same-day window when the schedule is changed back", () => {
+      expect(recomputeNextSendAt(new Date("2026-09-02T03:00:00.000Z"), ALL_DAYS_9_TO_5_UTC).toISOString()).toBe("2026-09-02T09:00:00.000Z");
+    });
+  });
+
+  describe("DST (America/New_York, every day 22:00 -> 06:00)", () => {
+    const NEW_YORK_22_TO_6: SendingWindow = { ...ALL_DAYS_9_TO_5_UTC, startHour: 22, endHour: 6, timezone: "America/New_York" };
+
+    it("spring-forward night (EDT starts 2026-03-08, a 7-hour night): opens 22:00 EST, closes 06:00 EDT", () => {
+      expect(decide("2026-03-08T02:59:00.000Z", NEW_YORK_22_TO_6)).toEqual(deferTo("2026-03-08T03:00:00.000Z")); // Sat 21:59 EST
+      expect(decide("2026-03-08T03:00:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // Sat 22:00 EST
+      expect(decide("2026-03-08T07:30:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // Sun 03:30 EDT
+      expect(decide("2026-03-08T09:59:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // Sun 05:59 EDT
+      expect(decide("2026-03-08T10:00:00.000Z", NEW_YORK_22_TO_6)).toEqual(deferTo("2026-03-09T02:00:00.000Z")); // 06:00 EDT -> Sun 22:00 EDT
+    });
+
+    it("spring-forward: an end hour in the skipped hour closes at the first real instant after it (03:00 EDT)", () => {
+      const tenToTwo: SendingWindow = { ...NEW_YORK_22_TO_6, endHour: 2 };
+      expect(decide("2026-03-08T06:59:00.000Z", tenToTwo)).toEqual(SEND); // Sun 01:59 EST
+      expect(decide("2026-03-08T07:00:00.000Z", tenToTwo)).toEqual(deferTo("2026-03-09T02:00:00.000Z")); // 03:00 EDT
+    });
+
+    it("fall-back night (EST resumes 2026-11-01, a 9-hour night): both 01:30s are inside, closes 06:00 EST", () => {
+      expect(decide("2026-11-01T02:00:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // Sat 22:00 EDT
+      expect(decide("2026-11-01T05:30:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // 01:30 EDT
+      expect(decide("2026-11-01T06:30:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // 01:30 EST
+      expect(decide("2026-11-01T10:59:00.000Z", NEW_YORK_22_TO_6)).toEqual(SEND); // 05:59 EST
+      expect(decide("2026-11-01T11:00:00.000Z", NEW_YORK_22_TO_6)).toEqual(deferTo("2026-11-02T03:00:00.000Z")); // 06:00 EST -> Sun 22:00 EST
+    });
+
+    it("a follow-up a day after a 23:00 send keeps local 23:00 across spring-forward", () => {
+      // Sat 2026-03-07 23:00 EST (03-08 04:00Z) + 1 day -> Sun 23:00 EDT (03-09 03:00Z), 23h later.
+      expect(computeNextSendTime({ from: new Date("2026-03-08T04:00:00.000Z"), dayDelay: 1, window: NEW_YORK_22_TO_6 }).toISOString()).toBe(
+        "2026-03-09T03:00:00.000Z",
+      );
+    });
+  });
+
+  describe("per-lead timezone (campaign Mon-Fri 22:00 -> 06:00 UTC, lead in Asia/Riyadh, UTC+3)", () => {
+    const base = { currentStepId: "step-1", sendNowStepId: null };
+    const leadWindow = resolveLeadSendingWindow(WEEKDAYS_22_TO_6_UTC, "Asia/Riyadh");
+    const campaignWindow = resolveLeadSendingWindow(WEEKDAYS_22_TO_6_UTC, null);
+
+    it("keeps the campaign's overnight hours in the lead's own timezone", () => {
+      expect(leadWindow).toEqual({ ...WEEKDAYS_22_TO_6_UTC, timezone: "Asia/Riyadh" });
+    });
+
+    it("Fri 20:00Z is Fri 23:00 for the lead (inside) but before the campaign's 22:00 UTC opening", () => {
+      const now = new Date("2026-09-04T20:00:00.000Z");
+      expect(resolveSendDecision({ ...base, now, sendingWindow: leadWindow })).toEqual(SEND);
+      expect(resolveSendDecision({ ...base, now, sendingWindow: campaignWindow })).toEqual(deferTo("2026-09-04T22:00:00.000Z"));
+    });
+
+    it("Sat 03:30Z is inside Friday's window in UTC, but Sat 06:30 for the lead — deferred to Mon 22:00 Riyadh", () => {
+      const now = new Date("2026-09-05T03:30:00.000Z");
+      expect(resolveSendDecision({ ...base, now, sendingWindow: campaignWindow })).toEqual(SEND);
+      expect(resolveSendDecision({ ...base, now, sendingWindow: leadWindow })).toEqual(deferTo("2026-09-07T19:00:00.000Z"));
+    });
+  });
+
+  describe("Send Now and retries", () => {
+    it("an explicit Send Now for the current step still bypasses the blocked daytime period", () => {
+      expect(decide("2026-09-01T12:00:00.000Z", WEEKDAYS_22_TO_6_UTC, "step-1")).toEqual({ send: true, usesSendNowBypass: true });
+    });
+
+    it("a Send Now for another step gives no bypass", () => {
+      expect(decide("2026-09-01T12:00:00.000Z", WEEKDAYS_22_TO_6_UTC, "step-0")).toEqual(deferTo("2026-09-01T22:00:00.000Z"));
+    });
+
+    it("a retry coming due in the blocked period is deferred to the next opening", () => {
+      // computeRetryDelay isn't window-aware; the final check defers it (a Tue 07:00 retry -> Tue 22:00).
+      expect(decide("2026-09-01T07:00:00.000Z", WEEKDAYS_22_TO_6_UTC)).toEqual(deferTo("2026-09-01T22:00:00.000Z"));
+    });
+  });
+});

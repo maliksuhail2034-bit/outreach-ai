@@ -8,7 +8,7 @@ import { AlertTriangleIcon, InfoIcon, PaperclipIcon } from "lucide-react";
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
 import type { CampaignReadinessResult } from "@/lib/campaigns/readiness";
-import type { SendingWindow } from "@/lib/validations/sending-window";
+import { isOvernightWindow, type SendingWindow } from "@/lib/validations/sending-window";
 import { launchCampaignAction } from "@/app/(app)/campaigns/[campaignId]/actions";
 import { validateSequenceTemplates } from "@/lib/email/validate-template";
 import type { MergeTagLead } from "@/lib/email/merge-tags";
@@ -32,6 +32,10 @@ const DAY_LABEL: Record<string, string> = {
   sat: "Sat",
   sun: "Sun",
 };
+
+function hourLabel(hour: number) {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
 
 function delayLabel(dayDelay: number) {
   if (dayDelay === 0) return "Same day";
@@ -121,7 +125,8 @@ export function CampaignReviewStep({
           <div>
             <dt className="text-sm text-muted-foreground">Sending window</dt>
             <dd className="text-lg font-medium">
-              {windowDays}, {sendingWindow.startHour}:00–{sendingWindow.endHour}:00 ({sendingWindow.timezone})
+              {windowDays}, {hourLabel(sendingWindow.startHour)}–{hourLabel(sendingWindow.endHour)}
+              {isOvernightWindow(sendingWindow) && " (next day)"} ({sendingWindow.timezone})
               <span className="mt-1 block text-xs font-normal text-muted-foreground">
                 Leads with their own timezone get these hours in their local time.
               </span>

@@ -2,9 +2,8 @@ import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   countLeads,
-  countLeadsInList,
   countLeadsMatchingRules,
-  listLeadLists,
+  listLeadListsWithCounts,
   listLeadSegments,
   listLeadsPage,
 } from "@/lib/db";
@@ -48,8 +47,10 @@ export default async function LeadsPage({
   const verificationStatus = parseVerificationStatus(verificationParam);
 
   const supabase = await createClient();
+  // One query for the lists and each list's lead count (see
+  // listLeadListsWithCounts), not one count query per list.
   const [leadLists, segments] = await Promise.all([
-    listLeadLists(supabase, user.id),
+    listLeadListsWithCounts(supabase, user.id),
     listLeadSegments(supabase, user.id),
   ]);
 
@@ -71,19 +72,13 @@ export default async function LeadsPage({
 
   const filtersActive = Boolean(activeSegment || verificationStatus);
 
-  const [{ leads, pageSize, totalCount }, accountLeadCount, leadListsWithCounts, segmentsWithCounts] = await Promise.all([
+  const [{ leads, pageSize, totalCount }, accountLeadCount, segmentsWithCounts] = await Promise.all([
     listLeadsPage(supabase, user.id, {
       page,
       rules: activeSegment?.rules ?? undefined,
       verificationStatus,
     }),
     filtersActive ? countLeads(supabase, user.id) : null,
-    Promise.all(
-      (leadLists ?? []).map(async (list) => ({
-        ...list,
-        leadCount: await countLeadsInList(supabase, user.id, list.id),
-      })),
-    ),
     Promise.all(
       segmentsWithRules.map(async ({ segment, rules }) => ({
         ...segment,
@@ -107,7 +102,7 @@ export default async function LeadsPage({
         <FadeIn delay={0.05} className="min-w-0 lg:col-span-2">
           <LeadTable
             leads={leads}
-            leadLists={leadLists ?? []}
+            leadLists={leadLists}
             leadCount={totalCount}
             accountLeadCount={accountLeadCount ?? totalCount}
             page={page}
@@ -120,10 +115,10 @@ export default async function LeadsPage({
         <FadeIn delay={0.1} className="space-y-6 lg:col-span-1">
           <SegmentsPanel
             segments={segmentsWithCounts}
-            leadLists={leadLists ?? []}
+            leadLists={leadLists}
             activeSegmentId={activeSegment?.segment.id}
           />
-          <LeadListsPanel leadLists={leadListsWithCounts} />
+          <LeadListsPanel leadLists={leadLists} />
         </FadeIn>
       </div>
     </div>

@@ -43,12 +43,20 @@ export async function deleteLeadList(supabase: Client, userId: string, id: strin
   if (error) throw error;
 }
 
-export async function countLeadsInList(supabase: Client, userId: string, listId: string) {
-  const { count, error } = await supabase
-    .from("leads")
-    .select("*", { count: "exact", head: true })
+export type LeadListWithCount = Tables<"lead_lists"> & { leadCount: number };
+
+// listLeadLists plus each list's exact lead count, in one query: PostgREST's
+// embedded count (leads(count)) is evaluated per list inside the same
+// statement, so the Leads page no longer issues one count query per list.
+// It counts the leads visible under the leads RLS policy (the caller's own),
+// which are exactly the list's leads — leads_check_list_owner only lets a
+// lead reference a list owned by the same user.
+export async function listLeadListsWithCounts(supabase: Client, userId: string): Promise<LeadListWithCount[]> {
+  const { data, error } = await supabase
+    .from("lead_lists")
+    .select("*, leads(count)")
     .eq("user_id", userId)
-    .eq("list_id", listId);
+    .order("created_at", { ascending: false });
   if (error) throw error;
-  return count ?? 0;
+  return data.map(({ leads, ...list }) => ({ ...list, leadCount: leads?.[0]?.count ?? 0 }));
 }

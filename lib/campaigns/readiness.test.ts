@@ -14,6 +14,9 @@ const ACTIVE_MAILBOX = {
   status: "active",
   daily_limit: 50,
   hourly_limit: 10,
+  // Reply tracking on and already synced — no reply-tracking warning.
+  imap_enabled: true,
+  imap_uid_validity: 1,
 };
 
 describe("resolveLeadMailboxId", () => {
@@ -221,6 +224,115 @@ describe("checkCampaignReadiness", () => {
 
     expect(result.ready).toBe(true);
     expect(result.warnings.some((warning) => warning.includes("sending domain"))).toBe(true);
+  });
+});
+
+// M1: reply tracking (IMAP) is advisory — warnings only, over the same
+// mailbox set the active-mailbox check uses.
+describe("checkCampaignReadiness — reply tracking", () => {
+  const IMAP_OFF_WARNING =
+    "Reply tracking is off for: Sales — replies won't be detected, so follow-ups will keep sending to leads who reply.";
+  const UNSYNCED_WARNING =
+    "Reply tracking hasn't completed its first sync for: Sales — replies received before the first sync are not detected. Wait a few minutes or check the IMAP settings.";
+
+  type Input = Parameters<typeof checkCampaignReadiness>[0];
+
+  function readiness(mailboxes: Input["mailboxes"], overrides: Partial<Input> = {}) {
+    return checkCampaignReadiness({
+      campaign: { default_mailbox_id: "mailbox-1" },
+      campaignLeads: [{ mailbox_id: null }],
+      sequenceStepCount: 1,
+      mailboxes,
+      domainCount: 1,
+      ...overrides,
+    });
+  }
+
+  it("warns but stays launchable when the default mailbox has reply tracking off", () => {
+    const result = readiness([{ ...ACTIVE_MAILBOX, imap_enabled: false, imap_uid_validity: null }]);
+
+    expect(result.ready).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([IMAP_OFF_WARNING]);
+  });
+
+  it("warns for a lead's own mailbox override with reply tracking off", () => {
+    const override = { ...ACTIVE_MAILBOX, id: "mailbox-2", display_name: "Override", imap_enabled: false };
+    const result = readiness([ACTIVE_MAILBOX, override], { campaignLeads: [{ mailbox_id: "mailbox-2" }] });
+
+    expect(result.ready).toBe(true);
+    expect(result.warnings).toEqual([
+      "Reply tracking is off for: Override — replies won't be detected, so follow-ups will keep sending to leads who reply.",
+    ]);
+  });
+
+  it("warns for a pool mailbox with reply tracking off", () => {
+    const poolMailbox = { ...ACTIVE_MAILBOX, id: "mailbox-2", display_name: "Pool", imap_enabled: false };
+    const result = readiness([ACTIVE_MAILBOX, poolMailbox], { campaignMailboxes: [{ mailbox_id: "mailbox-2" }] });
+
+    expect(result.ready).toBe(true);
+    expect(result.warnings).toEqual([
+      "Reply tracking is off for: Pool — replies won't be detected, so follow-ups will keep sending to leads who reply.",
+    ]);
+  });
+
+  it("warns for a pool-only campaign whose pool mailbox hasn't synced yet", () => {
+    const poolMailbox = { ...ACTIVE_MAILBOX, id: "mailbox-2", imap_uid_validity: null };
+    const result = readiness([poolMailbox], {
+      campaign: { default_mailbox_id: null },
+      campaignMailboxes: [{ mailbox_id: "mailbox-2" }],
+    });
+
+    expect(result.ready).toBe(true);
+    expect(result.warnings).toEqual([UNSYNCED_WARNING]);
+  });
+
+  it("warns when reply tracking is on but has never completed a sync", () => {
+    const result = readiness([{ ...ACTIVE_MAILBOX, imap_uid_validity: null }]);
+
+    expect(result.ready).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([UNSYNCED_WARNING]);
+  });
+
+  it("gives no reply-tracking warning once reply tracking is on and has synced", () => {
+    const result = readiness([{ ...ACTIVE_MAILBOX, imap_uid_validity: 0 }]);
+
+    expect(result.ready).toBe(true);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("lists each affected mailbox once, in its own warning per condition", () => {
+    const off = { ...ACTIVE_MAILBOX, imap_enabled: false };
+    const unsynced = { ...ACTIVE_MAILBOX, id: "mailbox-2", display_name: null, email: "ops@example.com", imap_uid_validity: null };
+    const result = readiness([off, unsynced], {
+      campaignLeads: [{ mailbox_id: null }, { mailbox_id: null }, { mailbox_id: "mailbox-2" }, { mailbox_id: "mailbox-2" }],
+      campaignMailboxes: [{ mailbox_id: "mailbox-1" }, { mailbox_id: "mailbox-2" }],
+    });
+
+    expect(result.ready).toBe(true);
+    expect(result.warnings).toEqual([
+      IMAP_OFF_WARNING,
+      "Reply tracking hasn't completed its first sync for: ops@example.com — replies received before the first sync are not detected. Wait a few minutes or check the IMAP settings.",
+    ]);
+  });
+
+  it("keeps an inactive mailbox's blocking error as the only issue for that mailbox", () => {
+    const result = readiness([{ ...ACTIVE_MAILBOX, status: "paused", imap_enabled: false }]);
+
+    expect(result.ready).toBe(false);
+    expect(result.errors).toEqual(["These mailboxes aren't active: Sales."]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("leaves the existing warnings alongside the reply-tracking one", () => {
+    const result = readiness([{ ...ACTIVE_MAILBOX, imap_enabled: false }], { domainCount: 0 });
+
+    expect(result.ready).toBe(true);
+    expect(result.warnings).toEqual([
+      IMAP_OFF_WARNING,
+      "No sending domain configured yet — add one from the Deliverability page for better inbox placement.",
+    ]);
   });
 });
 

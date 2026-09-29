@@ -53,7 +53,10 @@ export interface CampaignReadinessInput {
   campaign: Pick<Tables<"campaigns">, "default_mailbox_id">;
   campaignLeads: Pick<Tables<"campaign_leads">, "mailbox_id">[];
   sequenceStepCount: number;
-  mailboxes: Pick<MailboxSafe, "id" | "display_name" | "email" | "status" | "daily_limit" | "hourly_limit">[];
+  mailboxes: Pick<
+    MailboxSafe,
+    "id" | "display_name" | "email" | "status" | "daily_limit" | "hourly_limit" | "imap_enabled" | "imap_uid_validity"
+  >[];
   domainCount: number;
   // Batch 8: the campaign's configured mailbox pool, if any — defaults to
   // empty so every existing caller (before this field existed) keeps
@@ -118,6 +121,26 @@ export function checkCampaignReadiness(input: CampaignReadinessInput): CampaignR
 
   const inactiveMailboxNames = new Set<string>();
   const underconfiguredMailboxNames = new Set<string>();
+  const replyTrackingOffNames = new Set<string>();
+  const replyTrackingUnsyncedNames = new Set<string>();
+
+  // Reply tracking is advisory: send-only setups (e.g. a relay with no
+  // inbox) are legitimate, so these are warnings, never launch blockers.
+  // Only checked for active mailboxes — an inactive one already blocks
+  // launch with its own error, which stays the thing to fix first. A null
+  // imap_uid_validity means reply sync has never completed for this
+  // mailbox, and its first sync only records a baseline (see
+  // lib/email/reply-providers/imap.ts) — replies that arrive before then
+  // are never detected.
+  function checkReplyTracking(mailbox: CampaignReadinessInput["mailboxes"][number]) {
+    if (mailbox.status !== "active") return;
+    if (!mailbox.imap_enabled) {
+      replyTrackingOffNames.add(mailbox.display_name || mailbox.email);
+    } else if (mailbox.imap_uid_validity === null) {
+      replyTrackingUnsyncedNames.add(mailbox.display_name || mailbox.email);
+    }
+  }
+
   for (const lead of campaignLeads) {
     // A lead with no explicit override that resolves through the pool has no
     // single "effective mailbox" known at readiness time (which pool
@@ -136,6 +159,7 @@ export function checkCampaignReadiness(input: CampaignReadinessInput): CampaignR
     if (mailbox.daily_limit <= 0 || mailbox.hourly_limit <= 0) {
       underconfiguredMailboxNames.add(mailbox.display_name || mailbox.email);
     }
+    checkReplyTracking(mailbox);
   }
   // Batch 8: every mailbox in the configured pool must be active too, same
   // severity as the per-lead check above — folded into the same
@@ -148,6 +172,7 @@ export function checkCampaignReadiness(input: CampaignReadinessInput): CampaignR
     if (mailbox.status !== "active") {
       inactiveMailboxNames.add(mailbox.display_name || mailbox.email);
     }
+    checkReplyTracking(mailbox);
   }
 
   if (inactiveMailboxNames.size > 0) {
@@ -155,6 +180,16 @@ export function checkCampaignReadiness(input: CampaignReadinessInput): CampaignR
   }
   if (underconfiguredMailboxNames.size > 0) {
     warnings.push(`These mailboxes have no sending limits configured: ${[...underconfiguredMailboxNames].join(", ")}.`);
+  }
+  if (replyTrackingOffNames.size > 0) {
+    warnings.push(
+      `Reply tracking is off for: ${[...replyTrackingOffNames].join(", ")} — replies won't be detected, so follow-ups will keep sending to leads who reply.`,
+    );
+  }
+  if (replyTrackingUnsyncedNames.size > 0) {
+    warnings.push(
+      `Reply tracking hasn't completed its first sync for: ${[...replyTrackingUnsyncedNames].join(", ")} — replies received before the first sync are not detected. Wait a few minutes or check the IMAP settings.`,
+    );
   }
 
   if (domainCount === 0) {

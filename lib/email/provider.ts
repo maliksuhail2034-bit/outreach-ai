@@ -44,10 +44,18 @@ export interface SendResult {
 //               the address.
 // This class only carries the classification, it never retries or
 // suppresses anything itself.
+//
+// `mailboxIssue` is extra metadata on top of `outcome`, not a fourth
+// outcome: true only when the failure is certainly about the sending
+// mailbox's own credentials or sender identity (revoked OAuth, rejected
+// SMTP AUTH, rejected MAIL FROM), so every send from it will fail the same
+// way until the user fixes it. send-worker.ts uses it to move the mailbox
+// to 'error' instead of failing lead after lead.
 export class EmailSendError extends Error {
   constructor(
     message: string,
     public readonly outcome: "retry" | "bounced" | "failed",
+    public readonly mailboxIssue = false,
   ) {
     super(message);
     this.name = "EmailSendError";

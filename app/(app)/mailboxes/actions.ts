@@ -79,10 +79,20 @@ export async function updateMailboxAction(id: string, input: MailboxInput) {
   const user = await requireUser();
   const supabase = await createClient();
 
-  if (parsed.imapEnabled && (!parsed.imapHost || !parsed.imapUsername)) {
+  // A Gmail/Outlook mailbox's address, SMTP/IMAP connection and
+  // reply_provider come from its OAuth connection and stay fixed (see
+  // mailbox-form.tsx's isOAuthEdit) — only the provider-agnostic settings
+  // below are editable. Writing the manual fields would switch reply sync to
+  // password IMAP (reply_provider 'imap') with no password, and the IMAP
+  // password check would reject the edit outright, since an OAuth mailbox
+  // never stores one — which also blocked setting it back to Active.
+  const { email_provider: emailProvider } = await getMailbox(supabase, user.id, id);
+  const isOAuth = emailProvider !== "smtp";
+
+  if (!isOAuth && parsed.imapEnabled && (!parsed.imapHost || !parsed.imapUsername)) {
     throw new Error("Enter the IMAP host and username to enable reply tracking.");
   }
-  if (parsed.imapEnabled && !parsed.imapPassword) {
+  if (!isOAuth && parsed.imapEnabled && !parsed.imapPassword) {
     const existing = await getMailboxImapCredential(supabase, user.id, id);
     if (!existing?.encrypted_imap_password) {
       throw new Error("Enter the IMAP password to enable reply tracking.");
@@ -91,28 +101,32 @@ export async function updateMailboxAction(id: string, input: MailboxInput) {
 
   const mailbox = await updateMailbox(supabase, user.id, id, {
     domain_id: parsed.domainId ? parsed.domainId : null,
-    email: parsed.email,
     display_name: parsed.displayName ? parsed.displayName : null,
-    smtp_host: parsed.smtpHost,
-    smtp_port: parsed.smtpPort,
-    smtp_username: parsed.smtpUsername,
-    ...(parsed.smtpPassword ? { encrypted_smtp_password: encryptSmtpPassword(parsed.smtpPassword) } : {}),
     daily_limit: parsed.dailyLimit,
     hourly_limit: parsed.hourlyLimit,
     cooldown_minutes: parsed.cooldownMinutes,
     warmup_enabled: parsed.warmupEnabled,
     ...(parsed.status ? { status: parsed.status } : {}),
-    reply_provider: "imap",
-    imap_enabled: parsed.imapEnabled,
-    imap_host: parsed.imapHost ? parsed.imapHost : null,
-    imap_port: parsed.imapPort,
-    imap_username: parsed.imapUsername ? parsed.imapUsername : null,
-    ...(parsed.imapPassword ? { encrypted_imap_password: encryptSmtpPassword(parsed.imapPassword) } : {}),
+    ...(isOAuth
+      ? {}
+      : {
+          email: parsed.email,
+          smtp_host: parsed.smtpHost,
+          smtp_port: parsed.smtpPort,
+          smtp_username: parsed.smtpUsername,
+          ...(parsed.smtpPassword ? { encrypted_smtp_password: encryptSmtpPassword(parsed.smtpPassword) } : {}),
+          reply_provider: "imap",
+          imap_enabled: parsed.imapEnabled,
+          imap_host: parsed.imapHost ? parsed.imapHost : null,
+          imap_port: parsed.imapPort,
+          imap_username: parsed.imapUsername ? parsed.imapUsername : null,
+          ...(parsed.imapPassword ? { encrypted_imap_password: encryptSmtpPassword(parsed.imapPassword) } : {}),
+        }),
   });
 
   // Only a credential change is audit-worthy here — every other field
   // (display name, limits, domain) is routine config, not a security event.
-  if (parsed.smtpPassword || parsed.imapPassword) {
+  if (!isOAuth && (parsed.smtpPassword || parsed.imapPassword)) {
     const organization = await getUserOrganization(supabase, user);
     await recordAuditEvent(supabase, {
       organization_id: organization.id,

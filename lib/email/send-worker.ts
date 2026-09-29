@@ -15,6 +15,7 @@ import {
   listAttachmentsForStepScoped,
   listSequenceSteps,
   listSequences,
+  markMailboxErrored,
   recordSendFailure,
   recordSendSuccess,
   updateCampaignLead,
@@ -490,6 +491,41 @@ async function handleLostSendNow(
   return enforceSendingWindow(supabase, { ...campaignLead, send_now_step_id: null }, sendingWindow, now, leadTimezone);
 }
 
+// Moves the mailbox to 'error' after a mailbox-level send failure so
+// claim_due_sends() (active mailboxes only) stops handing it leads, and
+// alerts once — only for the call that actually made the transition, so a
+// mailbox already paused/errored/disconnected is neither overwritten nor
+// re-reported. Runs after the failure is recorded; if this write itself
+// fails the lead is already safely retryable and the next claim tries again.
+async function stopErroredMailbox(
+  supabase: Client,
+  mailboxId: string,
+  context: { campaignLeadId: string; sequenceStepId: string; attemptCount: number; error: string },
+): Promise<void> {
+  let transitioned: boolean;
+  try {
+    transitioned = await markMailboxErrored(supabase, mailboxId);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error("[send-worker] could not move mailbox to error", { mailboxId, reason });
+    await captureError({
+      job: "send-emails",
+      message: `Could not move mailbox to error after a mailbox-level send failure: ${reason}`,
+      context: { mailboxId, ...context },
+    });
+    return;
+  }
+
+  if (!transitioned) return;
+
+  console.error("[send-worker] mailbox moved to error", { mailboxId, ...context });
+  await captureError({
+    job: "send-emails",
+    message: `Mailbox moved to error — sending stopped until it is fixed: ${context.error}`,
+    context: { mailboxId, ...context },
+  });
+}
+
 async function processCampaignLead(
   supabase: Client,
   campaignLead: Tables<"campaign_leads">,
@@ -798,20 +834,28 @@ async function processCampaignLead(
     // permanently fail a lead any more than a network blip should; the
     // attempt cap below still bounds how many times that can happen.
     const classifiedOutcome = error instanceof EmailSendError ? error.outcome : "retry";
+    // Only a classified provider failure can blame the mailbox — never an
+    // unexpected throw, which may be a platform-wide problem.
+    const mailboxIssue = error instanceof EmailSendError && error.mailboxIssue;
 
     // A "retry" classification only stays "retry" below the attempt cap —
     // past it, record_send_failure gets "failed" instead so campaign_leads
     // lands in a terminal state and claim_due_sends() (status = 'active'
     // only) naturally stops reclaiming it. "bounced" and "failed" pass
-    // through unchanged; the cap doesn't apply to them.
+    // through unchanged; the cap doesn't apply to them — except a mailbox-
+    // level failure, which says nothing about this lead: it stays retryable
+    // (under the same cap) and waits for the mailbox to be fixed, since the
+    // mailbox itself is moved to 'error' below.
     const belowCap = claimedAttempt.attempt_count < MAX_SEND_ATTEMPTS;
+    const effectiveOutcome = mailboxIssue ? "retry" : classifiedOutcome;
     const outcome: "retry" | "bounced" | "failed" =
-      classifiedOutcome === "retry" && !belowCap ? "failed" : classifiedOutcome;
+      effectiveOutcome === "retry" && !belowCap ? "failed" : effectiveOutcome;
 
     console.error("[send-worker] send failed", {
       campaignLeadId: campaignLead.id,
       sequenceStepId: targetStep.id,
       outcome,
+      mailboxIssue,
       attemptCount: claimedAttempt.attempt_count,
       error: message,
     });
@@ -822,7 +866,8 @@ async function processCampaignLead(
     // normal business data already visible via deliverability/analytics —
     // forwarding every one of those to an external destination would make
     // the webhook too noisy to be useful for what actually needs attention.
-    if (outcome === "failed") {
+    // A mailbox-level failure alerts once per incident instead (below).
+    if (outcome === "failed" && !mailboxIssue) {
       await captureError({
         job: "send-emails",
         message,
@@ -840,6 +885,15 @@ async function processCampaignLead(
       outcome,
       ...(outcome === "retry" ? { nextSendAt: computeRetryDelay(claimedAttempt.attempt_count).toISOString() } : {}),
     });
+
+    if (mailboxIssue) {
+      await stopErroredMailbox(supabase, campaignLead.mailbox_id, {
+        campaignLeadId: campaignLead.id,
+        sequenceStepId: targetStep.id,
+        attemptCount: claimedAttempt.attempt_count,
+        error: message,
+      });
+    }
 
     // The worker's own tally stays coarse-grained: every non-success outcome
     // this iteration — including a "retry" that'll be reclaimed later —

@@ -87,6 +87,23 @@ export async function updateMailbox(
   return omitPassword(unwrap<Mailbox>(result));
 }
 
+// Send worker only (admin client, no user in the loop): moves a mailbox to
+// 'error' after a mailbox-level send failure (see EmailSendError's
+// mailboxIssue). Guarded on status = 'active' so it never overrides a state
+// the user chose (paused, disconnected) or re-reports an existing error.
+// Returns whether this call made the transition, so the caller alerts
+// exactly once per incident.
+export async function markMailboxErrored(supabase: Client, id: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("mailboxes")
+    .update({ status: "error" })
+    .eq("id", id)
+    .eq("status", "active")
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
 export async function deleteMailbox(supabase: Client, userId: string, id: string) {
   const { error } = await supabase.from("mailboxes").delete().eq("user_id", userId).eq("id", id);
   if (error) throw error;

@@ -1,6 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Tables } from "@/types/database.types";
 import { EmailSendError } from "../provider";
-import { classifySmtpError } from "./smtp";
+import { classifySmtpError, SmtpEmailProvider } from "./smtp";
+
+// Only the token refresh and decryption are replaced; the OAuth error
+// classes stay real so smtp.ts's instanceof checks run exactly as in
+// production. The classifySmtpError tests never reach either.
+const oauth = vi.hoisted(() => ({ refreshGoogle: vi.fn(), refreshMicrosoft: vi.fn() }));
+vi.mock("@/lib/email/google-oauth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email/google-oauth")>()),
+  refreshGoogleAccessToken: oauth.refreshGoogle,
+}));
+vi.mock("@/lib/email/microsoft-oauth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email/microsoft-oauth")>()),
+  refreshMicrosoftAccessToken: oauth.refreshMicrosoft,
+}));
+vi.mock("@/lib/crypto/smtp-secret", () => ({ decryptSmtpPassword: () => "decrypted-refresh-token" }));
+
+import { GoogleOAuthError } from "@/lib/email/google-oauth";
+import { MicrosoftOAuthError } from "@/lib/email/microsoft-oauth";
 
 // Mirrors the error shape nodemailer's SMTPConnection._formatError builds:
 // `code`, the raw server `response` line, the numeric `responseCode` parsed
@@ -135,5 +153,100 @@ describe("classifySmtpError — unchanged retry behavior", () => {
   it("keeps the server response in the message for last_error", () => {
     const err = smtpError("RCPT TO", "550 5.1.1 User unknown");
     expect(classifySmtpError(err).message).toContain("550 5.1.1 User unknown");
+  });
+});
+
+function classificationOf(error: unknown) {
+  const { outcome, mailboxIssue } = classifySmtpError(error);
+  return { outcome, mailboxIssue };
+}
+
+describe("classifySmtpError — mailboxIssue marks only mailbox/sender-identity failures", () => {
+  it.each([
+    ["AUTH PLAIN", "535 5.7.8 Username and Password not accepted.", "EAUTH"],
+    ["AUTH LOGIN", "534-5.7.9 Application-specific password required.", "EAUTH"],
+    ["MAIL FROM", "553 5.7.1 <me@example.com>: Sender address rejected: not owned by user", "EENVELOPE"],
+    ["MAIL FROM", "550 5.1.8 Access denied, bad outbound sender", "EENVELOPE"],
+    ["MAIL FROM", "550 5.4.5 Daily user sending limit exceeded.", "EENVELOPE"],
+  ])("%s + %s → failed + mailboxIssue", (command, response, code) => {
+    expect(classificationOf(smtpError(command, response, code))).toEqual({ outcome: "failed", mailboxIssue: true });
+  });
+
+  it.each([
+    ["MAIL FROM", "552 5.3.4 Message size exceeds fixed limit", "failed"],
+    ["RCPT TO", "550 5.1.1 The email account that you tried to reach does not exist.", "bounced"],
+    ["RCPT TO", "550 5.7.1 Relaying denied", "failed"],
+    ["DATA", "550 5.7.26 This mail is unauthenticated (DMARC)", "failed"],
+    ["DATA", "554 5.2.252 SendAsDenied; not allowed to send as this sender", "failed"],
+    ["RCPT TO", "421 4.7.0 Try again later", "retry"],
+    ["MAIL FROM", "451 4.3.0 Temporary server error", "retry"],
+    ["AUTH PLAIN", "454 4.7.0 Temporary authentication failure", "retry"],
+    [undefined, "550 5.7.1 Unknown stage rejection", "failed"],
+  ])("%s + %s → %s without mailboxIssue", (command, response, outcome) => {
+    const code = command?.startsWith("AUTH") ? "EAUTH" : "EENVELOPE";
+    expect(classificationOf(smtpError(command, response, code))).toEqual({ outcome, mailboxIssue: false });
+  });
+
+  it.each(["ETIMEDOUT", "ECONNECTION", "ECONNREFUSED"])("%s → retry without mailboxIssue", (code) => {
+    expect(classificationOf(Object.assign(new Error("network"), { code }))).toEqual({ outcome: "retry", mailboxIssue: false });
+  });
+
+  it("an unknown error shape → retry without mailboxIssue", () => {
+    expect(classificationOf(new Error("something odd"))).toEqual({ outcome: "retry", mailboxIssue: false });
+  });
+});
+
+describe("SmtpEmailProvider — OAuth credential failures", () => {
+  function oauthMailbox(overrides: Partial<Tables<"mailboxes">>): Tables<"mailboxes"> {
+    return {
+      id: "mailbox-1",
+      email: "sender@example.test",
+      encrypted_google_refresh_token: "enc-google",
+      encrypted_microsoft_refresh_token: "enc-microsoft",
+      ...overrides,
+    } as Tables<"mailboxes">;
+  }
+  const message = { from: { email: "sender@example.test" }, to: { email: "lead@example.test" }, subject: "Hi", html: "<p>Hi</p>" };
+
+  async function sendError(mailbox: Tables<"mailboxes">) {
+    const error = await new SmtpEmailProvider(mailbox).send(message).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(EmailSendError);
+    const { outcome, mailboxIssue } = error as EmailSendError;
+    return { outcome, mailboxIssue };
+  }
+
+  beforeEach(() => {
+    oauth.refreshGoogle.mockReset();
+    oauth.refreshMicrosoft.mockReset();
+  });
+
+  it.each([
+    ["Google", "gmail", () => oauth.refreshGoogle.mockRejectedValue(new GoogleOAuthError("Token has been expired or revoked.", "invalid_grant"))],
+    ["Microsoft", "outlook", () => oauth.refreshMicrosoft.mockRejectedValue(new MicrosoftOAuthError("AADSTS70008 expired grant", "invalid_grant"))],
+  ])("%s invalid_grant → failed + mailboxIssue", async (_label, provider, arrange) => {
+    arrange();
+    expect(await sendError(oauthMailbox({ email_provider: provider }))).toEqual({ outcome: "failed", mailboxIssue: true });
+  });
+
+  it.each([
+    ["Google", "gmail", () => oauth.refreshGoogle.mockRejectedValue(new GoogleOAuthError("Google token request failed (503).", "retry"))],
+    ["Microsoft", "outlook", () => oauth.refreshMicrosoft.mockRejectedValue(new MicrosoftOAuthError("Microsoft token request failed (429).", "retry"))],
+  ])("%s transient refresh failure → retry without mailboxIssue", async (_label, provider, arrange) => {
+    arrange();
+    expect(await sendError(oauthMailbox({ email_provider: provider }))).toEqual({ outcome: "retry", mailboxIssue: false });
+  });
+
+  it("a non-invalid_grant terminal OAuth failure stays failed without mailboxIssue", async () => {
+    oauth.refreshGoogle.mockRejectedValue(new GoogleOAuthError("Google did not return an access token for this refresh.", "failed"));
+    expect(await sendError(oauthMailbox({ email_provider: "gmail" }))).toEqual({ outcome: "failed", mailboxIssue: false });
+  });
+
+  it.each([
+    ["Google", { email_provider: "gmail", encrypted_google_refresh_token: null }],
+    ["Microsoft", { email_provider: "outlook", encrypted_microsoft_refresh_token: null }],
+  ])("missing %s refresh token → failed + mailboxIssue, without calling the token endpoint", async (_label, overrides) => {
+    expect(await sendError(oauthMailbox(overrides))).toEqual({ outcome: "failed", mailboxIssue: true });
+    expect(oauth.refreshGoogle).not.toHaveBeenCalled();
+    expect(oauth.refreshMicrosoft).not.toHaveBeenCalled();
   });
 });

@@ -90,6 +90,28 @@ function friendlySmtpTimeoutMessage(error: unknown): string | null {
   return null;
 }
 
+// A 5xx at AUTH (nodemailer's command is "AUTH PLAIN", "AUTH LOGIN", …) is
+// the server rejecting this mailbox's credentials; a 5xx at MAIL FROM, whose
+// only argument is our own sender address, is the server refusing this
+// sender/account (not owned, blocked, over quota). Neither can be about the
+// recipient or the content, and neither clears up on retry — except 552 at
+// MAIL FROM, which answers the SIZE parameter, i.e. this one message.
+// RCPT TO and DATA rejections stay lead-level: they mix recipient-side and
+// content policy with sender problems too ambiguously to stop a mailbox on.
+function isMailboxRejection(responseCode: number, command: string | undefined): boolean {
+  if (command?.startsWith("AUTH")) return true;
+  return command === "MAIL FROM" && responseCode !== 552;
+}
+
+// OAuth refresh failures in the EmailSendError shape: a transient token
+// endpoint failure stays "retry"; invalid_grant (the provider revoked or
+// expired the refresh token) is a mailboxIssue — only reconnecting fixes it.
+// Any other terminal token-endpoint failure is "failed" without it.
+function oauthRefreshError(error: GoogleOAuthError | MicrosoftOAuthError): EmailSendError {
+  if (error.outcome === "retry") return new EmailSendError(error.message, "retry");
+  return new EmailSendError(error.message, "failed", error.outcome === "invalid_grant");
+}
+
 // Classifies a thrown nodemailer/SMTP error into retry / bounced / failed —
 // see EmailSendError in ../provider.ts for what each means. Connection-level
 // failures and SMTP 4xx are transient ("retry"); SMTP 5xx splits into a
@@ -112,7 +134,8 @@ export function classifySmtpError(error: unknown): EmailSendError {
     }
     if (err.responseCode >= 500) {
       const bounced = isRecipientBounce({ responseCode: err.responseCode, command: err.command, response: err.response });
-      return new EmailSendError(message, bounced ? "bounced" : "failed");
+      if (bounced) return new EmailSendError(message, "bounced");
+      return new EmailSendError(message, "failed", isMailboxRejection(err.responseCode, err.command));
     }
   }
 
@@ -129,7 +152,7 @@ export function classifySmtpError(error: unknown): EmailSendError {
 async function resolveSmtpConnection(mailbox: Mailbox) {
   if (mailbox.email_provider === "gmail") {
     if (!mailbox.encrypted_google_refresh_token) {
-      throw new EmailSendError("This mailbox's Google connection is missing — reconnect it in Settings.", "failed");
+      throw new EmailSendError("This mailbox's Google connection is missing — reconnect it in Settings.", "failed", true);
     }
     const refreshToken = decryptSmtpPassword(mailbox.encrypted_google_refresh_token);
     let accessToken: string;
@@ -139,10 +162,10 @@ async function resolveSmtpConnection(mailbox: Mailbox) {
       // Translated into the same EmailSendError shape classifySmtpError
       // produces, so send-worker.ts's catch block classifies this exactly
       // like an SMTP-level auth failure — invalid_grant (Google revoked
-      // access) maps to "failed" the same way a real SMTP 535 auth
-      // rejection already would, not endlessly retried.
+      // access) maps to "failed" + mailboxIssue the same way a real SMTP
+      // 535 auth rejection does, not endlessly retried.
       if (error instanceof GoogleOAuthError) {
-        throw new EmailSendError(error.message, error.outcome === "retry" ? "retry" : "failed");
+        throw oauthRefreshError(error);
       }
       throw error;
     }
@@ -161,7 +184,7 @@ async function resolveSmtpConnection(mailbox: Mailbox) {
   // real SMTP protocol, just a different token issuer.
   if (mailbox.email_provider === "outlook") {
     if (!mailbox.encrypted_microsoft_refresh_token) {
-      throw new EmailSendError("This mailbox's Microsoft connection is missing — reconnect it in Settings.", "failed");
+      throw new EmailSendError("This mailbox's Microsoft connection is missing — reconnect it in Settings.", "failed", true);
     }
     const refreshToken = decryptSmtpPassword(mailbox.encrypted_microsoft_refresh_token);
     let accessToken: string;
@@ -169,10 +192,10 @@ async function resolveSmtpConnection(mailbox: Mailbox) {
       accessToken = await refreshMicrosoftAccessToken(refreshToken);
     } catch (error) {
       // Same translation as the Gmail branch: invalid_grant (Microsoft
-      // revoked access) maps to "failed" the same way a real SMTP 535 auth
-      // rejection already would, not endlessly retried.
+      // revoked access) maps to "failed" + mailboxIssue the same way a real
+      // SMTP 535 auth rejection does, not endlessly retried.
       if (error instanceof MicrosoftOAuthError) {
-        throw new EmailSendError(error.message, error.outcome === "retry" ? "retry" : "failed");
+        throw oauthRefreshError(error);
       }
       throw error;
     }

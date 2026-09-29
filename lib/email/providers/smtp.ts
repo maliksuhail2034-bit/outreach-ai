@@ -19,16 +19,49 @@ function formatAddress(address: { name?: string; email: string }): string {
   return address.name ? `"${address.name}" <${address.email}>` : address.email;
 }
 
-// SMTP reply codes that unambiguously mean "this specific mailbox doesn't
-// exist" rather than some other permanent rejection (auth failure, policy
-// block, malformed message). 550/551/553/554 are the standard "no such
-// user"/"relaying denied"/"transaction failed" codes recipient servers use
-// for a bad address — see RFC 5321 §4.2.3. Deliberately narrow: an
-// unrecognized 5xx stays "failed", never "bounced", since a wrong bounce
-// classification permanently suppresses a possibly-good address (see the
-// Sending Engine plan's Risks section).
-const BOUNCE_RESPONSE_CODES = new Set([550, 551, 553, 554]);
-const BOUNCE_TEXT_PATTERN = /user unknown|mailbox (not found|unavailable)|no such user|recipient (rejected|not found)/i;
+// A "bounced" classification permanently suppresses the address across every
+// campaign the user runs, so it's reserved for a 5xx that unambiguously blames
+// the recipient address itself. Every other 5xx is "failed" — including ones
+// that share 550/553/554 with real bounces (quota, relay, auth, DMARC, spam
+// policy, SendAsDenied), since those codes are reused by servers for almost
+// any permanent rejection. Two signals must agree:
+//   1. The rejection happened at RCPT TO. A 5xx at AUTH / MAIL FROM / DATA is
+//      about the sender, the connection, or the content, never the address.
+//   2. The RFC 3463 enhanced status code (e.g. "5.1.1", carried inside the
+//      server's response line — nodemailer doesn't parse it) is an address
+//      failure. Only when the server sent no enhanced code at all do we fall
+//      back to the reply code plus unambiguous "no such user" wording —
+//      and only if the response doesn't mention the sender, since Postfix
+//      and Exim run sender checks at RCPT TO too ("Sender address rejected:
+//      User unknown", "Sender verify failed"). "mailbox unavailable" is
+//      deliberately not enough: it's RFC 5321's default text for any 550,
+//      including policy blocks.
+const RECIPIENT_BOUNCE_ENHANCED_CODES = new Set(["5.1.1", "5.1.2", "5.1.3", "5.1.6", "5.1.10", "5.2.1"]);
+const RECIPIENT_BOUNCE_FALLBACK_CODES = new Set([550, 551, 553]);
+const RECIPIENT_BOUNCE_TEXT_PATTERN = /user unknown|no such user|does not exist|recipient not found|invalid recipient/i;
+const SENDER_WORDING_PATTERN = /sender|from address|from:|mail from|sending address/i;
+// Only the code directly after the reply code, optionally "#"-prefixed (an
+// older Exchange style) — never a code quoted later in the text.
+const ENHANCED_STATUS_PATTERN = /^\d{3}[ -]#?([245]\.\d{1,3}\.\d{1,3})(?!\.?\d)/;
+
+function parseEnhancedStatusCode(response: unknown): string | null {
+  if (typeof response !== "string") return null;
+  return response.trim().match(ENHANCED_STATUS_PATTERN)?.[1] ?? null;
+}
+
+function isRecipientBounce(err: { responseCode: number; command?: string; response?: string }): boolean {
+  if (err.command !== "RCPT TO") return false;
+
+  const enhancedCode = parseEnhancedStatusCode(err.response);
+  if (enhancedCode) return RECIPIENT_BOUNCE_ENHANCED_CODES.has(enhancedCode);
+
+  const response = err.response ?? "";
+  return (
+    RECIPIENT_BOUNCE_FALLBACK_CODES.has(err.responseCode) &&
+    RECIPIENT_BOUNCE_TEXT_PATTERN.test(response) &&
+    !SENDER_WORDING_PATTERN.test(response)
+  );
+}
 
 // Nodemailer's own defaults are generous (2min connect / 30s greeting /
 // 10min socket) — fine in isolation, but a single unreachable/hung mailbox
@@ -60,11 +93,12 @@ function friendlySmtpTimeoutMessage(error: unknown): string | null {
 // Classifies a thrown nodemailer/SMTP error into retry / bounced / failed —
 // see EmailSendError in ../provider.ts for what each means. Connection-level
 // failures and SMTP 4xx are transient ("retry"); SMTP 5xx splits into a
-// recipient-address rejection ("bounced") or any other permanent failure
-// ("failed"). An error shape we don't recognize defaults to "retry" rather
-// than silently treating it as terminal.
-function classifySmtpError(error: unknown): EmailSendError {
-  const err = error as { responseCode?: number; code?: string; message?: string; response?: string };
+// clear recipient-address rejection ("bounced", see isRecipientBounce above)
+// or any other permanent failure ("failed"). An error shape we don't
+// recognize defaults to "retry" rather than silently treating it as terminal.
+// Exported for tests only.
+export function classifySmtpError(error: unknown): EmailSendError {
+  const err = error as { responseCode?: number; code?: string; message?: string; response?: string; command?: string };
   const message = friendlySmtpTimeoutMessage(error) ?? err.message ?? "SMTP send failed.";
 
   const transientCodes = new Set(["ECONNECTION", "ETIMEDOUT", "ECONNREFUSED", "ESOCKET", "EDNS", "ETLS"]);
@@ -77,9 +111,8 @@ function classifySmtpError(error: unknown): EmailSendError {
       return new EmailSendError(message, "retry");
     }
     if (err.responseCode >= 500) {
-      const responseText = `${err.response ?? ""} ${message}`;
-      const looksLikeBounce = BOUNCE_RESPONSE_CODES.has(err.responseCode) || BOUNCE_TEXT_PATTERN.test(responseText);
-      return new EmailSendError(message, looksLikeBounce ? "bounced" : "failed");
+      const bounced = isRecipientBounce({ responseCode: err.responseCode, command: err.command, response: err.response });
+      return new EmailSendError(message, bounced ? "bounced" : "failed");
     }
   }
 

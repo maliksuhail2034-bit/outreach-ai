@@ -23,7 +23,7 @@ import {
 } from "@/lib/db";
 import { isWithinMonthlyEmailLimit } from "@/lib/billing/limits";
 import { getEmailProvider } from "./get-provider";
-import { EmailSendError } from "./provider";
+import { EmailSendError, type SendResult } from "./provider";
 import { escapeHtml, unescapeHtml } from "./merge-tags";
 import { renderEmailContent } from "./render-email";
 import type { MergeTagLead } from "./merge-tags";
@@ -39,6 +39,7 @@ import {
 import { buildUnsubscribeUrl } from "./unsubscribe-token";
 import { buildOpenTrackingUrl, type OpenTrackingContext, buildClickTrackingUrl, type ClickTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
+import { errorMessage } from "@/lib/monitoring/error-message";
 
 const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
@@ -192,6 +193,26 @@ export async function processClaimedLeads(
       try {
         const outcome = await processOne(supabase, campaignLead);
         summary[outcome] += 1;
+      } catch (error) {
+        // An unexpected throw (a failed database read, a missing config
+        // value) is isolated to this lead instead of rejecting the whole run:
+        // the other lanes, the run summary, the degraded-run check and the
+        // heartbeat all carry on. The lead itself is left exactly as claimed
+        // — no status change, so nothing is failed, bounced, suppressed or
+        // advanced — and is picked up again once its lease expires, the
+        // same self-heal every other interrupted claim already relies on.
+        summary.failed += 1;
+        const message = errorMessage(error, "Unknown error processing this lead.");
+        console.error("[send-worker] unexpected error processing lead", {
+          campaignLeadId: campaignLead.id,
+          mailboxId: campaignLead.mailbox_id,
+          error: message,
+        });
+        await captureError({
+          job: "send-emails",
+          message: `Unexpected error processing a lead — left for retry after its lease expires: ${message}`,
+          context: { campaignLeadId: campaignLead.id, mailboxId: campaignLead.mailbox_id },
+        });
       } finally {
         if (campaignLead.mailbox_id) inFlightMailboxIds.delete(campaignLead.mailbox_id);
       }
@@ -616,64 +637,11 @@ async function processCampaignLead(
     return "skipped";
   }
 
-  // Step-level idempotency claim — see lib/db/send-attempts.ts. Refusal
-  // means either this step was already sent (self-heal below) or its
-  // outcome is unknown (needs_review below); neither case calls the
-  // provider.
-  const claimedAttempt = await claimSendAttempt(supabase, campaignLead.id, targetStep.id);
-
-  if (!claimedAttempt) {
-    const existing = await getSendAttempt(supabase, campaignLead.id, targetStep.id);
-
-    if (existing?.status === "sent") {
-      // Already sent (e.g. a desynced manual reset) — advance scheduling
-      // only. Deliberately not recordSendSuccess: that would insert a
-      // second email_events row for a send that already happened and is
-      // already correctly recorded.
-      const schedule = computeNextSchedule({
-        steps,
-        currentStepId: targetStep.id,
-        from: new Date(existing.resolved_at ?? existing.claimed_at),
-        sendingWindow: resolveLeadSendingWindow(campaign.sending_window, lead.timezone),
-      });
-
-      // Guarded like every write from the claimed copy: a lead that replied,
-      // unsubscribed or was stopped since the claim keeps that state instead
-      // of being advanced (see updateClaimedCampaignLead).
-      await updateClaimedCampaignLead(
-        supabase,
-        campaignLead.id,
-        {
-          status: schedule.completed ? "completed" : "active",
-          current_step_id: schedule.nextStepId,
-          next_send_at: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
-          locked_until: null,
-        },
-        targetStep.id,
-      );
-
-      return "skipped";
-    }
-
-    // Outcome unknown (existing row is 'pending', or missing entirely,
-    // which shouldn't happen since claimSendAttempt just refused an
-    // insert). Never resend automatically — this is the exact needs_review
-    // gate the duplicate-send design depends on.
-    console.error("[send-worker] needs_review", {
-      campaignLeadId: campaignLead.id,
-      sequenceStepId: targetStep.id,
-      existingAttemptStatus: existing?.status ?? "missing",
-    });
-    const flagged = await updateClaimedCampaignLead(
-      supabase,
-      campaignLead.id,
-      { status: "needs_review", locked_until: null },
-      targetStep.id,
-    );
-
-    return flagged ? "needsReview" : "skipped";
-  }
-
+  // Everything the message needs is prepared before the idempotency claim
+  // below, not after it: none of it depends on the claimed attempt, and a
+  // throw here (a missing env var, a settings read) would otherwise leave a
+  // 'pending' attempt behind that the next claim can only treat as an
+  // unknown outcome (needs_review) although nothing was sent.
   const unsubscribeUrl = buildUnsubscribeUrl(campaignLead.id);
 
   const mergeTagLead: MergeTagLead = {
@@ -756,6 +724,65 @@ async function processCampaignLead(
 
   const provider = getEmailProvider(mailbox);
 
+  // Step-level idempotency claim — see lib/db/send-attempts.ts. Refusal
+  // means either this step was already sent (self-heal below) or its
+  // outcome is unknown (needs_review below); neither case calls the
+  // provider.
+  const claimedAttempt = await claimSendAttempt(supabase, campaignLead.id, targetStep.id);
+
+  if (!claimedAttempt) {
+    const existing = await getSendAttempt(supabase, campaignLead.id, targetStep.id);
+
+    if (existing?.status === "sent") {
+      // Already sent (e.g. a desynced manual reset) — advance scheduling
+      // only. Deliberately not recordSendSuccess: that would insert a
+      // second email_events row for a send that already happened and is
+      // already correctly recorded.
+      const schedule = computeNextSchedule({
+        steps,
+        currentStepId: targetStep.id,
+        from: new Date(existing.resolved_at ?? existing.claimed_at),
+        sendingWindow: resolveLeadSendingWindow(campaign.sending_window, lead.timezone),
+      });
+
+      // Guarded like every write from the claimed copy: a lead that replied,
+      // unsubscribed or was stopped since the claim keeps that state instead
+      // of being advanced (see updateClaimedCampaignLead).
+      await updateClaimedCampaignLead(
+        supabase,
+        campaignLead.id,
+        {
+          status: schedule.completed ? "completed" : "active",
+          current_step_id: schedule.nextStepId,
+          next_send_at: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
+          locked_until: null,
+        },
+        targetStep.id,
+      );
+
+      return "skipped";
+    }
+
+    // Outcome unknown (existing row is 'pending', or missing entirely,
+    // which shouldn't happen since claimSendAttempt just refused an
+    // insert). Never resend automatically — this is the exact needs_review
+    // gate the duplicate-send design depends on.
+    console.error("[send-worker] needs_review", {
+      campaignLeadId: campaignLead.id,
+      sequenceStepId: targetStep.id,
+      existingAttemptStatus: existing?.status ?? "missing",
+    });
+    const flagged = await updateClaimedCampaignLead(
+      supabase,
+      campaignLead.id,
+      { status: "needs_review", locked_until: null },
+      targetStep.id,
+    );
+
+    return flagged ? "needsReview" : "skipped";
+  }
+
+  let result: SendResult;
   try {
     // Batch 3: resolved after everything above (suppression, monthly limit,
     // idempotency claim, rendering) and inside this try, before
@@ -791,7 +818,7 @@ async function processCampaignLead(
       return "skipped";
     }
 
-    const result = await provider.send({
+    result = await provider.send({
       from: { name: mailbox.display_name ?? undefined, email: mailbox.email },
       to: {
         name: [lead.first_name, lead.last_name].filter(Boolean).join(" ") || undefined,
@@ -803,32 +830,11 @@ async function processCampaignLead(
       ...threadingHeaders,
       ...(attachments.length > 0 ? { attachments } : {}),
     });
-
-    // Immediately followed by the success-recording call — nothing else
-    // runs between provider.send() resolving and this, minimizing the
-    // crash window the duplicate-send design accepts as irreducible.
-    const schedule = computeNextSchedule({
-      steps,
-      currentStepId: targetStep.id,
-      from: new Date(),
-      sendingWindow: resolveLeadSendingWindow(campaign.sending_window, lead.timezone),
-    });
-
-    await recordSendSuccess(supabase, {
-      sendAttemptId: claimedAttempt.id,
-      campaignLeadId: campaignLead.id,
-      campaignId: campaignLead.campaign_id,
-      leadId: campaignLead.lead_id,
-      mailboxId: campaignLead.mailbox_id,
-      providerMessageId: result.providerMessageId,
-      nextStatus: schedule.completed ? "completed" : "active",
-      nextStepId: schedule.nextStepId,
-      nextSendAt: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
-    });
-
-    return "sent";
   } catch (error) {
+    // Shown to the user as last_error, so an unexpected (non-provider)
+    // error keeps its generic text there; logs and alerts get the real one.
     const message = error instanceof EmailSendError ? error.message : "Unknown send error.";
+    const detail = error instanceof EmailSendError ? error.message : errorMessage(error, message);
     // Non-EmailSendError throws (a bug, not a classified provider failure)
     // default to "retry" rather than "failed" — a code defect shouldn't
     // permanently fail a lead any more than a network blip should; the
@@ -857,7 +863,7 @@ async function processCampaignLead(
       outcome,
       mailboxIssue,
       attemptCount: claimedAttempt.attempt_count,
-      error: message,
+      error: detail,
     });
 
     // Only "failed" (terminal — either an unretryable provider response, or
@@ -870,7 +876,7 @@ async function processCampaignLead(
     if (outcome === "failed" && !mailboxIssue) {
       await captureError({
         job: "send-emails",
-        message,
+        message: detail,
         context: { campaignLeadId: campaignLead.id, sequenceStepId: targetStep.id, attemptCount: claimedAttempt.attempt_count },
       });
     }
@@ -900,4 +906,77 @@ async function processCampaignLead(
     // counts as "failed" for this run's summary.
     return "failed";
   }
+
+  // The provider has accepted the email. From here on nothing may record it
+  // as a send failure: that would mark the attempt 'failed', which
+  // claim_send_attempt() re-claims, and the same email would go out again.
+  // If recording the success fails, the attempt is left 'pending' — the
+  // "outcome unknown" state that only ever resolves to needs_review, never
+  // to a resend (see flagUnrecordedSend).
+  try {
+    const schedule = computeNextSchedule({
+      steps,
+      currentStepId: targetStep.id,
+      from: new Date(),
+      sendingWindow: resolveLeadSendingWindow(campaign.sending_window, lead.timezone),
+    });
+
+    await recordSendSuccess(supabase, {
+      sendAttemptId: claimedAttempt.id,
+      campaignLeadId: campaignLead.id,
+      campaignId: campaignLead.campaign_id,
+      leadId: campaignLead.lead_id,
+      mailboxId: campaignLead.mailbox_id,
+      providerMessageId: result.providerMessageId,
+      nextStatus: schedule.completed ? "completed" : "active",
+      nextStepId: schedule.nextStepId,
+      nextSendAt: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
+    });
+
+    return "sent";
+  } catch (error) {
+    return flagUnrecordedSend(supabase, campaignLead.id, targetStep.id, {
+      sendAttemptId: claimedAttempt.id,
+      mailboxId: campaignLead.mailbox_id,
+      providerMessageId: result.providerMessageId,
+      error: errorMessage(error, "Unknown error recording the send."),
+    });
+  }
+}
+
+// An email the provider accepted but whose success couldn't be recorded:
+// alert, then move the lead to needs_review through the same guarded write
+// the "outcome unknown" branch uses. The guard makes this a no-op if
+// record_send_success did commit after all (the lead is no longer on this
+// step). If this write fails too, the attempt is still 'pending' and the
+// lease expires, so the next claim reaches needs_review on its own —
+// either way the email is never sent twice.
+async function flagUnrecordedSend(
+  supabase: Client,
+  campaignLeadId: string,
+  sequenceStepId: string,
+  context: { sendAttemptId: string; mailboxId: string; providerMessageId: string; error: string },
+): Promise<ProcessOutcome> {
+  console.error("[send-worker] sent but not recorded, needs review", { campaignLeadId, sequenceStepId, ...context });
+  await captureError({
+    job: "send-emails",
+    message: `Email sent but recording it failed — lead needs review and will not be resent: ${context.error}`,
+    context: { campaignLeadId, sequenceStepId, ...context },
+  });
+
+  try {
+    await updateClaimedCampaignLead(
+      supabase,
+      campaignLeadId,
+      { status: "needs_review", last_error: "Sent, but the send couldn't be recorded. Check before resending.", locked_until: null },
+      sequenceStepId,
+    );
+  } catch (error) {
+    console.error("[send-worker] could not flag unrecorded send for review", {
+      campaignLeadId,
+      error: errorMessage(error, "Unknown error."),
+    });
+  }
+
+  return "needsReview";
 }

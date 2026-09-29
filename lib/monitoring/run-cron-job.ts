@@ -6,6 +6,7 @@ import type { Client } from "@/lib/db";
 import type { Json } from "@/types/database.types";
 import { pingHeartbeat, type CronJobName } from "./heartbeat";
 import { captureError } from "./error-tracking";
+import { errorMessage } from "./error-message";
 
 // Same constant-time comparison already used for the unsubscribe token
 // (lib/email/unsubscribe-token.ts) and OAuth state (app/api/oauth/*/callback/
@@ -88,14 +89,14 @@ export async function runCronJob<T extends object>(
     // a structured response instead of an unhandled 500, it adds no
     // locking of its own.
     const executionTimeMs = Date.now() - startedAt;
-    const errorMessage = error instanceof Error ? error.message : "Unknown error running this job.";
-    console.error(logLabel, JSON.stringify({ error: errorMessage, executionTimeMs }));
+    const message = errorMessage(error, "Unknown error running this job.");
+    console.error(logLabel, JSON.stringify({ error: message, executionTimeMs }));
 
     await recordJobRun(supabase, {
       job,
       status: "error",
       summary: {},
-      error: errorMessage,
+      error: message,
       duration_ms: executionTimeMs,
       started_at: startedAtDate.toISOString(),
     }).catch((dbError) => {
@@ -103,8 +104,8 @@ export async function runCronJob<T extends object>(
     });
 
     await pingHeartbeat(job, "fail");
-    await captureError({ job, message: errorMessage });
+    await captureError({ job, message });
 
-    return NextResponse.json({ error: errorMessage, executionTimeMs }, { status: 500 });
+    return NextResponse.json({ error: message, executionTimeMs }, { status: 500 });
   }
 }

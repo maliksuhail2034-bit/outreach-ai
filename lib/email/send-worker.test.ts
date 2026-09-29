@@ -166,16 +166,39 @@ describe("processClaimedLeads", () => {
     expect(summary).toEqual({ claimed: 0, sent: 1, failed: 1, needsReview: 1, skipped: 1 });
   });
 
-  it("propagates an unexpected processOne throw rather than swallowing it, matching the original loop's behavior", async () => {
-    const leads = [makeLead("a", "mailbox-1"), makeLead("b", "mailbox-1")];
-    const processOne = async (): Promise<ProcessOutcome> => {
-      throw new Error("boom");
+  // M3: replaces the earlier "propagates an unexpected processOne throw"
+  // contract — one lead's unexpected error no longer fails the whole run.
+  it("isolates an unexpected processOne throw to that lead and still processes the rest", async () => {
+    const leads = [makeLead("a", "mailbox-1"), makeLead("b", "mailbox-1"), makeLead("c", "mailbox-2")];
+    const processed: string[] = [];
+    const processOne = async (_supabase: Client, lead: Tables<"campaign_leads">): Promise<ProcessOutcome> => {
+      processed.push(lead.id);
+      if (lead.id === "a") throw new Error("boom");
+      return "sent";
     };
 
     const summary = emptySummary();
-    await expect(processClaimedLeads(supabaseStub, leads, 1, Date.now(), summary, processOne)).rejects.toThrow(
-      "boom",
-    );
+    await expect(processClaimedLeads(supabaseStub, leads, 1, Date.now(), summary, processOne)).resolves.toBeUndefined();
+
+    expect(processed).toEqual(["a", "b", "c"]);
+    expect(summary).toEqual({ claimed: 0, sent: 2, failed: 1, needsReview: 0, skipped: 0 });
+  });
+
+  it("frees the mailbox after a throw so its next lead can run, with concurrency > 1", async () => {
+    const leads = [makeLead("a", "mailbox-1"), makeLead("b", "mailbox-1"), makeLead("c", "mailbox-2")];
+    const processed: string[] = [];
+    const processOne = async (_supabase: Client, lead: Tables<"campaign_leads">): Promise<ProcessOutcome> => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      processed.push(lead.id);
+      if (lead.id === "a") throw { message: "plain database error object" };
+      return "sent";
+    };
+
+    const summary = emptySummary();
+    await processClaimedLeads(supabaseStub, leads, 3, Date.now(), summary, processOne);
+
+    expect(processed.sort()).toEqual(["a", "b", "c"]);
+    expect(summary).toMatchObject({ sent: 2, failed: 1 });
   });
 });
 

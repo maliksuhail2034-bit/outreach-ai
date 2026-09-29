@@ -78,12 +78,25 @@ function claim(lead: Tables<"campaign_leads">) {
   vi.mocked(claimDueSends).mockResolvedValue([lead] as never);
 }
 
+// The sentinel still stops the pipeline at claimSendAttempt. Since M3 an
+// unexpected per-lead throw is isolated instead of failing the whole run, so
+// reaching the claim shows up as a completed run with that lead counted as
+// failed and the claim attempted exactly once.
+async function runUntilClaim() {
+  await expect(runSendWorker(supabase, 25, 1)).resolves.toMatchObject({ claimed: 1, failed: 1, sent: 0 });
+  expect(claimSendAttempt).toHaveBeenCalledTimes(1);
+}
+
 function callOrder(fn: unknown) {
   return vi.mocked(fn as (...args: unknown[]) => unknown).mock.invocationCallOrder;
 }
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
+  // The message (including its unsubscribe link) is prepared before
+  // claimSendAttempt, so the link's config must be present to reach it.
+  vi.stubEnv("UNSUBSCRIBE_TOKEN_SECRET", "test-unsubscribe-secret");
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.test");
   vi.mocked(getCampaignById).mockResolvedValue({ id: "campaign-1", user_id: "user-1", status: "active", sending_window: DUBAI_SUN_TO_THU } as never);
   vi.mocked(getLeadById).mockResolvedValue({ id: "lead-1", email: "lead@example.com" } as never);
   vi.mocked(getMailboxCredentials).mockResolvedValue({ id: "mailbox-1" } as never);
@@ -100,6 +113,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("send worker: sending-window enforcement ordering", () => {
@@ -107,7 +121,7 @@ describe("send worker: sending-window enforcement ordering", () => {
     vi.setSystemTime(INSIDE);
     claim(makeLead());
 
-    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    await runUntilClaim();
     expect(updateCampaignLead).not.toHaveBeenCalled();
     expect(deferDueCampaignLeads).not.toHaveBeenCalled();
   });
@@ -131,7 +145,7 @@ describe("send worker: sending-window enforcement ordering", () => {
     vi.setSystemTime(OUTSIDE);
     claim(makeLead({ send_now_step_id: "step-1" }));
 
-    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    await runUntilClaim();
     expect(consumeSendNow).toHaveBeenCalledTimes(1);
     expect(consumeSendNow).toHaveBeenCalledWith(supabase, "cl-1", "step-1", "step-1");
     expect(callOrder(consumeSendNow)[0]).toBeLessThan(callOrder(claimSendAttempt)[0]);
@@ -191,7 +205,7 @@ describe("send worker: sending-window enforcement ordering", () => {
     vi.mocked(consumeSendNow).mockResolvedValue(false);
     claim(makeLead({ send_now_step_id: "step-1" }));
 
-    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    await runUntilClaim();
     expect(consumeSendNow).toHaveBeenCalledTimes(1);
   });
 
@@ -238,7 +252,7 @@ describe("send worker: overnight sending window (Mon-Fri 22:00 -> 06:00 UTC)", (
     vi.setSystemTime(SAT_AFTER_MIDNIGHT);
     claim(makeLead());
 
-    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    await runUntilClaim();
     expect(updateCampaignLead).not.toHaveBeenCalled();
     expect(deferDueCampaignLeads).not.toHaveBeenCalled();
   });
@@ -261,7 +275,7 @@ describe("send worker: overnight sending window (Mon-Fri 22:00 -> 06:00 UTC)", (
     vi.setSystemTime(TUE_DAYTIME);
     claim(makeLead({ send_now_step_id: "step-1" }));
 
-    await expect(runSendWorker(supabase, 25, 1)).rejects.toBe(REACHED_CLAIM);
+    await runUntilClaim();
     expect(consumeSendNow).toHaveBeenCalledWith(supabase, "cl-1", "step-1", "step-1");
     expect(callOrder(consumeSendNow)[0]).toBeLessThan(callOrder(claimSendAttempt)[0]);
     expect(updateCampaignLead).not.toHaveBeenCalled();

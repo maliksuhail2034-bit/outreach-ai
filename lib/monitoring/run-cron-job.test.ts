@@ -101,6 +101,31 @@ describe("runCronJob", () => {
     expect(captureErrorMock).toHaveBeenCalledWith({ job: "send-emails", message: "worker blew up" });
   });
 
+  // M3: database errors reach here as plain objects, not Error instances —
+  // their real message is reported instead of the generic fallback.
+  it("reports a plain database-error object's own message", async () => {
+    const run = vi.fn().mockRejectedValue({ message: "canceling statement due to statement timeout", details: "row data", code: "57014" });
+
+    const response = await runCronJob(makeRequest({ authorization: "Bearer test-secret" }), "send-emails", run);
+
+    expect(response.status).toBe(500);
+    expect((await response.json()).error).toBe("canceling statement due to statement timeout");
+    expect(recordJobRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "error", error: "canceling statement due to statement timeout" }),
+    );
+    expect(captureErrorMock).toHaveBeenCalledWith({ job: "send-emails", message: "canceling statement due to statement timeout" });
+  });
+
+  it("keeps the generic fallback when the thrown value carries no message", async () => {
+    const run = vi.fn().mockRejectedValue({ code: "PGRST116" });
+
+    const response = await runCronJob(makeRequest({ authorization: "Bearer test-secret" }), "send-emails", run);
+
+    expect((await response.json()).error).toBe("Unknown error running this job.");
+    expect(captureErrorMock).toHaveBeenCalledWith({ job: "send-emails", message: "Unknown error running this job." });
+  });
+
   it("still returns the job's result even if persisting the job_runs row fails", async () => {
     recordJobRunMock.mockRejectedValue(new Error("db unavailable"));
     const run = vi.fn().mockResolvedValue({ checked: 1, updated: 1, failed: 0 });

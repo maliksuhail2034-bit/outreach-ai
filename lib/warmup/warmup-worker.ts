@@ -26,6 +26,8 @@ import { calculateWarmupScore } from "./scoring";
 import { computeDailyWarmupStats } from "./stats";
 import { INITIAL_TEMPLATES, REPLY_TEMPLATES, pickTemplate } from "./templates";
 import type { WarmupStage } from "./types";
+import { captureError } from "@/lib/monitoring/error-tracking";
+import { errorMessage } from "@/lib/monitoring/error-message";
 
 // Orchestrates one warmup cycle: claim due profiles, ramp/advance each,
 // detect+queue replies to inbound peer mail, send due replies, and
@@ -82,7 +84,34 @@ export async function runWarmupCycleWorker(
 
   await processClaimedWarmupProfiles(supabase, claimed, summary, dryRun, processWarmupProfile);
 
+  await reportDegradedWarmupRun(summary);
+
   return summary;
+}
+
+// A cycle that completes still counts as a success (runCronJob pings the
+// heartbeat and returns 200), so the conditions the GitHub warmup workflow
+// used to check on each run's response — more bounces than half the claimed
+// profiles, or any profile auto-paused — are forwarded to error tracking
+// here instead, with the same thresholds. Monitoring only: never throws,
+// and changes nothing about the run or its summary.
+export async function reportDegradedWarmupRun(summary: WarmupCycleSummary): Promise<void> {
+  const reasons: string[] = [];
+  if (summary.claimed > 0 && summary.bounced * 2 > summary.claimed) {
+    reasons.push(`high bounce rate: ${summary.bounced} bounce(s) across ${summary.claimed} profile(s)`);
+  }
+  if (summary.paused > 0) reasons.push(`${summary.paused} profile(s) auto-paused — check the Warmup dashboard`);
+  if (reasons.length === 0) return;
+
+  try {
+    await captureError({
+      job: "warmup-cycle",
+      message: `Degraded warmup run: ${reasons.join("; ")}`,
+      context: { claimed: summary.claimed, sent: summary.sent, bounced: summary.bounced, paused: summary.paused },
+    });
+  } catch (error) {
+    console.error("[warmup-worker] degraded-run alert failed", errorMessage(error, "Unknown error."));
+  }
 }
 
 export interface ProcessWarmupProfileOutcome {
@@ -113,11 +142,14 @@ export async function processClaimedWarmupProfiles(
       if (outcome.paused) summary.paused += 1;
       if (outcome.sent === 0 && outcome.repliesSent === 0 && !outcome.paused) summary.skipped += 1;
     } catch (error) {
-      console.error("[warmup-worker] profile cycle failed", {
-        warmupProfileId: profile.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const message = errorMessage(error, "Unknown error.");
+      console.error("[warmup-worker] profile cycle failed", { warmupProfileId: profile.id, error: message });
       summary.skipped += 1;
+      await captureError({
+        job: "warmup-cycle",
+        message: `Warmup cycle failed for a profile: ${message}`,
+        context: { warmupProfileId: profile.id, mailboxId: profile.mailbox_id },
+      });
     } finally {
       // Always release the claim lease, dry-run or not — dry-run only skips
       // business-logic writes (sends, ramp/volume/cursor mutations), never

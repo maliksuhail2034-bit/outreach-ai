@@ -79,11 +79,9 @@ export async function countEmailsSentSince(supabase: Client, campaignIds: string
   return count ?? 0;
 }
 
-// Reply-tracking helper — used two ways by lib/email/reply-worker.ts: (a)
-// matching, looking up the outbound 'sent' event a reply's In-Reply-To/
-// References header points to, and (b) the idempotency check, looking up
-// whether a 'replied' event already exists for a given inbound Message-ID.
-// Both are the same lookup shape, so one function serves both instead of two.
+// Reply-tracking idempotency check: whether a 'replied' event already exists
+// for a given inbound Message-ID (lib/email/reply-worker.ts). Matching a
+// reply to the email it answers uses getSentEventForOwner below instead.
 export async function getEmailEventByProviderMessageId(
   supabase: Client,
   providerMessageId: string,
@@ -94,6 +92,26 @@ export async function getEmailEventByProviderMessageId(
     .select("*")
     .eq("provider_message_id", providerMessageId)
     .eq("event_type", eventType)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Reply matching: the outbound 'sent' event a reply's In-Reply-To/References
+// header points to, but only when its campaign belongs to `userId` — the
+// owner of the mailbox the reply arrived in. A header naming another user's
+// email is treated as no match rather than returned: recording a reply
+// across owners is rejected by email_events' owner trigger anyway, and that
+// rejection must not become an error that stalls the mailbox's sync. Runs
+// on the admin client (the reply-sync worker), so this filter — not RLS —
+// is what scopes it.
+export async function getSentEventForOwner(supabase: Client, providerMessageId: string, userId: string) {
+  const { data, error } = await supabase
+    .from("email_events")
+    .select("*, campaigns!inner(user_id)")
+    .eq("provider_message_id", providerMessageId)
+    .eq("event_type", "sent")
+    .eq("campaigns.user_id", userId)
     .maybeSingle();
   if (error) throw error;
   return data;

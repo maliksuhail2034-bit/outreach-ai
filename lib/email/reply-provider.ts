@@ -21,6 +21,10 @@ export interface ReplyMessage {
   bodyText: string | null;
   bodyHtml: string | null;
   receivedAt: string; // ISO timestamp
+  // The message's position in the provider's cursor (the IMAP UID). Lets
+  // the worker stop the cursor just before a message it couldn't process,
+  // so that message is retried next sync instead of being skipped.
+  uid?: number;
 }
 
 export interface SyncCursor {

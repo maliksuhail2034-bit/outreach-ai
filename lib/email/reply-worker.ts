@@ -6,6 +6,7 @@ import {
   getEmailEventByProviderMessageId,
   getEmailReplyByEventId,
   getLeadById,
+  getSentEventForOwner,
   listActiveCampaignLeadsForMailbox,
   listLeadIdsByEmail,
   recordEmailEvent,
@@ -16,8 +17,9 @@ import {
   updateMailboxSyncCursor,
 } from "@/lib/db";
 import { getReplyProvider } from "./get-reply-provider";
-import type { ReplyMessage } from "./reply-provider";
+import type { FetchResult, ReplyMessage, SyncCursor } from "./reply-provider";
 import { captureError } from "@/lib/monitoring/error-tracking";
+import { errorMessage } from "@/lib/monitoring/error-message";
 
 // Lead-level status is only ever advanced to 'replied' from these two
 // states — never overwrites a human's own 'qualified'/'unqualified' call.
@@ -30,6 +32,9 @@ export interface ReplySyncSummary {
   matched: number;
   unmatched: number;
   alreadyRecorded: number;
+  // Messages that threw while being processed — each stops its mailbox's
+  // cursor for this run (see syncMailboxMessages).
+  failed: number;
 }
 
 type ProcessOutcome = "matched" | "unmatched" | "alreadyRecorded";
@@ -51,6 +56,7 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
     matched: 0,
     unmatched: 0,
     alreadyRecorded: 0,
+    failed: 0,
   };
 
   // Atomic claim (see claim_mailboxes_for_reply_sync()) instead of a plain
@@ -70,7 +76,7 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
       // stop the others in this run — now logged (Phase 3 Enterprise
       // Readiness audit, P0) so a persistently failing mailbox is visible
       // instead of silently never syncing replies again.
-      const message = error instanceof Error ? error.message : "Unknown error.";
+      const message = errorMessage(error, "Unknown error.");
       console.error("[reply-worker]", { mailboxId: mailbox.id, error: message });
       await captureError({ job: "sync-replies", message, context: { mailboxId: mailbox.id } });
       // Release the claim rather than leaving it locked for the full lease —
@@ -83,15 +89,68 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
 
     summary.messagesFetched += result.messages.length;
 
-    for (const message of result.messages) {
-      const outcome = await processInboundMessage(supabase, mailbox, message);
-      summary[outcome] += 1;
+    // Neither a message that can't be processed nor a failed cursor write
+    // may stop the other mailboxes in this run.
+    try {
+      const cursor = await syncMailboxMessages(supabase, mailbox, result, summary);
+      if (cursor) {
+        await updateMailboxSyncCursor(supabase, mailbox.id, cursor);
+      } else {
+        await releaseMailboxReplySyncLock(supabase, mailbox.id);
+      }
+    } catch (error) {
+      const message = errorMessage(error, "Unknown error.");
+      console.error("[reply-worker] could not save sync progress", { mailboxId: mailbox.id, error: message });
+      await captureError({
+        job: "sync-replies",
+        message: `Could not save reply-sync progress for a mailbox: ${message}`,
+        context: { mailboxId: mailbox.id },
+      });
+      await releaseMailboxReplySyncLock(supabase, mailbox.id).catch(() => undefined);
     }
-
-    await updateMailboxSyncCursor(supabase, mailbox.id, result.cursor);
   }
 
   return summary;
+}
+
+// Processes one mailbox's fetched messages in UID order and returns the
+// cursor to save. If a message throws, processing stops there and the
+// cursor is left just before it (lastUid = its UID - 1): everything below
+// it is done, and it — plus anything after it — is fetched and retried on
+// the next sync instead of being skipped. That keeps a real reply from
+// being lost to a transient error; a message that fails every time keeps
+// failing loudly, but only for this mailbox. Without a UID to stop at, the
+// cursor isn't moved at all (null) — reprocessing the earlier messages is
+// safe, since recording a reply is idempotent per Message-ID.
+async function syncMailboxMessages(
+  supabase: Client,
+  mailbox: Tables<"mailboxes">,
+  result: FetchResult,
+  summary: ReplySyncSummary,
+): Promise<SyncCursor | null> {
+  const messages = result.messages.every((message) => message.uid !== undefined)
+    ? [...result.messages].sort((a, b) => a.uid! - b.uid!)
+    : result.messages;
+
+  for (const message of messages) {
+    try {
+      const outcome = await processInboundMessage(supabase, mailbox, message);
+      summary[outcome] += 1;
+    } catch (error) {
+      summary.failed += 1;
+      const detail = errorMessage(error, "Unknown error.");
+      const context = { mailboxId: mailbox.id, uid: message.uid ?? null, messageId: message.messageId };
+      console.error("[reply-worker] message failed, will retry next sync", { ...context, error: detail });
+      await captureError({
+        job: "sync-replies",
+        message: `A reply couldn't be processed — the mailbox's sync stops before it and retries next run: ${detail}`,
+        context,
+      });
+      return message.uid === undefined ? null : { uidValidity: result.cursor.uidValidity, lastUid: message.uid - 1 };
+    }
+  }
+
+  return result.cursor;
 }
 
 // The single entry point for reply business logic — matching, the
@@ -219,7 +278,7 @@ async function matchReply(
   );
 
   for (const candidateId of headerCandidates) {
-    const sentEvent = await getEmailEventByProviderMessageId(supabase, candidateId, "sent");
+    const sentEvent = await getSentEventForOwner(supabase, candidateId, mailbox.user_id);
     if (!sentEvent) continue;
 
     const campaignLead = await getCampaignLeadByCampaignAndLead(supabase, sentEvent.campaign_id, sentEvent.lead_id);

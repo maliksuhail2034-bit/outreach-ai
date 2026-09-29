@@ -107,6 +107,7 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
       bodyText: "Sounds good, let's talk.",
       bodyHtml: "<p>Sounds good, let's talk.</p>",
       receivedAt: "2026-09-20T10:00:00.000Z",
+      uid: 2,
     });
     // Exactly one fetch call — no second round-trip for body content, since
     // { source: true } on the existing fetch already returns the full raw
@@ -159,5 +160,62 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
     const result = await new ImapReplyChecker(makeMailbox()).fetchNewMessages();
 
     expect(result.messages[0].to).toEqual([]);
+  });
+});
+
+// M4: Postgres text columns reject NUL, so a NUL left in a reply would make
+// it impossible to store — and fail that mailbox's sync every run.
+describe("ImapReplyChecker.fetchNewMessages — NUL characters", () => {
+  function parsedWith(fields: { subject?: string; text?: string; html?: string | false }) {
+    return {
+      messageId: "<reply-1@example.com>",
+      inReplyTo: undefined,
+      references: undefined,
+      from: { value: [{ name: "Lead", address: "lead@example.com" }] },
+      to: { value: [{ address: "sales@example.com" }] },
+      date: new Date("2026-09-20T10:00:00.000Z"),
+      ...fields,
+    };
+  }
+
+  async function fetchOne(fields: { subject?: string; text?: string; html?: string | false }) {
+    const client = makeImapClient();
+    imapFlowMock.mockImplementation(function () {
+      return client;
+    });
+    simpleParserMock.mockResolvedValue(parsedWith(fields));
+    const result = await new ImapReplyChecker(makeMailbox()).fetchNewMessages();
+    return result.messages[0];
+  }
+
+  it("removes NUL from the subject", async () => {
+    expect((await fetchOne({ subject: "Re:\u0000 hello" })).subject).toBe("Re: hello");
+  });
+
+  it("removes NUL from the text body", async () => {
+    expect((await fetchOne({ text: "hello\u0000world" })).bodyText).toBe("helloworld");
+  });
+
+  it("removes NUL from the HTML body without otherwise changing it", async () => {
+    expect((await fetchOne({ html: "<p>a\u0000<b>b</b></p>" })).bodyHtml).toBe("<p>a<b>b</b></p>");
+  });
+
+  it("removes every NUL, including consecutive ones", async () => {
+    expect((await fetchOne({ text: "\u0000a\u0000\u0000b\u0000" })).bodyText).toBe("ab");
+  });
+
+  it("leaves normal content, whitespace and other Unicode exactly as parsed", async () => {
+    const text = "  Grüße — ok\n\tline 2 ​😀  ";
+    const message = await fetchOne({ subject: "Re: Überblick", text, html: "<p>&nbsp;ok</p>" });
+    expect(message.subject).toBe("Re: Überblick");
+    expect(message.bodyText).toBe(text);
+    expect(message.bodyHtml).toBe("<p>&nbsp;ok</p>");
+  });
+
+  it("keeps a missing subject/body as null", async () => {
+    const message = await fetchOne({ html: false });
+    expect(message.subject).toBeNull();
+    expect(message.bodyText).toBeNull();
+    expect(message.bodyHtml).toBeNull();
   });
 });

@@ -44,6 +44,13 @@ function normalizeReferences(raw: string | string[] | undefined): string[] {
   return list.map((id) => normalizeMessageId(id)).filter((id): id is string => id !== null);
 }
 
+// Postgres text columns reject the NUL character, which a malformed inbound
+// message can carry — left in, the reply could never be stored and would
+// fail every sync. Only NULs are removed; everything else is kept as-is.
+function stripNul(value: string | null): string | null {
+  return value === null ? null : value.replaceAll("\u0000", "");
+}
+
 // Mirrors the existing single-address `from` handling below, generalized to
 // a list — mailparser's `to` can be one AddressObject or several (a group
 // header), each carrying its own `value` array of individual addresses.
@@ -170,10 +177,11 @@ export class ImapReplyChecker implements ReplyProvider {
           references: normalizeReferences(parsed.references),
           from: { name: fromAddress.name || undefined, email: fromAddress.address },
           to: normalizeAddressList(parsed.to),
-          subject: parsed.subject ?? null,
-          bodyText: parsed.text ?? null,
-          bodyHtml: parsed.html || null,
+          subject: stripNul(parsed.subject ?? null),
+          bodyText: stripNul(parsed.text ?? null),
+          bodyHtml: stripNul(parsed.html || null),
           receivedAt: (parsed.date ?? new Date()).toISOString(),
+          uid: message.uid,
         });
       }
 

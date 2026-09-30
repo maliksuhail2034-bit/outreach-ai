@@ -205,6 +205,36 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Branded loading motion (components/ui/brand-loader.tsx). Deliberately slow
+   and small-amplitude. Both stop under prefers-reduced-motion: the breathing
+   mark via motion-reduce:animate-none, the glow via motion-reduce:hidden. */
+@theme {
+  --animate-brand-breathe: brand-breathe 2.4s ease-in-out infinite;
+  --animate-brand-glow: brand-glow 2.4s ease-in-out infinite;
+
+  @keyframes brand-breathe {
+    0%,
+    100% {
+      opacity: 0.8;
+      transform: scale(0.94);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes brand-glow {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

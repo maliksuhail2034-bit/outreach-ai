@@ -157,7 +157,7 @@ export function DomainHealthList({
                         disabled={isChecking && checkingId === domain.id}
                         onClick={() => handleCheck(domain)}
                       >
-                        <RefreshCwIcon className={checkingId === domain.id && isChecking ? "size-4 animate-spin" : "size-4"} />
+                        <RefreshCwIcon className={checkingId === domain.id && isChecking ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"} />
                       </Button>
                       <Button
                         variant="ghost"

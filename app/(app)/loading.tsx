@@ -1,3 +1,4 @@
+import { RouteLoading } from "@/components/ui/brand-loader";
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Generic fallback for app/(app)/ segments that don't define their own,
@@ -8,9 +9,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 // shell while a page streams in.
 export default function AppLoading() {
   return (
-    <div className="space-y-6 sm:space-y-8">
-      <Skeleton className="h-8 w-48" />
-      <Skeleton className="h-64 w-full rounded-xl" />
-    </div>
+    <RouteLoading label="Loading…">
+      <div className="space-y-6 sm:space-y-8">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full rounded-xl" />
+      </div>
+    </RouteLoading>
   );
 }

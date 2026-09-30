@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import type { BillingInterval, PaidPlanId } from "@/lib/billing/plans";
@@ -159,8 +160,14 @@ export function RazorpayCheckoutButton({
     });
   }
 
+  const isBusy = isPending || isOpening || isConfirming;
+
+  // The spinner only signals "in progress" — "Confirming…" stays until the
+  // server reports the webhook-confirmed subscription (see
+  // waitForConfirmation); nothing here implies the payment has succeeded.
   return (
-    <Button onClick={handleClick} disabled={disabled || isPending || isOpening || isConfirming} className="w-full">
+    <Button onClick={handleClick} disabled={disabled || isBusy} aria-busy={isBusy} className="w-full">
+      {isBusy && <Loader2Icon aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
       {isPending ? "Preparing checkout…" : isConfirming ? "Confirming…" : isOpening ? "Opening…" : children}
     </Button>
   );

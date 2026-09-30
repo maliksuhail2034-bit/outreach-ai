@@ -1,10 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import type { BillingInterval, PaidPlanId } from "@/lib/billing/plans";
-import { createRazorpaySubscriptionAction } from "@/app/(app)/billing/razorpay-actions";
+import { awaitSubscriptionConfirmation } from "@/lib/billing/await-subscription-confirmation";
+import {
+  createRazorpaySubscriptionAction,
+  getRazorpayCheckoutStatusAction,
+} from "@/app/(app)/billing/razorpay-actions";
 import { Button } from "@/components/ui/button";
 
 const CHECKOUT_SCRIPT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
@@ -92,9 +97,27 @@ export function RazorpayCheckoutButton({
   // through script loading and while the modal itself is open, guarding
   // against a second click opening a second modal/subscription.
   const [isOpening, setIsOpening] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const router = useRouter();
+
+  async function waitForConfirmation(subscriptionId: string) {
+    setIsConfirming(true);
+    toast.info("Payment submitted — confirming your subscription…");
+    const confirmed = await awaitSubscriptionConfirmation({
+      checkStatus: () => getRazorpayCheckoutStatusAction(subscriptionId),
+    });
+    router.refresh();
+    if (confirmed) {
+      toast.success("Your subscription is active.");
+    } else {
+      toast.info("Payment received. Confirmation is taking longer than usual — refresh this page in a minute.");
+    }
+    setIsConfirming(false);
+    setIsOpening(false);
+  }
 
   function handleClick() {
-    if (isPending || isOpening) return;
+    if (isPending || isOpening || isConfirming) return;
 
     startTransition(async () => {
       setIsOpening(true);
@@ -118,12 +141,11 @@ export function RazorpayCheckoutButton({
           prefill: { email: prefillEmail },
           // Informational only — see lib/billing/sync-subscription-v2.ts
           // and app/api/webhooks/razorpay/route.ts. The webhook, not this
-          // callback, is what confirms and writes billing state; this is
-          // just a UX signal that the authentication step completed. No
-          // database write happens here.
+          // callback, is what confirms and writes billing state; this only
+          // waits for the server to report that confirmation, then
+          // refreshes the page. No database write happens here.
           handler: () => {
-            toast.success("Payment submitted — your plan will update once confirmed.");
-            setIsOpening(false);
+            void waitForConfirmation(subscriptionId);
           },
           modal: {
             ondismiss: () => setIsOpening(false),
@@ -138,8 +160,8 @@ export function RazorpayCheckoutButton({
   }
 
   return (
-    <Button onClick={handleClick} disabled={disabled || isPending || isOpening} className="w-full">
-      {isPending ? "Preparing checkout…" : isOpening ? "Opening…" : children}
+    <Button onClick={handleClick} disabled={disabled || isPending || isOpening || isConfirming} className="w-full">
+      {isPending ? "Preparing checkout…" : isConfirming ? "Confirming…" : isOpening ? "Opening…" : children}
     </Button>
   );
 }

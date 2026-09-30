@@ -3,6 +3,7 @@ import type { Client } from "@/lib/db/shared";
 import { getSubscription } from "@/lib/db/billing";
 import { getSubscriptionV2 } from "@/lib/db/billing-v2";
 import { getPlanByPriceId, PAID_PLAN_IDS, type PaidPlanId, type PlanId } from "./plans";
+import { ENTITLEMENT_PERIOD_GRACE_MS } from "./entitlement-grace";
 
 // The single, provider-agnostic subscription read layer — see
 // lib/billing/resolve-plan.ts (which resolves the Plan an organization is
@@ -66,6 +67,10 @@ export interface SubscriptionView {
   grantsAccess: boolean;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  // True when the stored status would grant access but the recorded period
+  // (plus ENTITLEMENT_PERIOD_GRACE_MS) has run out with no renewal recorded
+  // — so the billing page can say so instead of showing a bare "Active".
+  periodLapsed: boolean;
 }
 
 // Legacy (Stripe-shaped) subscriptions.status -> canonical vocabulary.
@@ -102,6 +107,7 @@ interface ResolvedCandidate {
   grantsAccess: boolean;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  periodLapsed: boolean;
   updatedAt: string;
 }
 
@@ -125,11 +131,24 @@ function resolveLegacyCandidate(subscription: Tables<"subscriptions">): Resolved
     grantsAccess: plan !== null,
     currentPeriodEnd: subscription.current_period_end,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    periodLapsed: false,
     updatedAt: subscription.updated_at,
   };
 }
 
-function resolveV2Candidate(subscription: Tables<"subscriptions_v2">): ResolvedCandidate | null {
+// Webhooks can be lost (retries exhausted, endpoint down), so a granting
+// status alone can't keep access open forever: access also needs a recorded
+// period that hasn't run out. A granting row with no period end at all fails
+// closed — Razorpay always sets current_end once a subscription is active or
+// retrying a renewal, so its absence means the row can't be trusted.
+function isWithinPaidPeriod(currentPeriodEnd: string | null, now: Date): boolean {
+  if (!currentPeriodEnd) return false;
+  const periodEndMs = Date.parse(currentPeriodEnd);
+  if (Number.isNaN(periodEndMs)) return false;
+  return now.getTime() < periodEndMs + ENTITLEMENT_PERIOD_GRACE_MS;
+}
+
+function resolveV2Candidate(subscription: Tables<"subscriptions_v2">, now: Date): ResolvedCandidate | null {
   // Defensive only — subscriptions_v2.provider has a DB CHECK constraint
   // limiting it to 'stripe' | 'razorpay' | 'paypal', so this should be
   // unreachable in practice. Kept anyway per the fail-closed requirement:
@@ -148,7 +167,14 @@ function resolveV2Candidate(subscription: Tables<"subscriptions_v2">): ResolvedC
     ? subscription.normalized_status
     : "suspended";
   const statusGrants = GRANTING_STATUSES.has(normalizedStatus);
-  const planId = statusGrants && isPaidPlanId(subscription.internal_plan_id) ? subscription.internal_plan_id : "free";
+  const withinPeriod = isWithinPaidPeriod(subscription.current_period_end, now);
+  if (statusGrants && !withinPeriod) {
+    console.warn(
+      `[billing] subscriptions_v2 row ${subscription.id} has granting status ${normalizedStatus} but no current paid period — denying access.`,
+    );
+  }
+  const planId =
+    statusGrants && withinPeriod && isPaidPlanId(subscription.internal_plan_id) ? subscription.internal_plan_id : "free";
 
   return {
     provider: subscription.provider,
@@ -157,6 +183,7 @@ function resolveV2Candidate(subscription: Tables<"subscriptions_v2">): ResolvedC
     grantsAccess: planId !== "free",
     currentPeriodEnd: subscription.current_period_end,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    periodLapsed: statusGrants && !withinPeriod,
     updatedAt: subscription.updated_at,
   };
 }
@@ -169,6 +196,7 @@ function toView(candidate: ResolvedCandidate): SubscriptionView {
     grantsAccess: candidate.grantsAccess,
     currentPeriodEnd: candidate.currentPeriodEnd,
     cancelAtPeriodEnd: candidate.cancelAtPeriodEnd,
+    periodLapsed: candidate.periodLapsed,
   };
 }
 
@@ -180,18 +208,30 @@ function toView(candidate: ResolvedCandidate): SubscriptionView {
 // moment any non-granting subscriptions_v2 row exists for it (e.g. a
 // cancelled-after-activating Razorpay attempt). See the Phase 2
 // architecture audit's precedence-question section for the full reasoning.
-export async function getActiveSubscriptionView(supabase: Client, organizationId: string): Promise<SubscriptionView> {
+export async function getActiveSubscriptionView(
+  supabase: Client,
+  organizationId: string,
+  now: Date = new Date(),
+): Promise<SubscriptionView> {
   const [legacy, v2] = await Promise.all([
     getSubscription(supabase, organizationId),
     getSubscriptionV2(supabase, organizationId),
   ]);
 
   const legacyCandidate = legacy ? resolveLegacyCandidate(legacy) : null;
-  const v2Candidate = v2 ? resolveV2Candidate(v2) : null;
+  const v2Candidate = v2 ? resolveV2Candidate(v2, now) : null;
 
   // Step 4D: neither subscription exists at all.
   if (!legacyCandidate && !v2Candidate) {
-    return { planId: "free", provider: null, normalizedStatus: null, grantsAccess: false, currentPeriodEnd: null, cancelAtPeriodEnd: false };
+    return {
+      planId: "free",
+      provider: null,
+      normalizedStatus: null,
+      grantsAccess: false,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      periodLapsed: false,
+    };
   }
 
   const legacyGrants = legacyCandidate?.grantsAccess ?? false;
@@ -229,5 +269,6 @@ export async function getActiveSubscriptionView(supabase: Client, organizationId
     grantsAccess: false,
     currentPeriodEnd: displayCandidate.currentPeriodEnd,
     cancelAtPeriodEnd: displayCandidate.cancelAtPeriodEnd,
+    periodLapsed: displayCandidate.periodLapsed,
   };
 }

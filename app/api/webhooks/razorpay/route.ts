@@ -5,8 +5,14 @@ import {
   hasPaymentWebhookEventBeenProcessed,
   recordPaymentWebhookEventProcessed,
 } from "@/lib/db/billing-v2";
-import { verifyRazorpayWebhookSignature } from "@/lib/billing/razorpay";
-import { syncSubscriptionFromRazorpay, type RazorpaySubscriptionEntity } from "@/lib/billing/sync-subscription-v2";
+import { getRazorpayClient, verifyRazorpayWebhookSignature } from "@/lib/billing/razorpay";
+import {
+  syncSubscriptionFromRazorpay,
+  toRazorpaySubscriptionEntity,
+  type RazorpaySubscriptionEntity,
+  type RazorpaySyncResult,
+} from "@/lib/billing/sync-subscription-v2";
+import { captureError } from "@/lib/monitoring/error-tracking";
 
 // Razorpay's SDK needs Node's crypto for signature verification (same
 // reasoning app/api/webhooks/stripe/route.ts already documents for
@@ -44,8 +50,40 @@ const HANDLED_EVENTS = new Set([
 interface RazorpayWebhookPayload {
   event: string;
   payload: {
-    subscription?: { entity: RazorpaySubscriptionEntity };
+    subscription?: { entity?: Partial<RazorpaySubscriptionEntity> };
   };
+}
+
+// Ids and statuses only — never customer or payment details — same rule as
+// every other captureError call site.
+async function reportFailure(message: string, context: Record<string, unknown>): Promise<void> {
+  console.error("[webhooks/razorpay]", message, context);
+  await captureError({ job: "razorpay-webhook", message, context });
+}
+
+async function reportSyncOutcome(result: RazorpaySyncResult, context: Record<string, unknown>): Promise<void> {
+  switch (result.outcome) {
+    case "unmapped":
+      await reportFailure("subscription notes don't identify an organization/plan/interval — not synced", context);
+      return;
+    case "skipped_other_current_subscription": {
+      const details = { ...context, organizationId: result.organizationId, currentSubscriptionId: result.currentSubscriptionId };
+      if (result.incomingNonTerminal) {
+        await reportFailure("organization already has a different live subscription — not overwritten", details);
+      } else {
+        console.warn("[webhooks/razorpay] ignored an ended subscription that is no longer the organization's current one", details);
+      }
+      return;
+    }
+    case "synced":
+      if (result.unrecognizedStatus) {
+        await reportFailure("unrecognized Razorpay subscription status — stored as suspended (no access)", {
+          ...context,
+          organizationId: result.organizationId,
+        });
+      }
+      return;
+  }
 }
 
 // Webhook signature verification needs the exact raw request body — this
@@ -81,13 +119,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true, duplicate: true });
   }
 
-  let event: RazorpayWebhookPayload;
+  let parsed: unknown;
   try {
-    event = JSON.parse(rawBody) as RazorpayWebhookPayload;
+    parsed = JSON.parse(rawBody);
   } catch {
-    console.error("[webhooks/razorpay] malformed JSON body");
+    await reportFailure("signed webhook body is not valid JSON", { eventId });
     return NextResponse.json({ error: "Malformed payload." }, { status: 400 });
   }
+  // Valid JSON isn't necessarily an event object (`null`, a number, an
+  // array) — reject those here rather than throwing at event.event below.
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    typeof (parsed as { event?: unknown }).event !== "string"
+  ) {
+    await reportFailure("signed webhook body is not a Razorpay event object", { eventId });
+    return NextResponse.json({ error: "Malformed payload." }, { status: 400 });
+  }
+  const event = parsed as RazorpayWebhookPayload;
 
   if (!HANDLED_EVENTS.has(event.event)) {
     // Not an event this app subscribes to handling — still acknowledged
@@ -98,35 +148,67 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true });
   }
 
-  const subscriptionEntity = event.payload.subscription?.entity;
-  if (!subscriptionEntity) {
-    console.error("[webhooks/razorpay] handled event missing subscription entity", event.event);
+  const subscriptionId = event.payload?.subscription?.entity?.id;
+  const context = { eventId, eventType: event.event, subscriptionId };
+  if (typeof subscriptionId !== "string" || subscriptionId.length === 0) {
+    await reportFailure("handled event has no subscription id", context);
     return NextResponse.json({ error: "Missing subscription entity." }, { status: 400 });
   }
 
+  // The payload is only used to learn WHICH subscription changed; its state
+  // is re-fetched from Razorpay and that is what gets written. Deliveries
+  // can arrive late or out of order (a retried subscription.charged after a
+  // subscription.cancelled), and the event-id header used for dedup above
+  // is not covered by the signature — so a signed body replayed under a new
+  // id passes dedup. Writing the provider's current state makes both
+  // harmless: every delivery, however stale, writes the same current truth.
+  let subscription: RazorpaySubscriptionEntity;
   try {
-    const organizationId = await syncSubscriptionFromRazorpay(supabase, subscriptionEntity);
+    subscription = toRazorpaySubscriptionEntity(await getRazorpayClient().subscriptions.fetch(subscriptionId));
+  } catch (error) {
+    console.error("[webhooks/razorpay] re-fetch failed", context, error);
+    await reportFailure("couldn't re-fetch subscription from Razorpay — will retry", context);
+    return NextResponse.json({ error: "Handler failed." }, { status: 500 });
+  }
+
+  if (subscription.id !== subscriptionId) {
+    await reportFailure("Razorpay returned a different subscription than requested — not synced", {
+      ...context,
+      fetchedSubscriptionId: subscription.id,
+    });
+    return NextResponse.json({ error: "Handler failed." }, { status: 500 });
+  }
+
+  let result: RazorpaySyncResult;
+  try {
+    result = await syncSubscriptionFromRazorpay(supabase, subscription);
 
     // actor_user_id is null — no interactive user in a webhook. Mirrors
     // app/api/webhooks/stripe/route.ts's identical audit-logging shape for
     // its own customer.subscription.* branches.
-    if (organizationId) {
+    if (result.outcome === "synced") {
       await recordAuditEvent(supabase, {
-        organization_id: organizationId,
+        organization_id: result.organizationId,
         actor_user_id: null,
         action: "billing_subscription_changed",
         target_type: "subscription",
-        target_id: subscriptionEntity.id,
-        metadata: { razorpayEventType: event.event },
+        target_id: subscription.id,
+        metadata: { razorpayEventType: event.event, razorpayStatus: subscription.status },
       });
     }
   } catch (error) {
     // Deliberately not recorded as processed — returning a non-2xx here is
     // what makes Razorpay retry this exact event instead of it being lost,
     // mirroring the Stripe webhook's identical reasoning.
-    console.error("[webhooks/razorpay] handler failed", event.event, eventId, error);
+    console.error("[webhooks/razorpay] sync failed", context, error);
+    await reportFailure("subscription sync failed — will retry", context);
     return NextResponse.json({ error: "Handler failed." }, { status: 500 });
   }
+
+  // Unmapped and skipped outcomes are acknowledged, not retried: a retry
+  // would re-fetch the same provider state and reach the same outcome, so
+  // they're alerted for a person instead.
+  await reportSyncOutcome(result, { ...context, razorpayStatus: subscription.status });
 
   await recordPaymentWebhookEventProcessed(supabase, PROVIDER, eventId, event.event);
   return NextResponse.json({ received: true });

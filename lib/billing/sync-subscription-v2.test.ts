@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
-import { syncSubscriptionFromRazorpay, type RazorpaySubscriptionEntity } from "./sync-subscription-v2";
+import { syncSubscriptionFromRazorpay, toRazorpaySubscriptionEntity, type RazorpaySubscriptionEntity } from "./sync-subscription-v2";
 
 // Per-table mock mirroring lib/billing/sync-subscription.test.ts's own
 // pattern, adapted to billing-v2.ts's actual chain shape:
 // .from(table).upsert(values, opts).select("*").single(). Each table
 // records every upsert() call so tests can assert on exactly what was
 // written, without needing a real database.
-function createMockClient() {
+// `current` is what getSubscriptionV2's read (.select().eq().maybeSingle())
+// returns for subscriptions_v2 — the organization's existing row, if any.
+// `upsertError` makes every upsert's .single() resolve with a database
+// error, the way a real constraint/connection failure surfaces.
+function createMockClient(options: { current?: Record<string, unknown> | null; upsertError?: { message: string } } = {}) {
   const upsertCallsByTable: Record<string, unknown[][]> = {};
 
   function createChainable(table: string) {
@@ -17,7 +21,15 @@ function createMockClient() {
         return chainable;
       }),
       select: vi.fn(() => chainable),
-      single: vi.fn(() => Promise.resolve({ data: { id: `${table}-row` }, error: null })),
+      eq: vi.fn(() => chainable),
+      maybeSingle: vi.fn(() =>
+        Promise.resolve({ data: table === "subscriptions_v2" ? (options.current ?? null) : null, error: null }),
+      ),
+      single: vi.fn(() =>
+        Promise.resolve(
+          options.upsertError ? { data: null, error: options.upsertError } : { data: { id: `${table}-row` }, error: null },
+        ),
+      ),
     };
     return chainable;
   }
@@ -54,9 +66,9 @@ describe("syncSubscriptionFromRazorpay", () => {
   it("upserts both billing_customers_v2 and subscriptions_v2, and returns the resolved organization id", async () => {
     const { client, upsertCallsByTable } = createMockClient();
 
-    const organizationId = await syncSubscriptionFromRazorpay(client, fakeSubscription());
+    const result = await syncSubscriptionFromRazorpay(client, fakeSubscription());
 
-    expect(organizationId).toBe("org-1");
+    expect(result).toEqual({ outcome: "synced", organizationId: "org-1", unrecognizedStatus: false });
     expect(upsertCallsByTable.billing_customers_v2[0][0]).toEqual({
       organization_id: "org-1",
       provider: "razorpay",
@@ -155,22 +167,22 @@ describe("syncSubscriptionFromRazorpay", () => {
       "unrecognized billing_interval",
       { organization_id: "org-1", internal_plan_id: "starter", billing_interval: "2_month" },
     ],
-  ])("returns null and writes nothing when notes have %s", async (_label, notes) => {
+  ])("returns unmapped and writes nothing when notes have %s", async (_label, notes) => {
     const { client, upsertCallsByTable } = createMockClient();
 
-    const organizationId = await syncSubscriptionFromRazorpay(client, fakeSubscription({ notes }));
+    const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ notes }));
 
-    expect(organizationId).toBeNull();
+    expect(result).toEqual({ outcome: "unmapped" });
     expect(upsertCallsByTable.billing_customers_v2).toBeUndefined();
     expect(upsertCallsByTable.subscriptions_v2).toBeUndefined();
   });
 
-  it("returns null and writes nothing when notes are entirely absent", async () => {
+  it("returns unmapped and writes nothing when notes are entirely absent", async () => {
     const { client, upsertCallsByTable } = createMockClient();
 
-    const organizationId = await syncSubscriptionFromRazorpay(client, fakeSubscription({ notes: null }));
+    const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ notes: null }));
 
-    expect(organizationId).toBeNull();
+    expect(result).toEqual({ outcome: "unmapped" });
     expect(upsertCallsByTable.subscriptions_v2).toBeUndefined();
   });
 
@@ -181,5 +193,109 @@ describe("syncSubscriptionFromRazorpay", () => {
 
     const values = upsertCallsByTable.subscriptions_v2[0][0] as { cancel_at_period_end: boolean };
     expect(values.cancel_at_period_end).toBe(false);
+  });
+
+  // subscriptions_v2 has one row per organization, so writing a different
+  // subscription replaces the current one — only allowed once the current
+  // one has ended.
+  describe("the organization's current subscription", () => {
+    function currentRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: "razorpay",
+        provider_subscription_id: "sub_current_999",
+        normalized_status: "active",
+        ...overrides,
+      };
+    }
+
+    it("updates the row when the event is for the same subscription", async () => {
+      const { client, upsertCallsByTable } = createMockClient({ current: currentRow({ provider_subscription_id: "sub_test_123" }) });
+
+      const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ status: "halted" }));
+
+      expect(result).toMatchObject({ outcome: "synced", organizationId: "org-1" });
+      expect(upsertCallsByTable.subscriptions_v2[0][0]).toMatchObject({ provider_subscription_id: "sub_test_123", normalized_status: "suspended" });
+    });
+
+    it("does not let an old, ended subscription overwrite a different live one", async () => {
+      const { client, upsertCallsByTable } = createMockClient({ current: currentRow() });
+
+      const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ status: "cancelled" }));
+
+      expect(result).toEqual({
+        outcome: "skipped_other_current_subscription",
+        organizationId: "org-1",
+        currentSubscriptionId: "sub_current_999",
+        incomingNonTerminal: false,
+      });
+      expect(upsertCallsByTable.subscriptions_v2).toBeUndefined();
+      expect(upsertCallsByTable.billing_customers_v2).toBeUndefined();
+    });
+
+    it.each(["active", "past_due", "pending"])(
+      "does not overwrite a live (%s) subscription with a second live one, and flags it as live",
+      async (currentStatus) => {
+        const { client, upsertCallsByTable } = createMockClient({ current: currentRow({ normalized_status: currentStatus }) });
+
+        const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ status: "active" }));
+
+        expect(result).toMatchObject({ outcome: "skipped_other_current_subscription", incomingNonTerminal: true });
+        expect(upsertCallsByTable.subscriptions_v2).toBeUndefined();
+      },
+    );
+
+    it.each(["cancelled", "suspended", "expired", "completed"])(
+      "replaces an ended (%s) subscription with a new one — resubscribing after cancellation",
+      async (currentStatus) => {
+        const { client, upsertCallsByTable } = createMockClient({ current: currentRow({ normalized_status: currentStatus }) });
+
+        const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ status: "active" }));
+
+        expect(result).toMatchObject({ outcome: "synced" });
+        expect(upsertCallsByTable.subscriptions_v2[0][0]).toMatchObject({ provider_subscription_id: "sub_test_123", normalized_status: "active" });
+      },
+    );
+  });
+
+  it("stores an unrecognized provider status as suspended and reports it", async () => {
+    const { client, upsertCallsByTable } = createMockClient();
+
+    const result = await syncSubscriptionFromRazorpay(client, fakeSubscription({ status: "some_future_status" }));
+
+    expect(result).toEqual({ outcome: "synced", organizationId: "org-1", unrecognizedStatus: true });
+    expect(upsertCallsByTable.subscriptions_v2[0][0]).toMatchObject({
+      provider_status: "some_future_status",
+      normalized_status: "suspended",
+    });
+  });
+
+  it("throws when the database write fails, so the webhook can return 500 and be retried", async () => {
+    const { client } = createMockClient({ upsertError: { message: "connection reset" } });
+
+    await expect(syncSubscriptionFromRazorpay(client, fakeSubscription())).rejects.toBeTruthy();
+  });
+});
+
+describe("toRazorpaySubscriptionEntity", () => {
+  it("keeps only the fields the sync reads, defaulting missing optional ones to null", () => {
+    const entity = toRazorpaySubscriptionEntity({
+      id: "sub_1",
+      entity: "subscription",
+      plan_id: "plan_1",
+      customer_id: null,
+      status: "active",
+      notes: { organization_id: "org-1" },
+      total_count: 12,
+    } as unknown as Parameters<typeof toRazorpaySubscriptionEntity>[0]);
+
+    expect(entity).toEqual({
+      id: "sub_1",
+      plan_id: "plan_1",
+      customer_id: null,
+      status: "active",
+      current_start: null,
+      current_end: null,
+      notes: { organization_id: "org-1" },
+    });
   });
 });

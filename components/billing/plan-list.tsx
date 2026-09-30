@@ -34,6 +34,7 @@ const INTERVAL_LABEL: Record<BillingInterval, string> = {
 export function PlanList({
   currentPlanId,
   razorpayPlanIds,
+  planChangeBlocked,
 }: {
   currentPlanId: PlanId;
   // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is a server-only env var — resolved in
@@ -41,6 +42,10 @@ export function PlanList({
   // plain data, since this component is a Client Component and reading it
   // here directly would always see `undefined` in the browser bundle.
   razorpayPlanIds: Record<PaidPlanId, Record<BillingInterval, string | null>>;
+  // The organization already has a live Razorpay subscription, and starting
+  // another is rejected server-side (plan changes aren't supported yet) —
+  // so no other plan is offered as a purchasable "Upgrade".
+  planChangeBlocked: boolean;
 }) {
   const [interval, setInterval] = useState<BillingInterval>("1_month");
 
@@ -117,6 +122,15 @@ export function PlanList({
                   <Button variant="outline" className="w-full" disabled>
                     Current plan
                   </Button>
+                ) : planChangeBlocked ? (
+                  <>
+                    <Button variant="outline" className="w-full" disabled>
+                      Plan changes not available yet
+                    </Button>
+                    <p className="text-center text-xs text-muted-foreground">
+                      You already have a subscription. Switching plans isn&apos;t supported yet.
+                    </p>
+                  </>
                 ) : razorpayPlanId ? (
                   // Razorpay is the active payment provider (Stripe was
                   // dropped — priceId below is null for every plan/interval

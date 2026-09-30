@@ -67,3 +67,21 @@ const RAZORPAY_STATUS_MAP: Record<string, NormalizedSubscriptionStatus> = {
 export function normalizeRazorpaySubscriptionStatus(providerStatus: string): NormalizedSubscriptionStatus {
   return RAZORPAY_STATUS_MAP[providerStatus] ?? "suspended";
 }
+
+// Lets the webhook alert on a provider status this map doesn't know yet —
+// normalization above still fails closed either way; this only decides
+// whether someone should look at it.
+export function isRecognizedRazorpayStatus(providerStatus: string): boolean {
+  return Object.hasOwn(RAZORPAY_STATUS_MAP, providerStatus);
+}
+
+// Normalized statuses that mean an organization still has a live,
+// non-terminal subscription: the checkout action refuses to start a second
+// one, the webhook refuses to let a different subscription overwrite it,
+// and the billing page doesn't offer a plan change the backend would reject.
+// One set so those three can never disagree.
+export const NON_TERMINAL_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set<NormalizedSubscriptionStatus>([
+  "pending",
+  "active",
+  "past_due",
+]);

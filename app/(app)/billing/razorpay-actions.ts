@@ -6,21 +6,15 @@ import { getUserOrganization } from "@/lib/db";
 import { getSubscriptionV2 } from "@/lib/db/billing-v2";
 import { getRazorpayPlanId } from "@/lib/billing/plans";
 import { getRazorpayClient, totalCountForInterval } from "@/lib/billing/razorpay";
-import { checkoutSchema, type CheckoutInput } from "@/lib/validations/billing";
+// Checking against non-terminal statuses (not just "any row exists") lets an
+// org whose old subscription genuinely ended (cancelled/expired/completed)
+// start a fresh checkout instead of being permanently blocked by a stale
+// row. Shared with the webhook and the billing page so all three agree on
+// what "already has a live subscription" means.
+import { NON_TERMINAL_SUBSCRIPTION_STATUSES as NON_TERMINAL_STATUSES } from "@/lib/billing/razorpay-status";
+import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
+import { checkoutSchema, razorpaySubscriptionIdSchema, type CheckoutInput } from "@/lib/validations/billing";
 import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
-
-// Statuses that indicate the organization already has a confirmed,
-// non-terminal Razorpay subscription — checking against these (not just
-// "any row exists") lets an org whose old subscription genuinely ended
-// (cancelled/expired/completed) start a fresh checkout instead of being
-// permanently blocked by a stale row. Kept local rather than importing
-// subscription-view.ts's GRANTING_STATUSES: that set is normalized-status
-// vocabulary for deciding product access (includes "trialing", which
-// Razorpay never produces per razorpay-status.ts), a different question
-// from "is there a non-terminal row to check a duplicate checkout against"
-// — the two happen to overlap but aren't the same concept, so keeping this
-// local avoids coupling a future change to one silently changing the other.
-const NON_TERMINAL_STATUSES = new Set(["pending", "active", "past_due"]);
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client only ever offers
@@ -140,4 +134,28 @@ export async function cancelRazorpaySubscriptionAction(): Promise<void> {
     console.error("[razorpay] failed to cancel subscription", error);
     throw new Error("Couldn't cancel the subscription. Try again shortly or contact support.");
   }
+}
+
+// Polled by the checkout button after Razorpay Checkout reports success, so
+// the billing page can refresh once the webhook has actually confirmed the
+// subscription. Read-only and scoped to the caller's own organization; it
+// never grants anything itself — `confirmed` is true only when the
+// webhook-written row for this exact subscription grants access.
+export async function getRazorpayCheckoutStatusAction(subscriptionId: string): Promise<{ confirmed: boolean }> {
+  const parsedSubscriptionId = razorpaySubscriptionIdSchema.parse(subscriptionId);
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const organization = await getUserOrganization(supabase, user);
+  const [subscription, view] = await Promise.all([
+    getSubscriptionV2(supabase, organization.id),
+    getActiveSubscriptionView(supabase, organization.id),
+  ]);
+
+  const confirmed =
+    subscription?.provider === "razorpay" &&
+    subscription.provider_subscription_id === parsedSubscriptionId &&
+    view.provider === "razorpay" &&
+    view.grantsAccess;
+  return { confirmed };
 }

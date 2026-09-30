@@ -1,6 +1,11 @@
+import type { Subscriptions } from "razorpay/dist/types/subscriptions";
 import type { Client } from "@/lib/db/shared";
-import { upsertBillingCustomerV2, upsertSubscriptionV2 } from "@/lib/db/billing-v2";
-import { normalizeRazorpaySubscriptionStatus } from "./razorpay-status";
+import { getSubscriptionV2, upsertBillingCustomerV2, upsertSubscriptionV2 } from "@/lib/db/billing-v2";
+import {
+  isRecognizedRazorpayStatus,
+  NON_TERMINAL_SUBSCRIPTION_STATUSES,
+  normalizeRazorpaySubscriptionStatus,
+} from "./razorpay-status";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, type BillingInterval, type PaidPlanId } from "./plans";
 import { ROUTE_CURRENCY } from "./currency";
 
@@ -36,6 +41,37 @@ export interface RazorpaySubscriptionEntity {
   notes?: Record<string, string | number> | null;
 }
 
+// The webhook re-fetches every subscription from Razorpay rather than
+// trusting the event payload's snapshot (see
+// app/api/webhooks/razorpay/route.ts); this narrows the SDK's own object
+// down to the fields this module reads.
+export function toRazorpaySubscriptionEntity(subscription: Subscriptions.RazorpaySubscription): RazorpaySubscriptionEntity {
+  return {
+    id: subscription.id,
+    plan_id: subscription.plan_id,
+    customer_id: subscription.customer_id ?? null,
+    status: subscription.status,
+    current_start: subscription.current_start ?? null,
+    current_end: subscription.current_end ?? null,
+    notes: (subscription.notes as Record<string, string | number> | undefined) ?? null,
+  };
+}
+
+export type RazorpaySyncResult =
+  | { outcome: "synced"; organizationId: string; unrecognizedStatus: boolean }
+  // notes don't identify an organization/plan/interval — nothing written.
+  | { outcome: "unmapped" }
+  // The organization's current row is a different subscription that is
+  // still live, so this one was not written over it. `incomingNonTerminal`
+  // says whether this one is live too (two live subscriptions — needs a
+  // person) or already over (an old subscription's late event — harmless).
+  | {
+      outcome: "skipped_other_current_subscription";
+      organizationId: string;
+      currentSubscriptionId: string;
+      incomingNonTerminal: boolean;
+    };
+
 function unixToIso(seconds: number | null | undefined): string | null {
   return typeof seconds === "number" ? new Date(seconds * 1000).toISOString() : null;
 }
@@ -63,17 +99,19 @@ function isBillingInterval(value: unknown): value is BillingInterval {
 // this up against even as a fallback. `notes` is the only reliable,
 // officially-supported correlation mechanism available at webhook time.
 //
-// Returns the resolved organization_id, or null (writing nothing) if
-// organization_id/internal_plan_id/billing_interval can't be safely
-// resolved from notes — never guesses, and never attaches a subscription
-// to the wrong organization. A missing/invalid organization_id also fails
-// safely at the database layer even if this check were somehow bypassed:
-// subscriptions_v2.organization_id has a `references organizations(id)`
-// foreign key, so a bogus id is rejected by Postgres, not silently written.
+// Never guesses: unresolvable notes write nothing ("unmapped"), so a
+// subscription is never attached to the wrong organization. A bogus
+// organization_id also fails at the database layer —
+// subscriptions_v2.organization_id is a foreign key.
+//
+// subscriptions_v2 holds one row per organization, so writing a different
+// subscription replaces the current one. That's only allowed once the
+// current one has ended; otherwise a late event for an old subscription
+// could overwrite (and revoke) the subscription the customer is paying for.
 export async function syncSubscriptionFromRazorpay(
   supabase: Client,
   subscription: RazorpaySubscriptionEntity,
-): Promise<string | null> {
+): Promise<RazorpaySyncResult> {
   const notes = subscription.notes ?? {};
   const organizationId = typeof notes.organization_id === "string" ? notes.organization_id : null;
   const internalPlanId = isPaidPlanId(notes.internal_plan_id) ? notes.internal_plan_id : null;
@@ -84,10 +122,24 @@ export async function syncSubscriptionFromRazorpay(
       "[razorpay] couldn't resolve organization/plan/interval from subscription notes",
       subscription.id,
     );
-    return null;
+    return { outcome: "unmapped" };
   }
 
   const normalizedStatus = normalizeRazorpaySubscriptionStatus(subscription.status);
+
+  const current = await getSubscriptionV2(supabase, organizationId);
+  if (
+    current &&
+    !(current.provider === PROVIDER && current.provider_subscription_id === subscription.id) &&
+    NON_TERMINAL_SUBSCRIPTION_STATUSES.has(current.normalized_status)
+  ) {
+    return {
+      outcome: "skipped_other_current_subscription",
+      organizationId,
+      currentSubscriptionId: current.provider_subscription_id,
+      incomingNonTerminal: NON_TERMINAL_SUBSCRIPTION_STATUSES.has(normalizedStatus),
+    };
+  }
 
   if (subscription.customer_id) {
     await upsertBillingCustomerV2(supabase, {
@@ -119,5 +171,5 @@ export async function syncSubscriptionFromRazorpay(
     cancel_at_period_end: false,
   });
 
-  return organizationId;
+  return { outcome: "synced", organizationId, unrecognizedStatus: !isRecognizedRazorpayStatus(subscription.status) };
 }

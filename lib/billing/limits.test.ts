@@ -109,7 +109,10 @@ describe("assertWithinMailboxLimit", () => {
         provider: "razorpay",
         internal_plan_id: "starter",
         normalized_status: "active",
-        current_period_end: null,
+        // Far-future so this stays inside the paid period regardless of the
+        // real clock; the period boundary itself is covered in
+        // subscription-view.test.ts.
+        current_period_end: "2999-01-01T00:00:00.000Z",
         cancel_at_period_end: false,
         updated_at: "2026-09-14T00:00:00.000Z",
         id: "sub-v2-1",

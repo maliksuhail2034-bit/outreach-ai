@@ -69,9 +69,15 @@ async function freshGetActiveSubscriptionView() {
 describe("getActiveSubscriptionView", () => {
   beforeEach(() => {
     vi.stubEnv("STRIPE_PRICE_STARTER_1MONTH", "price_starter_1month");
+    // Pinned so the fixtures' period ends (October 2026) stay "current"
+    // regardless of when the suite runs — v2 access is bounded by
+    // current_period_end.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-20T00:00:00.000Z"));
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
@@ -87,6 +93,7 @@ describe("getActiveSubscriptionView", () => {
       grantsAccess: false,
       currentPeriodEnd: null,
       cancelAtPeriodEnd: false,
+      periodLapsed: false,
     });
   });
 
@@ -264,8 +271,83 @@ describe("getActiveSubscriptionView", () => {
         grantsAccess: false,
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
+        periodLapsed: false,
       });
       expect(warnSpy).toHaveBeenCalledTimes(1);
     });
+  });
+
+  // A lost webhook (e.g. subscription.halted never delivered) must not leave
+  // access open forever: v2 access is bounded by the recorded period plus
+  // ENTITLEMENT_PERIOD_GRACE_MS.
+  describe("paid period boundary (v2)", () => {
+    async function viewAt(now: string, overrides: Partial<Record<string, unknown>>) {
+      const getActiveSubscriptionView = await freshGetActiveSubscriptionView();
+      const { ENTITLEMENT_PERIOD_GRACE_MS } = await import("./entitlement-grace");
+      const client = createMockClient({ subscriptionV2: v2Subscription(overrides) });
+      return { view: await getActiveSubscriptionView(client, "org-1", new Date(now)), grace: ENTITLEMENT_PERIOD_GRACE_MS };
+    }
+
+    it("grants access inside the current period", async () => {
+      const { view } = await viewAt("2026-10-13T00:00:00.000Z", { current_period_end: "2026-10-14T00:00:00.000Z" });
+      expect(view).toMatchObject({ planId: "starter", grantsAccess: true, periodLapsed: false });
+    });
+
+    it("still grants access just before period end + grace (renewal webhook not yet arrived)", async () => {
+      const periodEnd = Date.parse("2026-10-14T00:00:00.000Z");
+      const { ENTITLEMENT_PERIOD_GRACE_MS } = await import("./entitlement-grace");
+      const { view } = await viewAt(new Date(periodEnd + ENTITLEMENT_PERIOD_GRACE_MS - 1).toISOString(), {
+        current_period_end: "2026-10-14T00:00:00.000Z",
+      });
+      expect(view.grantsAccess).toBe(true);
+    });
+
+    it("denies access once period end + grace has passed with no renewal recorded, and marks the period lapsed", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const periodEnd = Date.parse("2026-10-14T00:00:00.000Z");
+      const { ENTITLEMENT_PERIOD_GRACE_MS } = await import("./entitlement-grace");
+      const { view } = await viewAt(new Date(periodEnd + ENTITLEMENT_PERIOD_GRACE_MS).toISOString(), {
+        current_period_end: "2026-10-14T00:00:00.000Z",
+      });
+      expect(view).toMatchObject({
+        planId: "free",
+        grantsAccess: false,
+        normalizedStatus: "active",
+        periodLapsed: true,
+        provider: "razorpay",
+      });
+    });
+
+    it("applies the same boundary to past_due (a renewal the provider is still retrying)", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const inside = await viewAt("2026-10-15T00:00:00.000Z", { normalized_status: "past_due", current_period_end: "2026-10-14T00:00:00.000Z" });
+      expect(inside.view.grantsAccess).toBe(true);
+      const after = await viewAt("2026-12-01T00:00:00.000Z", { normalized_status: "past_due", current_period_end: "2026-10-14T00:00:00.000Z" });
+      expect(after.view).toMatchObject({ grantsAccess: false, periodLapsed: true });
+    });
+
+    it("fails closed when a granting row has no period end at all", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { view } = await viewAt("2026-09-20T00:00:00.000Z", { current_period_end: null });
+      expect(view).toMatchObject({ planId: "free", grantsAccess: false, periodLapsed: true });
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it("fails closed on an unparseable period end", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { view } = await viewAt("2026-09-20T00:00:00.000Z", { current_period_end: "not-a-date" });
+      expect(view.grantsAccess).toBe(false);
+    });
+
+    it.each(["cancelled", "suspended", "expired", "completed", "pending"])(
+      "never grants access for terminal/non-granting status %s, even inside the period",
+      async (status) => {
+        const { view } = await viewAt("2026-10-01T00:00:00.000Z", {
+          normalized_status: status,
+          current_period_end: "2026-10-14T00:00:00.000Z",
+        });
+        expect(view).toMatchObject({ planId: "free", grantsAccess: false, periodLapsed: false });
+      },
+    );
   });
 });

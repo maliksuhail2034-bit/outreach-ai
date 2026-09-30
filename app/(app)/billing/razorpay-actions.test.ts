@@ -20,6 +20,9 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/db/billing-v2", () => ({
   getSubscriptionV2: vi.fn(),
 }));
+vi.mock("@/lib/billing/subscription-view", () => ({
+  getActiveSubscriptionView: vi.fn(),
+}));
 vi.mock("@/lib/billing/razorpay", () => ({
   getRazorpayClient: vi.fn(),
   totalCountForInterval: vi.fn(),
@@ -48,8 +51,13 @@ import { getUserOrganization } from "@/lib/db";
 import { getSubscriptionV2 } from "@/lib/db/billing-v2";
 import { getRazorpayClient } from "@/lib/billing/razorpay";
 import { getRazorpayPlanId } from "@/lib/billing/plans";
+import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
-import { cancelRazorpaySubscriptionAction, createRazorpaySubscriptionAction } from "./razorpay-actions";
+import {
+  cancelRazorpaySubscriptionAction,
+  createRazorpaySubscriptionAction,
+  getRazorpayCheckoutStatusAction,
+} from "./razorpay-actions";
 
 const mockRequireUser = vi.mocked(requireUser);
 const mockGetUserOrganization = vi.mocked(getUserOrganization);
@@ -57,6 +65,7 @@ const mockGetSubscriptionV2 = vi.mocked(getSubscriptionV2);
 const mockGetRazorpayClient = vi.mocked(getRazorpayClient);
 const mockGetRazorpayPlanId = vi.mocked(getRazorpayPlanId);
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
+const mockGetActiveSubscriptionView = vi.mocked(getActiveSubscriptionView);
 
 const USER = { id: "user-1", email: "owner@example.com" };
 const ORGANIZATION = { id: "org-1" };
@@ -249,5 +258,71 @@ describe("createRazorpaySubscriptionAction", () => {
     expect(mockGetRazorpayPlanId).not.toHaveBeenCalled();
     expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second checkout while a live subscription exists (the state the billing page now shows as 'Plan changes not available yet')", async () => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_new" }));
+
+    for (const status of ["pending", "active", "past_due"]) {
+      mockGetSubscriptionV2.mockResolvedValue(razorpaySubscription({ normalized_status: status }) as never);
+      await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/already have an active subscription/);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+// Polled after Razorpay Checkout's client-side success callback — the page
+// refreshes into the paid plan only once the WEBHOOK has confirmed it.
+describe("getRazorpayCheckoutStatusAction", () => {
+  // Real Razorpay subscription ids are "sub_" + alphanumerics.
+  const PAID_SUBSCRIPTION_ID = "sub_Pq8aX2kLm9Zt41";
+
+  function grantingView(overrides: Record<string, unknown> = {}) {
+    return { provider: "razorpay", grantsAccess: true, ...overrides } as never;
+  }
+
+  it("reports confirmed once the webhook-written row for this exact subscription grants access", async () => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(razorpaySubscription({ provider_subscription_id: PAID_SUBSCRIPTION_ID }) as never);
+    mockGetActiveSubscriptionView.mockResolvedValue(grantingView());
+
+    await expect(getRazorpayCheckoutStatusAction(PAID_SUBSCRIPTION_ID)).resolves.toEqual({ confirmed: true });
+    expect(mockGetSubscriptionV2).toHaveBeenCalledWith(expect.anything(), ORGANIZATION.id);
+  });
+
+  it("is not confirmed before the webhook has written anything, even though the client reported success", async () => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(null);
+    mockGetActiveSubscriptionView.mockResolvedValue(grantingView({ provider: null, grantsAccess: false }));
+
+    await expect(getRazorpayCheckoutStatusAction(PAID_SUBSCRIPTION_ID)).resolves.toEqual({ confirmed: false });
+  });
+
+  it("is not confirmed for a different subscription than the one just paid for", async () => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(razorpaySubscription({ provider_subscription_id: "sub_older" }) as never);
+    mockGetActiveSubscriptionView.mockResolvedValue(grantingView());
+
+    await expect(getRazorpayCheckoutStatusAction(PAID_SUBSCRIPTION_ID)).resolves.toEqual({ confirmed: false });
+  });
+
+  it("is not confirmed when the row exists but doesn't grant access (e.g. halted, or period lapsed)", async () => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(razorpaySubscription({ provider_subscription_id: PAID_SUBSCRIPTION_ID, normalized_status: "suspended" }) as never);
+    mockGetActiveSubscriptionView.mockResolvedValue(grantingView({ grantsAccess: false }));
+
+    await expect(getRazorpayCheckoutStatusAction(PAID_SUBSCRIPTION_ID)).resolves.toEqual({ confirmed: false });
+  });
+
+  it("rejects an unauthenticated caller before reading anything", async () => {
+    await expect(getRazorpayCheckoutStatusAction(PAID_SUBSCRIPTION_ID)).rejects.toThrow(/Unauthorized/);
+    expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed subscription id", async () => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    await expect(getRazorpayCheckoutStatusAction("not-a-subscription-id")).rejects.toBeTruthy();
+    expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
   });
 });

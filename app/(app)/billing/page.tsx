@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { countCampaigns, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
 import { getPlanForOrganization } from "@/lib/billing/resolve-plan";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
+import { NON_TERMINAL_SUBSCRIPTION_STATUSES } from "@/lib/billing/razorpay-status";
+import { getSubscriptionV2 } from "@/lib/db/billing-v2";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, UNLIMITED, getRazorpayPlanId } from "@/lib/billing/plans";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
@@ -45,9 +47,10 @@ export default async function BillingPage() {
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  const [plan, subscriptionView, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
+  const [plan, subscriptionView, subscriptionV2, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
     getPlanForOrganization(supabase, organization.id),
     getActiveSubscriptionView(supabase, organization.id),
+    getSubscriptionV2(supabase, organization.id),
     countMailboxes(supabase, user.id),
     countCampaigns(supabase, user.id),
     countLeads(supabase, user.id),
@@ -56,6 +59,11 @@ export default async function BillingPage() {
 
   const dailySendTotal = (campaigns ?? []).reduce((sum, campaign) => sum + campaign.daily_limit, 0);
   const isPaidPlan = plan.id !== "free";
+  // Same row and same status set createRazorpaySubscriptionAction's
+  // duplicate-checkout guard checks, so the page never offers a checkout
+  // that action would reject.
+  const planChangeBlocked =
+    subscriptionV2?.provider === "razorpay" && NON_TERMINAL_SUBSCRIPTION_STATUSES.has(subscriptionV2.normalized_status);
 
   // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is server-only (not NEXT_PUBLIC_), so it
   // must be resolved here (a Server Component) and passed down as data —
@@ -88,11 +96,19 @@ export default async function BillingPage() {
                 <CardDescription>{plan.name}</CardDescription>
               </div>
               {subscriptionView.normalizedStatus && (
-                <Badge variant="secondary">{STATUS_LABEL[subscriptionView.normalizedStatus] ?? subscriptionView.normalizedStatus}</Badge>
+                <Badge variant="secondary">
+                  {subscriptionView.periodLapsed
+                    ? "Renewal not confirmed"
+                    : (STATUS_LABEL[subscriptionView.normalizedStatus] ?? subscriptionView.normalizedStatus)}
+                </Badge>
               )}
             </div>
             {isPaidPlan && subscriptionView.provider === "stripe" && <ManageSubscriptionButton />}
-            {isPaidPlan && subscriptionView.provider === "razorpay" && <ManageRazorpaySubscriptionButton />}
+            {/* Keyed on the live subscriptions_v2 row, not isPaidPlan: a
+                subscription whose period lapsed unconfirmed grants no plan
+                but must still be cancellable (cancelRazorpaySubscriptionAction
+                accepts exactly these statuses). */}
+            {planChangeBlocked && <ManageRazorpaySubscriptionButton />}
             {/* provider === "paypal" (or null, which isPaidPlan already rules
                 out) renders no management action — PayPal has no
                 implementation in this codebase yet, and a subscriber on a
@@ -102,9 +118,11 @@ export default async function BillingPage() {
           {subscriptionView.currentPeriodEnd && (
             <CardContent className="flex items-center gap-2 text-sm text-muted-foreground">
               <CalendarClockIcon className="size-4" />
-              {subscriptionView.cancelAtPeriodEnd
-                ? `Cancels on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))}`
-                : `Renews on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))}`}
+              {subscriptionView.periodLapsed
+                ? `Billing period ended on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))} — paid features resume once the renewal is confirmed`
+                : subscriptionView.cancelAtPeriodEnd
+                  ? `Cancels on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))}`
+                  : `Renews on ${dateFormatter.format(new Date(subscriptionView.currentPeriodEnd))}`}
             </CardContent>
           )}
         </Card>
@@ -140,7 +158,7 @@ export default async function BillingPage() {
 
       <FadeIn delay={0.15} className="space-y-3">
         <h2 className="font-semibold tracking-tight">Plans</h2>
-        <PlanList currentPlanId={plan.id} razorpayPlanIds={razorpayPlanIds} />
+        <PlanList currentPlanId={plan.id} razorpayPlanIds={razorpayPlanIds} planChangeBlocked={planChangeBlocked} />
       </FadeIn>
     </div>
   );

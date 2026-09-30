@@ -1,7 +1,9 @@
 import type { CronJobName } from "./heartbeat";
 
 export interface CaptureErrorInput {
-  job: CronJobName;
+  // A cron job, or the one non-cron source that reports here (the Razorpay
+  // webhook, where a dropped event can mean a customer paid without access).
+  job: CronJobName | "razorpay-webhook";
   message: string;
   context?: Record<string, unknown>;
 }

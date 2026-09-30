@@ -7,6 +7,7 @@ import { getPlanForOrganization } from "@/lib/billing/resolve-plan";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
 import { NON_TERMINAL_SUBSCRIPTION_STATUSES } from "@/lib/billing/razorpay-status";
 import { getSubscriptionV2 } from "@/lib/db/billing-v2";
+import { checkoutProviderForRegion, currencyForRegion, getBillingRegion } from "@/lib/billing/region";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, UNLIMITED, getRazorpayPlanId } from "@/lib/billing/plans";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
@@ -47,7 +48,8 @@ export default async function BillingPage() {
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  const [plan, subscriptionView, subscriptionV2, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
+  const [billingRegion, plan, subscriptionView, subscriptionV2, mailboxCount, campaignCount, leadCount, campaigns] = await Promise.all([
+    getBillingRegion(),
     getPlanForOrganization(supabase, organization.id),
     getActiveSubscriptionView(supabase, organization.id),
     getSubscriptionV2(supabase, organization.id),
@@ -65,14 +67,26 @@ export default async function BillingPage() {
   const planChangeBlocked =
     subscriptionV2?.provider === "razorpay" && NON_TERMINAL_SUBSCRIPTION_STATUSES.has(subscriptionV2.normalized_status);
 
+  // Resolved once per request by the same resolver the Razorpay checkout
+  // action re-runs server-side, so the page never offers a checkout that
+  // action would reject.
+  const billingCurrency = currencyForRegion(billingRegion);
+  const checkoutProvider = checkoutProviderForRegion(billingRegion);
+
   // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is server-only (not NEXT_PUBLIC_), so it
   // must be resolved here (a Server Component) and passed down as data —
   // PlanList is a Client Component and calling getRazorpayPlanId() from
-  // there would silently always return null in the browser bundle.
+  // there would silently always return null in the browser bundle. Only
+  // resolved where Razorpay is this request's checkout provider.
   const razorpayPlanIds = Object.fromEntries(
     PAID_PLAN_IDS.map((planId) => [
       planId,
-      Object.fromEntries(BILLING_INTERVALS.map((interval) => [interval, getRazorpayPlanId(planId, interval)])),
+      Object.fromEntries(
+        BILLING_INTERVALS.map((interval) => [
+          interval,
+          checkoutProvider === "razorpay" ? getRazorpayPlanId(planId, interval) : null,
+        ]),
+      ),
     ]),
   ) as Record<(typeof PAID_PLAN_IDS)[number], Record<(typeof BILLING_INTERVALS)[number], string | null>>;
 
@@ -158,7 +172,13 @@ export default async function BillingPage() {
 
       <FadeIn delay={0.15} className="space-y-3">
         <h2 className="font-semibold tracking-tight">Plans</h2>
-        <PlanList currentPlanId={plan.id} razorpayPlanIds={razorpayPlanIds} planChangeBlocked={planChangeBlocked} />
+        <PlanList
+          currentPlanId={plan.id}
+          razorpayPlanIds={razorpayPlanIds}
+          planChangeBlocked={planChangeBlocked}
+          currency={billingCurrency}
+          checkoutProvider={checkoutProvider}
+        />
       </FadeIn>
     </div>
   );

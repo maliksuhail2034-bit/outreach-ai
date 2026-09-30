@@ -12,8 +12,9 @@ import {
   type PaidPlanId,
   type PlanId,
 } from "@/lib/billing/plans";
-import { calculateIntervalPrice, calculateIntervalPriceInrPaise, formatCents } from "@/lib/billing/pricing";
-import { formatMoney } from "@/lib/billing/currency";
+import { calculateIntervalPrice, formatPlanPrice } from "@/lib/billing/pricing";
+import type { Currency } from "@/lib/billing/currency";
+import type { CheckoutProvider } from "@/lib/billing/region";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,6 +36,8 @@ export function PlanList({
   currentPlanId,
   razorpayPlanIds,
   planChangeBlocked,
+  currency,
+  checkoutProvider,
 }: {
   currentPlanId: PlanId;
   // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is a server-only env var — resolved in
@@ -46,6 +49,11 @@ export function PlanList({
   // another is rejected server-side (plan changes aren't supported yet) —
   // so no other plan is offered as a purchasable "Upgrade".
   planChangeBlocked: boolean;
+  // Both decided on the server by lib/billing/region.ts for this request —
+  // this component only renders them, it never works out a region itself.
+  // INR + "razorpay" in India; USD + null (no checkout yet) everywhere else.
+  currency: Currency;
+  checkoutProvider: CheckoutProvider;
 }) {
   const [interval, setInterval] = useState<BillingInterval>("1_month");
 
@@ -76,6 +84,10 @@ export function PlanList({
           const priceId = plan.priceIds[interval];
           const razorpayPlanId = razorpayPlanIds[planId][interval];
           const price = plan.launchPriceCents !== null ? calculateIntervalPrice(plan.launchPriceCents, interval) : null;
+          const displayPrice =
+            plan.launchPriceCents !== null && plan.regularPriceCents !== null
+              ? formatPlanPrice(plan.launchPriceCents, plan.regularPriceCents, interval, currency)
+              : null;
 
           return (
             <Card key={planId} className={isCurrent ? "border-primary/40" : undefined}>
@@ -84,14 +96,14 @@ export function PlanList({
                   <CardTitle>{plan.name}</CardTitle>
                   {isCurrent && <Badge>Current plan</Badge>}
                 </div>
-                {plan.regularPriceCents !== null && plan.launchPriceCents !== null && price && (
+                {price && displayPrice && (
                   <div className="mt-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-semibold tracking-tight">{formatCents(price.totalCents)}</span>
+                      <span className="text-2xl font-semibold tracking-tight">{displayPrice.total}</span>
                       <span className="text-sm text-muted-foreground">/ {INTERVAL_LABEL[interval]}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="line-through">{formatCents(plan.regularPriceCents * price.months)}</span>
+                      <span className="line-through">{displayPrice.regular}</span>
                       <span>launch price</span>
                       {price.discountPercent > 0 && (
                         <Badge variant="secondary" className="text-[10px]">
@@ -131,6 +143,19 @@ export function PlanList({
                       You already have a subscription. Switching plans isn&apos;t supported yet.
                     </p>
                   </>
+                ) : checkoutProvider === null ? (
+                  // Outside India (or region unknown): no international
+                  // provider exists yet, and Razorpay's Indian rails would
+                  // decline a foreign card — so no checkout at all, and the
+                  // Razorpay action refuses these requests server-side too.
+                  <>
+                    <Button variant="outline" className="w-full" disabled>
+                      International checkout coming soon
+                    </Button>
+                    <p className="text-center text-xs text-muted-foreground">
+                      Paid plans for customers outside India aren&apos;t available yet.
+                    </p>
+                  </>
                 ) : razorpayPlanId ? (
                   // Razorpay is the active payment provider (Stripe was
                   // dropped — priceId below is null for every plan/interval
@@ -145,22 +170,12 @@ export function PlanList({
                   // that env-configured mode, so it can never say "test
                   // mode" while a live key is quietly charging someone.
                   <>
-                    {/* The site's canonical price stays USD everywhere else
-                        (see calculateIntervalPrice above) — Razorpay's
-                        Indian payment rails (UPI/Indian cards/netbanking)
-                        cannot charge a USD amount at all, so an Indian
-                        customer must see the real INR amount before paying.
-                        calculateIntervalPriceInrPaise() derives this from
-                        the SAME totalCents this card's USD price uses, so
-                        it can never disagree with what a Razorpay INR Plan
-                        for this plan/interval is configured to charge. */}
-                    {plan.launchPriceCents !== null && (
-                      <p className="text-center text-xs text-muted-foreground">
-                        Charged as{" "}
-                        {formatMoney(calculateIntervalPriceInrPaise(plan.launchPriceCents, interval), "INR")} via
-                        Razorpay (UPI, cards, netbanking)
-                      </p>
-                    )}
+                    {/* Only reached in India, where the card's price above is
+                        already the INR amount this plan's Razorpay plan
+                        charges (formatPlanPrice -> calculateIntervalPriceInrPaise). */}
+                    <p className="text-center text-xs text-muted-foreground">
+                      Billed in INR via Razorpay (UPI, cards, netbanking)
+                    </p>
                     <RazorpayCheckoutButton planId={planId} interval={interval}>
                       Upgrade
                     </RazorpayCheckoutButton>

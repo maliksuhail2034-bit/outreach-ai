@@ -13,6 +13,7 @@ import { getRazorpayClient, totalCountForInterval } from "@/lib/billing/razorpay
 // what "already has a live subscription" means.
 import { NON_TERMINAL_SUBSCRIPTION_STATUSES as NON_TERMINAL_STATUSES } from "@/lib/billing/razorpay-status";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
+import { checkoutProviderForRegion, getBillingRegion } from "@/lib/billing/region";
 import { checkoutSchema, razorpaySubscriptionIdSchema, type CheckoutInput } from "@/lib/validations/billing";
 import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 
@@ -41,6 +42,14 @@ export async function createRazorpaySubscriptionAction(
 
   const organization = await getUserOrganization(supabase, user);
   await checkRateLimit("billing:checkout", organization.id);
+
+  // India-only, decided here from the request itself — never from anything
+  // the client sends (checkoutSchema only accepts planId/interval and strips
+  // any other field). Hiding the button outside India isn't enough: this
+  // action is reachable by a direct POST.
+  if (checkoutProviderForRegion(await getBillingRegion()) !== "razorpay") {
+    throw new Error("Checkout isn't available in your region yet.");
+  }
 
   const razorpayPlanId = getRazorpayPlanId(parsed.planId, parsed.interval);
   if (!razorpayPlanId) {

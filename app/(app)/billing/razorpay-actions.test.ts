@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mocked at the module boundary this Server Function actually imports
 // through — same "mock the seam, not the implementation" approach the rest
@@ -8,6 +8,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // mocked so each test can assert exactly what cancelRazorpaySubscriptionAction
 // does with a given subscriptions_v2 state, without a real database or a
 // real Razorpay account.
+// The real billing-region resolver (lib/billing/region.ts) runs; only the
+// request headers it reads are mocked, so these tests exercise the same
+// country decision production makes.
+vi.mock("next/headers", () => ({
+  headers: vi.fn(),
+}));
 vi.mock("@/lib/supabase/auth", () => ({
   requireUser: vi.fn(),
 }));
@@ -46,6 +52,7 @@ vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
   },
 }));
 
+import { headers } from "next/headers";
 import { requireUser } from "@/lib/supabase/auth";
 import { getUserOrganization } from "@/lib/db";
 import { getSubscriptionV2 } from "@/lib/db/billing-v2";
@@ -66,6 +73,12 @@ const mockGetRazorpayClient = vi.mocked(getRazorpayClient);
 const mockGetRazorpayPlanId = vi.mocked(getRazorpayPlanId);
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
 const mockGetActiveSubscriptionView = vi.mocked(getActiveSubscriptionView);
+const mockHeaders = vi.mocked(headers);
+
+// A request as Vercel's edge would present it.
+function requestFrom(values: Record<string, string>) {
+  mockHeaders.mockResolvedValue(new Headers(values) as never);
+}
 
 const USER = { id: "user-1", email: "owner@example.com" };
 const ORGANIZATION = { id: "org-1" };
@@ -110,6 +123,13 @@ beforeEach(() => {
   // with a rejected promise instead.
   mockCheckRateLimit.mockResolvedValue(undefined);
   mockGetRazorpayPlanId.mockReturnValue("plan_test_starter_1m");
+  // An Indian request on Vercel unless a test says otherwise.
+  vi.stubEnv("VERCEL", "1");
+  requestFrom({ "x-vercel-ip-country": "IN" });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("cancelRazorpaySubscriptionAction", () => {
@@ -274,6 +294,104 @@ describe("createRazorpaySubscriptionAction", () => {
 
 // Polled after Razorpay Checkout's client-side success callback — the page
 // refreshes into the paid plan only once the WEBHOOK has confirmed it.
+// The button is hidden outside India, but the action is reachable by a
+// direct POST — so it must refuse non-Indian requests on its own, from the
+// server-side country signal only.
+describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
+  beforeEach(() => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(null);
+  });
+
+  it("creates the Razorpay subscription for an Indian request", async () => {
+    const create = mockCreate(() => Promise.resolve({ id: "sub_india" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).resolves.toEqual({
+      subscriptionId: "sub_india",
+      prefillEmail: USER.email,
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["US", { "x-vercel-ip-country": "US" }],
+    ["GB", { "x-vercel-ip-country": "GB" }],
+    ["missing country", {}],
+    ["malformed country", { "x-vercel-ip-country": "india" }],
+  ])("rejects a %s request before touching Razorpay or the plan config", async (_label, values) => {
+    requestFrom(values as Record<string, string>);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/isn't available in your region/);
+    expect(create).not.toHaveBeenCalled();
+    expect(mockGetRazorpayPlanId).not.toHaveBeenCalled();
+    expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-Indian request whose browser language/locale looks Indian", async () => {
+    requestFrom({ "x-vercel-ip-country": "US", "accept-language": "hi-IN,en-IN;q=0.9" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/isn't available in your region/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("ignores fabricated currency/provider/country fields in a directly POSTed payload", async () => {
+    requestFrom({ "x-vercel-ip-country": "US" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+    const forged = { ...CHECKOUT_INPUT, currency: "INR", provider: "razorpay", country: "IN", region: "india" };
+
+    await expect(createRazorpaySubscriptionAction(forged as never)).rejects.toThrow(/isn't available in your region/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("never forwards client-supplied fields to Razorpay for an Indian request", async () => {
+    const create = mockCreate(() => Promise.resolve({ id: "sub_india" }));
+    const forged = { ...CHECKOUT_INPUT, currency: "USD", provider: "paypal", country: "US", amount: 1 };
+
+    await createRazorpaySubscriptionAction(forged as never);
+
+    const payload = create.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toEqual({
+      plan_id: "plan_test_starter_1m",
+      total_count: undefined,
+      customer_notify: true,
+      notes: { organization_id: ORGANIZATION.id, internal_plan_id: "starter", billing_interval: "1_month" },
+    });
+  });
+
+  it("does not trust a country header when not running on Vercel", async () => {
+    vi.stubEnv("VERCEL", "");
+    requestFrom({ "x-vercel-ip-country": "IN" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/isn't available in your region/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an unauthenticated caller before resolving the region", async () => {
+    mockRequireUser.mockRejectedValue(new Error("Unauthorized: no authenticated user."));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/Unauthorized/);
+    expect(mockHeaders).not.toHaveBeenCalled();
+  });
+
+  it("still applies the billing:checkout rate limit before resolving the region", async () => {
+    mockCheckRateLimit.mockRejectedValue(new RateLimitError(60));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toBeInstanceOf(RateLimitError);
+    expect(mockHeaders).not.toHaveBeenCalled();
+  });
+
+  it("still blocks a duplicate checkout for an Indian organization with a live subscription", async () => {
+    mockGetSubscriptionV2.mockResolvedValue(razorpaySubscription({ normalized_status: "active" }) as never);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_second" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/already have an active subscription/);
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
 describe("getRazorpayCheckoutStatusAction", () => {
   // Real Razorpay subscription ids are "sub_" + alphanumerics.
   const PAID_SUBSCRIPTION_ID = "sub_Pq8aX2kLm9Zt41";

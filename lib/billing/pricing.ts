@@ -1,5 +1,5 @@
 import { BILLING_INTERVALS, type BillingInterval } from "./plans";
-import { usdCentsToInrPaise } from "./currency";
+import { formatMoney, usdCentsToInrPaise, type Currency } from "./currency";
 
 // Pure pricing math — no database access, no Stripe call, nothing that
 // depends on which plan/interval combinations actually have a configured
@@ -103,4 +103,34 @@ export function formatCents(cents: number): string {
 // rather than something to keep in sync by hand.
 export function calculateIntervalPriceInrPaise(launchPriceCents: number, interval: BillingInterval): number {
   return usdCentsToInrPaise(calculateIntervalPrice(launchPriceCents, interval).totalCents);
+}
+
+export interface DisplayPlanPrice {
+  // What the customer pays for the whole duration.
+  total: string;
+  // The crossed-out regular price for the same duration.
+  regular: string;
+}
+
+// The formatted prices a plan card shows in the visitor's billing currency
+// (see lib/billing/region.ts). USD keeps formatCents' existing "$12.00"
+// style; INR goes through calculateIntervalPriceInrPaise, so the amount an
+// Indian customer sees is exactly what the Razorpay plan charges.
+export function formatPlanPrice(
+  launchPriceCents: number,
+  regularPriceCents: number,
+  interval: BillingInterval,
+  currency: Currency,
+): DisplayPlanPrice {
+  const months = monthsForInterval(interval);
+  if (currency === "INR") {
+    return {
+      total: formatMoney(calculateIntervalPriceInrPaise(launchPriceCents, interval), "INR"),
+      regular: formatMoney(usdCentsToInrPaise(regularPriceCents * months), "INR"),
+    };
+  }
+  return {
+    total: formatCents(calculateIntervalPrice(launchPriceCents, interval).totalCents),
+    regular: formatCents(regularPriceCents * months),
+  };
 }

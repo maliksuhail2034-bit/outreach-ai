@@ -5,6 +5,7 @@ import {
   consumeSendNow,
   listCampaignLeadsForLead,
   listCampaignLeadsWithTimezones,
+  markCampaignLeadBounced,
   removeCampaignLead,
   requestSendNow,
   updateClaimedCampaignLead,
@@ -263,6 +264,29 @@ describe("updateClaimedCampaignLead", () => {
 
 // Batch G: launch and sending-window edits read each enrolled lead's
 // timezone in the same query as the campaign_leads rows (no per-lead reads).
+describe("markCampaignLeadBounced", () => {
+  it("moves only an active or completed enrollment to bounced and stops scheduling, leaving the lease alone", async () => {
+    const { client, chainable } = createMockClient({ data: [{ id: "campaign-lead-1" }], error: null });
+
+    expect(await markCampaignLeadBounced(client, "campaign-lead-1")).toBe(true);
+
+    expect(client.from).toHaveBeenCalledWith("campaign_leads");
+    expect(chainable.update).toHaveBeenCalledWith({ status: "bounced", next_send_at: null });
+    expect(chainable.eq).toHaveBeenCalledWith("id", "campaign-lead-1");
+    expect(chainable.in).toHaveBeenCalledWith("status", ["active", "completed"]);
+  });
+
+  it("returns false when the enrollment is in any other state (nothing matched)", async () => {
+    const { client } = createMockClient({ data: [], error: null });
+    expect(await markCampaignLeadBounced(client, "campaign-lead-1")).toBe(false);
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(markCampaignLeadBounced(client, "campaign-lead-1")).rejects.toThrow("boom");
+  });
+});
+
 describe("listCampaignLeadsWithTimezones", () => {
   it("reads the lead timezone in the same query and flattens it onto each row", async () => {
     const rows = [

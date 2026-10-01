@@ -36,7 +36,9 @@ function formatAddress(address: { name?: string; email: string }): string {
 //      User unknown", "Sender verify failed"). "mailbox unavailable" is
 //      deliberately not enough: it's RFC 5321's default text for any 550,
 //      including policy blocks.
-const RECIPIENT_BOUNCE_ENHANCED_CODES = new Set(["5.1.1", "5.1.2", "5.1.3", "5.1.6", "5.1.10", "5.2.1"]);
+// Also the hard-bounce definition for asynchronous bounces (delivery status
+// notifications), see lib/email/delivery-report.ts.
+export const RECIPIENT_BOUNCE_ENHANCED_CODES = new Set(["5.1.1", "5.1.2", "5.1.3", "5.1.6", "5.1.10", "5.2.1"]);
 const RECIPIENT_BOUNCE_FALLBACK_CODES = new Set([550, 551, 553]);
 const RECIPIENT_BOUNCE_TEXT_PATTERN = /user unknown|no such user|does not exist|recipient not found|invalid recipient/i;
 const SENDER_WORDING_PATTERN = /sender|from address|from:|mail from|sending address/i;

@@ -1,3 +1,5 @@
+import type { DeliveryReport } from "./delivery-report";
+
 // Normalized message shape every ReplyProvider implementation must produce
 // (see the plan's normalization contract). Business logic — matching,
 // idempotency, recording, all in lib/email/reply-worker.ts — only ever
@@ -25,6 +27,10 @@ export interface ReplyMessage {
   // the worker stop the cursor just before a message it couldn't process,
   // so that message is retried next sync instead of being skipped.
   uid?: number;
+  // Set when the message is a delivery status notification (an asynchronous
+  // bounce) — see lib/email/delivery-report.ts. Such a message is never a
+  // reply.
+  deliveryReport?: DeliveryReport | null;
 }
 
 export interface SyncCursor {

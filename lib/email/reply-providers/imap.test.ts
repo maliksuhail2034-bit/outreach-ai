@@ -84,6 +84,8 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
     });
     simpleParserMock.mockResolvedValue({
       messageId: "<reply-1@example.com>",
+      headers: new Map(),
+      attachments: [],
       inReplyTo: undefined,
       references: undefined,
       from: { value: [{ name: "Lead Name", address: "lead@example.com" }] },
@@ -108,6 +110,7 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
       bodyHtml: "<p>Sounds good, let's talk.</p>",
       receivedAt: "2026-09-20T10:00:00.000Z",
       uid: 2,
+      deliveryReport: null,
     });
     // Exactly one fetch call — no second round-trip for body content, since
     // { source: true } on the existing fetch already returns the full raw
@@ -122,6 +125,8 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
     });
     simpleParserMock.mockResolvedValue({
       messageId: "<reply-2@example.com>",
+      headers: new Map(),
+      attachments: [],
       inReplyTo: undefined,
       references: undefined,
       from: { value: [{ name: undefined, address: "lead@example.com" }] },
@@ -150,6 +155,8 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
     });
     simpleParserMock.mockResolvedValue({
       messageId: "<reply-3@example.com>",
+      headers: new Map(),
+      attachments: [],
       from: { value: [{ name: "Lead", address: "lead@example.com" }] },
       to: { value: [{ name: "Bad", address: undefined }] },
       subject: "No body",
@@ -165,10 +172,46 @@ describe("ImapReplyChecker.fetchNewMessages", () => {
 
 // M4: Postgres text columns reject NUL, so a NUL left in a reply would make
 // it impossible to store — and fail that mailbox's sync every run.
+describe("ImapReplyChecker.fetchNewMessages — delivery status notifications", () => {
+  it("keeps the delivery-status part separate and attaches the parsed report", async () => {
+    const client = makeImapClient();
+    imapFlowMock.mockImplementation(function () {
+      return client;
+    });
+    simpleParserMock.mockResolvedValue({
+      messageId: "<ndr-1@mx.google.com>",
+      headers: new Map([["content-type", { value: "multipart/report", params: { "report-type": "delivery-status" } }]]),
+      attachments: [
+        {
+          contentType: "message/delivery-status",
+          content: Buffer.from("Reporting-MTA: dns; googlemail.com\r\n\r\nFinal-Recipient: rfc822; dead@prospect.test\r\nAction: failed\r\nStatus: 5.1.1\r\n"),
+        },
+        { contentType: "message/rfc822", content: Buffer.from("Message-ID: <sent-1@example.com>\r\n\r\nHello") },
+      ],
+      from: { value: [{ name: "Mail Delivery Subsystem", address: "mailer-daemon@googlemail.com" }] },
+      to: { value: [{ address: "sales@example.com" }] },
+      subject: "Delivery Status Notification (Failure)",
+      text: "Address not found.",
+      html: false,
+      date: new Date("2026-10-01T05:00:00.000Z"),
+    });
+
+    const result = await new ImapReplyChecker(makeMailbox()).fetchNewMessages();
+
+    expect(simpleParserMock).toHaveBeenCalledWith(expect.any(Buffer), { keepDeliveryStatus: true });
+    expect(result.messages[0].deliveryReport).toEqual({
+      hardBouncedRecipients: ["dead@prospect.test"],
+      originalMessageId: "sent-1@example.com",
+    });
+  });
+});
+
 describe("ImapReplyChecker.fetchNewMessages — NUL characters", () => {
   function parsedWith(fields: { subject?: string; text?: string; html?: string | false }) {
     return {
       messageId: "<reply-1@example.com>",
+      headers: new Map(),
+      attachments: [],
       inReplyTo: undefined,
       references: undefined,
       from: { value: [{ name: "Lead", address: "lead@example.com" }] },

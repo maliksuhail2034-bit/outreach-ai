@@ -1,6 +1,6 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
-import type { AddressObject } from "mailparser";
+import type { AddressObject, SimpleParserOptions } from "mailparser";
 
 import { decryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { refreshGoogleAccessToken } from "@/lib/email/google-oauth";
@@ -8,6 +8,7 @@ import { GMAIL_IMAP_HOST, GMAIL_IMAP_PORT } from "@/lib/email/google-constants";
 import { refreshMicrosoftAccessToken } from "@/lib/email/microsoft-oauth";
 import { OUTLOOK_IMAP_HOST, OUTLOOK_IMAP_PORT } from "@/lib/email/microsoft-constants";
 import { normalizeMessageId } from "@/lib/email/message-id";
+import { parseDeliveryReport } from "@/lib/email/delivery-report";
 import type { Tables } from "@/types/database.types";
 import type { FetchResult, ReplyMessage, ReplyProvider, SyncCursor } from "../reply-provider";
 
@@ -23,6 +24,12 @@ const IMAP_TIMEOUTS = {
   greetingTimeout: 10_000,
   socketTimeout: 20_000,
 };
+
+// keepDeliveryStatus makes mailparser return a bounce notice's
+// message/delivery-status part as its own part (parseDeliveryReport reads it)
+// instead of merging it into the text body. It only affects that part type.
+// mailparser supports the option, but @types/mailparser doesn't declare it.
+const PARSER_OPTIONS: SimpleParserOptions & { keepDeliveryStatus: boolean } = { keepDeliveryStatus: true };
 
 // ImapFlow surfaces every connect/greeting/socket timeout with an internal
 // `code` ("CONNECT_TIMEOUT" / "GREETING_TIMEOUT" / "ETIMEOUT") and a message
@@ -164,7 +171,7 @@ export class ImapReplyChecker implements ReplyProvider {
         if (message.uid) sawUid = Math.max(sawUid, message.uid);
         if (!message.source) continue;
 
-        const parsed = await simpleParser(message.source);
+        const parsed = await simpleParser(message.source, PARSER_OPTIONS);
         const messageId = normalizeMessageId(parsed.messageId);
         if (!messageId) continue; // no Message-ID — skip, never synthesize one
 
@@ -182,6 +189,10 @@ export class ImapReplyChecker implements ReplyProvider {
           bodyHtml: stripNul(parsed.html || null),
           receivedAt: (parsed.date ?? new Date()).toISOString(),
           uid: message.uid,
+          deliveryReport: parseDeliveryReport({
+            contentType: parsed.headers.get("content-type"),
+            parts: parsed.attachments,
+          }),
         });
       }
 

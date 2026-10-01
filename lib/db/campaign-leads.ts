@@ -124,6 +124,23 @@ export async function updateClaimedCampaignLead(
   return false;
 }
 
+// Asynchronous bounce (lib/email/reply-worker.ts): the enrollment moves to
+// 'bounced' only from 'active' (follow-ups pending) or 'completed' (the last
+// step bounced). Any other state — replied, unsubscribed, stopped, failed,
+// needs_review — is left alone. The lease isn't touched: an in-flight worker
+// sees the status change in its own guarded writes and releases it there.
+// Returns whether the enrollment was updated.
+export async function markCampaignLeadBounced(supabase: Client, id: string) {
+  const { data, error } = await supabase
+    .from("campaign_leads")
+    .update({ status: "bounced", next_send_at: null })
+    .eq("id", id)
+    .in("status", ["active", "completed"])
+    .select("id");
+  if (error) throw error;
+  return data.length > 0;
+}
+
 export async function removeCampaignLead(supabase: Client, id: string) {
   const { error } = await supabase.from("campaign_leads").delete().eq("id", id);
   if (error) throw error;

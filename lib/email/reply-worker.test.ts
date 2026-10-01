@@ -211,7 +211,7 @@ describe("runReplySyncWorker — matched reply persists content", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 1, unmatched: 0, alreadyRecorded: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 1, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 0 });
     expect(recordEmailReplyMock).toHaveBeenCalledTimes(1);
     expect(recordEmailReplyMock).toHaveBeenCalledWith(supabaseStub, {
       email_event_id: insertedEvent.id,
@@ -266,7 +266,7 @@ describe("runReplySyncWorker — duplicate inbound Message-ID", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, bounced: 0, failed: 0 });
     expect(recordEmailEventMock).not.toHaveBeenCalled();
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
   });
@@ -311,7 +311,7 @@ describe("runReplySyncWorker — duplicate inbound Message-ID", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, bounced: 0, failed: 0 });
     expect(recordEmailReplyMock).toHaveBeenCalledTimes(1);
     expect(recordEmailReplyMock).toHaveBeenCalledWith(supabaseStub, expect.objectContaining({ email_event_id: winningEvent.id }));
     // The losing side must never flip campaign_leads/leads itself — only
@@ -331,7 +331,7 @@ describe("runReplySyncWorker — duplicate inbound Message-ID", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 0, failed: 1 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1 });
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
     expect(updateCampaignLeadMock).not.toHaveBeenCalled();
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-1", { uidValidity: 100, lastUid: 6 });
@@ -386,7 +386,7 @@ describe("runReplySyncWorker — existing matching behavior is unchanged", () =>
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, bounced: 0, failed: 0 });
     expect(recordEmailEventMock).not.toHaveBeenCalled();
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
   });
@@ -464,7 +464,7 @@ describe("runReplySyncWorker — header matching is scoped to the mailbox owner"
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, bounced: 0, failed: 0 });
     expect(getSentEventForOwnerMock).toHaveBeenCalledWith(supabaseStub, "sent-1@example.com", "user-1");
     expect(recordEmailEventMock).not.toHaveBeenCalled();
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
@@ -507,7 +507,7 @@ describe("runReplySyncWorker — failure isolation and cursor preservation", () 
     const first = await runReplySyncWorker(supabaseStub);
 
     expect(insertedMessageIds()).toEqual(["reply-101@example.com", "reply-102@example.com", "reply-103@example.com"]);
-    expect(first).toEqual({ mailboxesChecked: 1, messagesFetched: 4, matched: 2, unmatched: 0, alreadyRecorded: 0, failed: 1 });
+    expect(first).toEqual({ mailboxesChecked: 1, messagesFetched: 4, matched: 2, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1 });
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledTimes(1);
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-1", { uidValidity: 100, lastUid: 102 });
 
@@ -572,7 +572,7 @@ describe("runReplySyncWorker — failure isolation and cursor preservation", () 
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 2, messagesFetched: 2, matched: 1, unmatched: 0, alreadyRecorded: 0, failed: 1 });
+    expect(summary).toEqual({ mailboxesChecked: 2, messagesFetched: 2, matched: 1, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1 });
     // updateMailboxSyncCursor also clears the mailbox's lease (reply_sync_locked_until).
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-a", { uidValidity: 100, lastUid: 102 });
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-b", { uidValidity: 100, lastUid: 201 });

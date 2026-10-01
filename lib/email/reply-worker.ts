@@ -2,6 +2,7 @@ import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import {
   claimMailboxesForReplySync,
+  createSuppression,
   getCampaignLeadByCampaignAndLead,
   getEmailEventByProviderMessageId,
   getEmailReplyByEventId,
@@ -9,6 +10,7 @@ import {
   getSentEventForOwner,
   listActiveCampaignLeadsForMailbox,
   listLeadIdsByEmail,
+  markCampaignLeadBounced,
   recordEmailEvent,
   recordEmailReply,
   releaseMailboxReplySyncLock,
@@ -16,6 +18,7 @@ import {
   updateLead,
   updateMailboxSyncCursor,
 } from "@/lib/db";
+import { isMailSystemSender, type DeliveryReport } from "./delivery-report";
 import { getReplyProvider } from "./get-reply-provider";
 import type { FetchResult, ReplyMessage, SyncCursor } from "./reply-provider";
 import { captureError } from "@/lib/monitoring/error-tracking";
@@ -32,12 +35,14 @@ export interface ReplySyncSummary {
   matched: number;
   unmatched: number;
   alreadyRecorded: number;
+  // Asynchronous bounces recorded (see processDeliveryReport).
+  bounced: number;
   // Messages that threw while being processed — each stops its mailbox's
   // cursor for this run (see syncMailboxMessages).
   failed: number;
 }
 
-type ProcessOutcome = "matched" | "unmatched" | "alreadyRecorded";
+type ProcessOutcome = "matched" | "unmatched" | "alreadyRecorded" | "bounced";
 
 interface ReplyMatch {
   campaignId: string;
@@ -56,6 +61,7 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
     matched: 0,
     unmatched: 0,
     alreadyRecorded: 0,
+    bounced: 0,
     failed: 0,
   };
 
@@ -164,6 +170,12 @@ async function processInboundMessage(
   mailbox: Tables<"mailboxes">,
   message: ReplyMessage,
 ): Promise<ProcessOutcome> {
+  // A bounce notice is never a reply, whether or not it can be mapped to a
+  // send — it takes its own path and never reaches reply matching/recording.
+  if (message.deliveryReport || isMailSystemSender(message.from.email)) {
+    return processDeliveryReport(supabase, mailbox, message);
+  }
+
   // Cheap pre-check first — the real guarantee against a duplicate
   // 'replied' row is the DB-level partial unique index
   // (email_events_replied_message_id_key), not this check, which only
@@ -234,6 +246,92 @@ async function processInboundMessage(
 // event but crashed before persisting its content, without ever risking a
 // second email_replies row for the same email_event_id: checked here, and
 // backstopped by email_replies_email_event_id_key at the DB level.
+// An asynchronous bounce (see lib/email/delivery-report.ts). Acts only when
+// the report identifies a message this mailbox sent and the address that
+// hard-bounced is exactly that message's lead: the address is suppressed for
+// the owner — which blocks every future send to it, in any campaign (see
+// processCampaignLead's suppression re-check) — the enrollment is marked
+// bounced, and a 'bounced' event is recorded. Anything less certain is only
+// logged: suppressing the wrong lead is worse than missing a bounce.
+//
+// Re-processing the same notice changes nothing: the event is checked first
+// and written last, the suppression and enrollment writes are idempotent on
+// their own, and the mailbox's reply-sync lease means no other run handles
+// this mailbox's messages concurrently.
+async function processDeliveryReport(
+  supabase: Client,
+  mailbox: Tables<"mailboxes">,
+  message: ReplyMessage,
+): Promise<ProcessOutcome> {
+  const report = message.deliveryReport;
+  if (!report || report.hardBouncedRecipients.length === 0) {
+    logUnprocessedBounce(mailbox, message, report ? "no hard-bounced recipient" : "not a delivery status report");
+    return "unmatched";
+  }
+
+  if (await getEmailEventByProviderMessageId(supabase, message.messageId, "bounced")) {
+    return "alreadyRecorded";
+  }
+
+  const sentEvent = await findBouncedSend(supabase, mailbox, report, message);
+  if (!sentEvent) {
+    logUnprocessedBounce(mailbox, message, "bounced message is not one this mailbox sent");
+    return "unmatched";
+  }
+
+  const lead = await getLeadById(supabase, sentEvent.lead_id);
+  if (!report.hardBouncedRecipients.includes(lead.email.toLowerCase())) {
+    logUnprocessedBounce(mailbox, message, "bounced address is not the lead's address");
+    return "unmatched";
+  }
+
+  await createSuppression(supabase, {
+    user_id: mailbox.user_id,
+    email: lead.email,
+    reason: "bounced",
+    source_campaign_id: sentEvent.campaign_id,
+  });
+
+  const campaignLead = await getCampaignLeadByCampaignAndLead(supabase, sentEvent.campaign_id, sentEvent.lead_id);
+  if (campaignLead) await markCampaignLeadBounced(supabase, campaignLead.id);
+
+  await recordEmailEvent(supabase, {
+    campaign_id: sentEvent.campaign_id,
+    lead_id: sentEvent.lead_id,
+    mailbox_id: mailbox.id,
+    event_type: "bounced",
+    provider_message_id: message.messageId,
+    metadata: { source: "delivery-report", bouncedMessageId: sentEvent.provider_message_id },
+  });
+
+  return "bounced";
+}
+
+// The returned original message's Message-ID is the most direct reference;
+// the notice's own In-Reply-To/References are the fallback. Only this
+// owner's sends from this same mailbox qualify.
+async function findBouncedSend(
+  supabase: Client,
+  mailbox: Tables<"mailboxes">,
+  report: DeliveryReport,
+  message: ReplyMessage,
+) {
+  const candidateIds = [report.originalMessageId, message.inReplyTo, ...[...message.references].reverse()].filter(
+    (id): id is string => id !== null,
+  );
+
+  for (const candidateId of new Set(candidateIds)) {
+    const sentEvent = await getSentEventForOwner(supabase, candidateId, mailbox.user_id);
+    if (sentEvent && sentEvent.mailbox_id === mailbox.id) return sentEvent;
+  }
+  return null;
+}
+
+// Ids and the reason only — never the bounced address or message content.
+function logUnprocessedBounce(mailbox: Tables<"mailboxes">, message: ReplyMessage, reason: string) {
+  console.log("[reply-worker] bounce notice not applied", { mailboxId: mailbox.id, messageId: message.messageId, reason });
+}
+
 async function persistReplyContent(
   supabase: Client,
   emailEvent: Tables<"email_events">,

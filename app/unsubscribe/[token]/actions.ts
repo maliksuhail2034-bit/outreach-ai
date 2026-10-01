@@ -10,11 +10,11 @@ import { verifyUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 // "privileged, no user in the loop" carve-out as the sending/reply
 // workers (see CLAUDE.md).
 export async function confirmUnsubscribeAction(token: string): Promise<UnsubscribeResult> {
-  const campaignLeadId = verifyUnsubscribeToken(token);
-  if (!campaignLeadId) {
+  const verified = verifyUnsubscribeToken(token);
+  if (!verified) {
     return { ok: false, error: "This unsubscribe link is invalid." };
   }
 
   const supabase = createAdminClient();
-  return processUnsubscribe(supabase, campaignLeadId);
+  return processUnsubscribe(supabase, verified);
 }

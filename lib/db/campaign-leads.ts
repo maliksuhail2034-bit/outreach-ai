@@ -141,6 +141,29 @@ export async function markCampaignLeadBounced(supabase: Client, id: string) {
   return data.length > 0;
 }
 
+// Unsubscribe (lib/email/unsubscribe.ts): stops the enrollment from any
+// state, as before, but only once — an enrollment already 'unsubscribed' is
+// left as it is, so a repeated click doesn't record a second event. Returns
+// whether the enrollment was updated.
+export async function markCampaignLeadUnsubscribed(supabase: Client, id: string) {
+  const { data, error } = await supabase
+    .from("campaign_leads")
+    .update({ status: "unsubscribed", next_send_at: null, locked_until: null })
+    .eq("id", id)
+    .neq("status", "unsubscribed")
+    .select("id");
+  if (error) throw error;
+  return data.length > 0;
+}
+
+// getCampaignLead for callers where a missing enrollment is expected, not an
+// error: null when the row doesn't exist.
+export async function findCampaignLead(supabase: Client, id: string) {
+  const { data, error } = await supabase.from("campaign_leads").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function removeCampaignLead(supabase: Client, id: string) {
   const { error } = await supabase.from("campaign_leads").delete().eq("id", id);
   if (error) throw error;

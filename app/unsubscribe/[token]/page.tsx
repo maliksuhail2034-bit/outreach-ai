@@ -6,18 +6,21 @@ import { UnsubscribeConfirm } from "@/components/unsubscribe/unsubscribe-confirm
 // Public, unauthenticated route (outside app/(app)/, so app/(app)/layout.tsx's
 // auth redirect never applies here — this page is reached by a recipient
 // clicking a link in an email, not a logged-in user). Verifies the token
-// and looks up who it belongs to for display only; the actual unsubscribe
-// happens on button click (see UnsubscribeConfirm) via a POST, not on this
-// GET render — see that component for why.
+// and finds who it belongs to for display only — from the token itself, or
+// for a legacy token from its enrollment; the actual unsubscribe happens on
+// button click (see UnsubscribeConfirm) via a POST, not on this GET render —
+// see that component for why.
 export default async function UnsubscribePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const campaignLeadId = verifyUnsubscribeToken(token);
+  const verified = verifyUnsubscribeToken(token);
 
   let email: string | null = null;
-  if (campaignLeadId) {
+  if (verified?.kind === "recipient") {
+    email = verified.recipient.email;
+  } else if (verified?.kind === "legacy") {
     try {
       const supabase = createAdminClient();
-      const campaignLead = await getCampaignLead(supabase, campaignLeadId);
+      const campaignLead = await getCampaignLead(supabase, verified.campaignLeadId);
       const lead = await getLeadById(supabase, campaignLead.lead_id);
       email = lead.email;
     } catch {
@@ -25,7 +28,7 @@ export default async function UnsubscribePage({ params }: { params: Promise<{ to
     }
   }
 
-  if (!campaignLeadId || !email) {
+  if (!email) {
     return (
       <Centered>
         <h1 className="text-2xl font-semibold">Link no longer valid</h1>

@@ -3,9 +3,11 @@ import type { Client } from "./shared";
 import {
   addLeadsToCampaign,
   consumeSendNow,
+  findCampaignLead,
   listCampaignLeadsForLead,
   listCampaignLeadsWithTimezones,
   markCampaignLeadBounced,
+  markCampaignLeadUnsubscribed,
   removeCampaignLead,
   requestSendNow,
   updateClaimedCampaignLead,
@@ -22,12 +24,13 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
     eq: vi.fn(),
     order: vi.fn(),
     in: vi.fn(),
+    neq: vi.fn(),
     not: vi.fn(),
     single: vi.fn(),
     maybeSingle: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "delete", "insert", "update", "eq", "order", "in", "not", "single", "maybeSingle"] as const) {
+  for (const method of ["select", "delete", "insert", "update", "eq", "order", "in", "neq", "not", "single", "maybeSingle"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 
@@ -284,6 +287,50 @@ describe("markCampaignLeadBounced", () => {
   it("throws on a query error", async () => {
     const { client } = createMockClient({ data: null, error: new Error("boom") });
     await expect(markCampaignLeadBounced(client, "campaign-lead-1")).rejects.toThrow("boom");
+  });
+});
+
+describe("markCampaignLeadUnsubscribed", () => {
+  it("stops the enrollment from any state except already unsubscribed", async () => {
+    const { client, chainable } = createMockClient({ data: [{ id: "campaign-lead-1" }], error: null });
+
+    expect(await markCampaignLeadUnsubscribed(client, "campaign-lead-1")).toBe(true);
+
+    expect(client.from).toHaveBeenCalledWith("campaign_leads");
+    expect(chainable.update).toHaveBeenCalledWith({ status: "unsubscribed", next_send_at: null, locked_until: null });
+    expect(chainable.eq).toHaveBeenCalledWith("id", "campaign-lead-1");
+    expect(chainable.neq).toHaveBeenCalledWith("status", "unsubscribed");
+  });
+
+  it("returns false when it was already unsubscribed (nothing matched)", async () => {
+    const { client } = createMockClient({ data: [], error: null });
+    expect(await markCampaignLeadUnsubscribed(client, "campaign-lead-1")).toBe(false);
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(markCampaignLeadUnsubscribed(client, "campaign-lead-1")).rejects.toThrow("boom");
+  });
+});
+
+describe("findCampaignLead", () => {
+  it("returns the enrollment by id", async () => {
+    const row = { id: "campaign-lead-1" };
+    const { client, chainable } = createMockClient({ data: row, error: null });
+
+    expect(await findCampaignLead(client, "campaign-lead-1")).toEqual(row);
+    expect(chainable.eq).toHaveBeenCalledWith("id", "campaign-lead-1");
+    expect(chainable.maybeSingle).toHaveBeenCalled();
+  });
+
+  it("returns null when it doesn't exist", async () => {
+    const { client } = createMockClient({ data: null, error: null });
+    expect(await findCampaignLead(client, "campaign-lead-1")).toBeNull();
+  });
+
+  it("throws on a query error", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(findCampaignLead(client, "campaign-lead-1")).rejects.toThrow("boom");
   });
 });
 

@@ -642,7 +642,7 @@ async function processCampaignLead(
   // throw here (a missing env var, a settings read) would otherwise leave a
   // 'pending' attempt behind that the next claim can only treat as an
   // unknown outcome (needs_review) although nothing was sent.
-  const unsubscribeUrl = buildUnsubscribeUrl(campaignLead.id);
+  const unsubscribeUrl = buildUnsubscribeUrl({ userId: campaign.user_id, email: lead.email, campaignLeadId: campaignLead.id });
 
   const mergeTagLead: MergeTagLead = {
     first_name: lead.first_name,

@@ -47,6 +47,10 @@ const download = vi.fn();
 const supabase = { storage: { from: () => ({ download }) } } as unknown as Client;
 const ALWAYS_OPEN = { days: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"], startHour: 0, endHour: 24, timezone: "UTC" };
 
+// The recipient the worker builds its unsubscribe link for: the campaign's
+// owner (user-1, below), LEAD's address and the claimed enrollment (cl-1).
+const RECIPIENT = { userId: "user-1", email: "ada@example.test", campaignLeadId: "cl-1" };
+
 const LEAD = {
   id: "lead-1",
   email: "ada@example.test",
@@ -89,7 +93,7 @@ function useStepBody(body: string) {
 }
 
 function mergeLead(): MergeTagLead {
-  return { ...LEAD, unsubscribeUrl: buildUnsubscribeUrl("cl-1") };
+  return { ...LEAD, unsubscribeUrl: buildUnsubscribeUrl(RECIPIENT) };
 }
 
 async function sendOnce() {
@@ -153,7 +157,7 @@ describe("send worker — rich-text composer bodies", () => {
 
     const hrefs = [...payload.html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
     const tracked = hrefs.filter((href) => href.startsWith("https://app.test/api/track/click/"));
-    expect(hrefs.filter((href) => !tracked.includes(href))).toEqual([buildUnsubscribeUrl("cl-1")]);
+    expect(hrefs.filter((href) => !tracked.includes(href))).toEqual([buildUnsubscribeUrl(RECIPIENT)]);
     expect(tracked).toHaveLength(2);
     expect(payload.html).toContain(">quick call</a>");
     expect(payload.html).toContain(">https://example.com/deck</a>");
@@ -163,12 +167,12 @@ describe("send worker — rich-text composer bodies", () => {
 
     expect(payload.html).toMatch(/<img src="https:\/\/app\.test\/[^"]+" width="1" height="1"/);
     // The footer's unsubscribe link is never tracked.
-    expect(payload.html).toContain(`<a href="${buildUnsubscribeUrl("cl-1")}">Unsubscribe</a>`);
+    expect(payload.html).toContain(`<a href="${buildUnsubscribeUrl(RECIPIENT)}">Unsubscribe</a>`);
   });
 
   it("T: appends the unsubscribe footer to a formatted body that has no unsubscribe link", async () => {
     const payload = await sendOnce();
-    const unsubscribeUrl = buildUnsubscribeUrl("cl-1");
+    const unsubscribeUrl = buildUnsubscribeUrl(RECIPIENT);
     expect(payload.html).toContain(`<a href="${unsubscribeUrl}">Unsubscribe</a>`);
     expect(payload.text.endsWith(unsubscribeUrl)).toBe(true);
   });
@@ -177,7 +181,7 @@ describe("send worker — rich-text composer bodies", () => {
     useStepBody("Thanks!\n\n[Unsubscribe here]({{unsubscribe_link}})");
     db.getSettings.mockResolvedValue({ tracking_enabled: true, unsubscribe_text: null });
     const payload = await sendOnce();
-    const unsubscribeUrl = buildUnsubscribeUrl("cl-1");
+    const unsubscribeUrl = buildUnsubscribeUrl(RECIPIENT);
 
     expect(payload.html).toContain(`>Unsubscribe here</a>`);
     expect(payload.html).not.toContain("<hr/>");

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@/lib/db/shared";
 import type { Tables } from "@/types/database.types";
 import { EmailSendError } from "./provider";
+import { classifySmtpError } from "./providers/smtp";
 
 // H2: a mailbox-level send failure (EmailSendError.mailboxIssue) moves the
 // mailbox to 'error' once and keeps the triggering lead retryable; every
@@ -195,14 +196,14 @@ describe("send worker — failures that must not touch the mailbox", () => {
   });
 
   it("a lead-level failure stays failed, alerts per lead as before, and leaves the mailbox alone", async () => {
-    send.mockRejectedValue(new EmailSendError("Message failed: 550 5.7.26 DMARC", "failed"));
+    send.mockRejectedValue(new EmailSendError("Message failed: 554 5.7.1 Message rejected due to spam policy", "failed"));
 
     await runOnce();
 
     expect(recordedFailure()).toMatchObject({ outcome: "failed" });
     expect(db.markMailboxErrored).not.toHaveBeenCalled();
     expect(sendAlerts()).toHaveLength(1);
-    expect(sendAlerts()[0].message).toBe("Message failed: 550 5.7.26 DMARC");
+    expect(sendAlerts()[0].message).toBe("Message failed: 554 5.7.1 Message rejected due to spam policy");
   });
 
   it("a transient failure keeps the existing retry behavior and leaves the mailbox alone", async () => {
@@ -232,6 +233,75 @@ describe("send worker — failures that must not touch the mailbox", () => {
     await runOnce();
 
     expect(db.recordSendSuccess).toHaveBeenCalledTimes(1);
+    expect(db.markMailboxErrored).not.toHaveBeenCalled();
+  });
+});
+
+// P.2: sender-level 5xx after MAIL FROM, through the real classifier. Before,
+// these were lead-level: each run failed one more lead from the same broken
+// mailbox while the mailbox stayed active and claimable.
+describe("send worker — sender-level rejection from the real SMTP classifier", () => {
+  function smtpRejection(command: string, response: string) {
+    return classifySmtpError(
+      Object.assign(new Error(`Message failed: ${response}`), {
+        code: command === "DATA" ? "EMESSAGE" : "EENVELOPE",
+        responseCode: Number(response.slice(0, 3)),
+        command,
+        response,
+      }),
+    );
+  }
+
+  it.each([
+    ["DATA", "550-5.7.26 Unauthenticated email from example.test is not accepted due to domain's DMARC policy."],
+    ["DATA", "554 5.2.252 SendAsDenied; sender@example.test not allowed to send as other@example.test"],
+    ["DATA", "554 5.2.0 STOREDRV.Submission.Exception:OutboundSpamException"],
+    ["RCPT TO", "554 5.7.1 <lead@example.test>: Relay access denied"],
+  ])("%s %s → mailbox to error, lead kept retryable (not failed), one mailbox alert", async (command, response) => {
+    send.mockRejectedValue(smtpRejection(command, response));
+
+    await runOnce();
+
+    expect(db.markMailboxErrored).toHaveBeenCalledTimes(1);
+    expect(db.markMailboxErrored).toHaveBeenCalledWith(supabase, "mailbox-1");
+    const failure = recordedFailure();
+    expect(failure).toMatchObject({ sendAttemptId: "attempt-1", campaignLeadId: "cl-1", outcome: "retry" });
+    expect(new Date(failure.nextSendAt).getTime()).toBeGreaterThan(Date.now());
+    // Only the mailbox alert — no per-lead "failed" alert.
+    expect(sendAlerts()).toHaveLength(1);
+    expect(sendAlerts()[0].message).toBe(`Mailbox moved to error — sending stopped until it is fixed: Message failed: ${response}`);
+    expect(sendAlerts()[0].context).toMatchObject({ mailboxId: "mailbox-1", campaignLeadId: "cl-1" });
+  });
+
+  it("repeated rejections don't storm: only the run that moves the mailbox to error alerts", async () => {
+    send.mockRejectedValue(smtpRejection("DATA", "550 5.7.26 This mail is unauthenticated (DMARC)"));
+
+    await runOnce();
+    // A later run that reached the same mailbox (e.g. one already in flight
+    // when it errored) finds it no longer active: no transition, no alert.
+    db.markMailboxErrored.mockResolvedValue(false);
+    await runOnce();
+
+    expect(db.markMailboxErrored).toHaveBeenCalledTimes(2);
+    expect(sendAlerts()).toHaveLength(1);
+    expect(db.recordSendFailure.mock.calls.map(([, params]) => params.outcome)).toEqual(["retry", "retry"]);
+  });
+
+  it("a recipient bounce from the real classifier still bounces and leaves the mailbox alone", async () => {
+    send.mockRejectedValue(smtpRejection("RCPT TO", "550 5.1.1 The email account that you tried to reach does not exist."));
+
+    await runOnce();
+
+    expect(recordedFailure()).toMatchObject({ outcome: "bounced" });
+    expect(db.markMailboxErrored).not.toHaveBeenCalled();
+  });
+
+  it("an ambiguous policy rejection stays lead-level, as before", async () => {
+    send.mockRejectedValue(smtpRejection("RCPT TO", "554 5.7.1 Message rejected due to spam policy"));
+
+    await runOnce();
+
+    expect(recordedFailure()).toMatchObject({ outcome: "failed" });
     expect(db.markMailboxErrored).not.toHaveBeenCalled();
   });
 });

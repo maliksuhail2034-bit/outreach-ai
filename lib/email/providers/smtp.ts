@@ -98,11 +98,32 @@ function friendlySmtpTimeoutMessage(error: unknown): string | null {
 // sender/account (not owned, blocked, over quota). Neither can be about the
 // recipient or the content, and neither clears up on retry — except 552 at
 // MAIL FROM, which answers the SIZE parameter, i.e. this one message.
-// RCPT TO and DATA rejections stay lead-level: they mix recipient-side and
-// content policy with sender problems too ambiguously to stop a mailbox on.
-function isMailboxRejection(responseCode: number, command: string | undefined): boolean {
+//
+// RCPT TO and DATA rejections mix recipient-side and content policy with
+// sender problems, so they stay lead-level unless the response itself names
+// the sender as the problem — a failure that would repeat for every lead this
+// mailbox sends to (left lead-level, each one permanently fails a lead):
+//   - an RFC 7372 sender-authentication status (SPF 5.7.23/5.7.24, reverse
+//     DNS 5.7.25, DMARC/multiple checks 5.7.26, null-MX sender 5.7.27);
+//   - wording that only describes the sending account: Microsoft's
+//     SendAsDenied and OutboundSpamException, relaying denied for this
+//     login, an unverified sending address, or the sender address/domain
+//     rejected.
+// Only reached after isRecipientBounce, so a recipient bounce stays one.
+// General "spam policy" or "access denied" rejections stay lead-level: they
+// don't say whether the sender, the recipient or the content was refused.
+const SENDER_AUTHENTICATION_ENHANCED_CODES = new Set(["5.7.23", "5.7.24", "5.7.25", "5.7.26", "5.7.27"]);
+const SENDER_REJECTION_TEXT_PATTERN =
+  /\bSendAsDenied\b|\bOutboundSpamException\b|\brelay(?:ing)?(?: access)? (?:denied|not permitted)\b|\bemail address is not verified\b|\bsender (?:address |domain )?(?:rejected|invalid|does not exist|verify failed)\b/i;
+
+function isMailboxRejection(responseCode: number, command: string | undefined, response: string | undefined): boolean {
   if (command?.startsWith("AUTH")) return true;
-  return command === "MAIL FROM" && responseCode !== 552;
+  if (command === "MAIL FROM") return responseCode !== 552;
+  if (command !== "RCPT TO" && command !== "DATA") return false;
+
+  const enhancedCode = parseEnhancedStatusCode(response);
+  if (enhancedCode && SENDER_AUTHENTICATION_ENHANCED_CODES.has(enhancedCode)) return true;
+  return SENDER_REJECTION_TEXT_PATTERN.test(response ?? "");
 }
 
 // OAuth refresh failures in the EmailSendError shape: a transient token
@@ -137,7 +158,7 @@ export function classifySmtpError(error: unknown): EmailSendError {
     if (err.responseCode >= 500) {
       const bounced = isRecipientBounce({ responseCode: err.responseCode, command: err.command, response: err.response });
       if (bounced) return new EmailSendError(message, "bounced");
-      return new EmailSendError(message, "failed", isMailboxRejection(err.responseCode, err.command));
+      return new EmailSendError(message, "failed", isMailboxRejection(err.responseCode, err.command, err.response));
     }
   }
 

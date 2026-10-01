@@ -168,6 +168,9 @@ describe("classifySmtpError — mailboxIssue marks only mailbox/sender-identity 
     ["MAIL FROM", "553 5.7.1 <me@example.com>: Sender address rejected: not owned by user", "EENVELOPE"],
     ["MAIL FROM", "550 5.1.8 Access denied, bad outbound sender", "EENVELOPE"],
     ["MAIL FROM", "550 5.4.5 Daily user sending limit exceeded.", "EENVELOPE"],
+    ["RCPT TO", "550 5.7.1 Relaying denied", "EENVELOPE"],
+    ["DATA", "550 5.7.26 This mail is unauthenticated (DMARC)", "EMESSAGE"],
+    ["DATA", "554 5.2.252 SendAsDenied; not allowed to send as this sender", "EMESSAGE"],
   ])("%s + %s → failed + mailboxIssue", (command, response, code) => {
     expect(classificationOf(smtpError(command, response, code))).toEqual({ outcome: "failed", mailboxIssue: true });
   });
@@ -175,9 +178,6 @@ describe("classifySmtpError — mailboxIssue marks only mailbox/sender-identity 
   it.each([
     ["MAIL FROM", "552 5.3.4 Message size exceeds fixed limit", "failed"],
     ["RCPT TO", "550 5.1.1 The email account that you tried to reach does not exist.", "bounced"],
-    ["RCPT TO", "550 5.7.1 Relaying denied", "failed"],
-    ["DATA", "550 5.7.26 This mail is unauthenticated (DMARC)", "failed"],
-    ["DATA", "554 5.2.252 SendAsDenied; not allowed to send as this sender", "failed"],
     ["RCPT TO", "421 4.7.0 Try again later", "retry"],
     ["MAIL FROM", "451 4.3.0 Temporary server error", "retry"],
     ["AUTH PLAIN", "454 4.7.0 Temporary authentication failure", "retry"],
@@ -193,6 +193,65 @@ describe("classifySmtpError — mailboxIssue marks only mailbox/sender-identity 
 
   it("an unknown error shape → retry without mailboxIssue", () => {
     expect(classificationOf(new Error("something odd"))).toEqual({ outcome: "retry", mailboxIssue: false });
+  });
+});
+
+describe("classifySmtpError — sender-level rejections after MAIL FROM protect the mailbox", () => {
+  it.each([
+    ["DATA", "550-5.7.26 Unauthenticated email from example.test is not accepted due to domain's DMARC policy."],
+    ["RCPT TO", "550 5.7.26 This mail is unauthenticated, which poses a security risk (DMARC)"],
+    ["DATA", "550 5.7.23 SPF validation failed"],
+    ["DATA", "550 5.7.24 SPF validation error"],
+    ["DATA", "550 5.7.25 Reverse DNS validation failed"],
+    ["RCPT TO", "550 5.7.27 Sender address has null MX"],
+    ["DATA", "554 5.2.252 SendAsDenied; me@example.com not allowed to send as other@example.com"],
+    ["DATA", "554 5.2.0 STOREDRV.Submission.Exception:OutboundSpamException"],
+    ["DATA", "554 Message rejected: Email address is not verified."],
+    ["RCPT TO", "554 5.7.1 <lead@example.com>: Relay access denied"],
+    ["RCPT TO", "550 5.7.1 Relaying not permitted"],
+    ["RCPT TO", "553 5.7.1 <me@example.com>: Sender address rejected: not owned by user"],
+    ["RCPT TO", "553 Sender address invalid: user unknown in local recipient table"],
+    ["RCPT TO", "550 Sender domain does not exist"],
+    ["RCPT TO", "550 #5.7.1 sender does not exist in directory"],
+    ["RCPT TO", "550 5.7.1 Sender verify failed"],
+  ])("%s + %s → failed + mailboxIssue", (command, response) => {
+    expect(classificationOf(smtpError(command, response))).toEqual({ outcome: "failed", mailboxIssue: true });
+  });
+
+  it.each([
+    ["RCPT TO", "554 5.7.1 Message rejected due to spam policy"],
+    ["DATA", "550 5.7.1 Message content rejected"],
+    ["RCPT TO", "550 5.7.1 User unknown or access denied"],
+    ["RCPT TO", "550 Requested action not taken: mailbox unavailable"],
+    ["RCPT TO", "552 5.2.2 Mailbox full"],
+    ["RCPT TO", "554 Transaction failed"],
+    ["RCPT TO", "550 From address user unknown"],
+    ["RCPT TO", "550 Policy rejection, ref 5.7.26"],
+    // A provider quota is only mailbox-level at MAIL FROM (above), as before.
+    ["DATA", "550 5.4.5 Daily user sending limit exceeded."],
+    // Without a known stage nothing can be attributed to the sender.
+    [undefined, "550 5.7.26 This mail is unauthenticated (DMARC)"],
+  ])("%s + %s → failed without mailboxIssue (ambiguous: stays lead-level)", (command, response) => {
+    expect(classificationOf(smtpError(command, response))).toEqual({ outcome: "failed", mailboxIssue: false });
+  });
+
+  it.each([
+    "550 5.1.1 <lead@example.com>: Recipient address rejected: User unknown",
+    "550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient not found by SMTP address lookup",
+  ])("a recipient bounce stays bounced and never blames the mailbox: %s", (response) => {
+    expect(classificationOf(smtpError("RCPT TO", response))).toEqual({ outcome: "bounced", mailboxIssue: false });
+  });
+
+  it.each([
+    ["DATA", "451 4.7.26 Temporary DMARC evaluation failure"],
+    ["RCPT TO", "450 4.7.1 <me@example.com>: Sender address rejected: Domain not found"],
+    ["RCPT TO", "421 4.7.0 Relaying temporarily denied"],
+  ])("a 4xx stays retry and never trips the mailbox: %s + %s", (command, response) => {
+    expect(classificationOf(smtpError(command, response))).toEqual({ outcome: "retry", mailboxIssue: false });
+  });
+
+  it.each(["ESOCKET", "EDNS", "ETLS"])("%s → retry without mailboxIssue", (code) => {
+    expect(classificationOf(Object.assign(new Error("network"), { code }))).toEqual({ outcome: "retry", mailboxIssue: false });
   });
 });
 

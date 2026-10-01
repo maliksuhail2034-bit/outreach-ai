@@ -36,7 +36,7 @@ import {
   resolveLeadSendingWindow,
   resolveSendDecision,
 } from "./scheduling";
-import { buildUnsubscribeUrl } from "./unsubscribe-token";
+import { buildUnsubscribeUrl, oneClickUnsubscribeUrl } from "./unsubscribe-token";
 import { buildOpenTrackingUrl, type OpenTrackingContext, buildClickTrackingUrl, type ClickTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
 import { errorMessage } from "@/lib/monitoring/error-message";
@@ -829,6 +829,7 @@ async function processCampaignLead(
       text,
       ...threadingHeaders,
       ...(attachments.length > 0 ? { attachments } : {}),
+      listUnsubscribeUrl: oneClickUnsubscribeUrl(unsubscribeUrl),
     });
   } catch (error) {
     // Shown to the user as last_error, so an unexpected (non-provider)

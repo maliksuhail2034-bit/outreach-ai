@@ -133,3 +133,11 @@ export function buildUnsubscribeUrl(recipient: UnsubscribeRecipient): string {
   }
   return `${appUrl.replace(/\/$/, "")}/unsubscribe/${signUnsubscribeToken(recipient)}`;
 }
+
+// The List-Unsubscribe header's URL for an email whose footer links to
+// `unsubscribeUrl`: the same token, at the RFC 8058 one-click endpoint
+// (app/unsubscribe/[token]/one-click/route.ts). A page and a Route Handler
+// can't share one route, so it's a child path of the confirmation page.
+export function oneClickUnsubscribeUrl(unsubscribeUrl: string): string {
+  return `${unsubscribeUrl}/one-click`;
+}

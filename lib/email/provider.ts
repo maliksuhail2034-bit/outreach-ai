@@ -24,6 +24,11 @@ export interface OutboundEmailMessage {
   // file bytes, already downloaded from Storage — never a path/URL, so no
   // EmailProvider implementation needs its own storage access.
   attachments?: { filename: string; content: Buffer; contentType: string }[];
+  // Campaign sends only: the RFC 8058 one-click unsubscribe URL (see
+  // oneClickUnsubscribeUrl in lib/email/unsubscribe-token.ts). When set, the
+  // provider adds List-Unsubscribe and List-Unsubscribe-Post headers for it.
+  // Warmup sends never set it — they aren't mail to a prospect.
+  listUnsubscribeUrl?: string;
 }
 
 export interface SendResult {

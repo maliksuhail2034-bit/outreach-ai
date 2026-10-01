@@ -241,6 +241,17 @@ async function resolveSmtpConnection(mailbox: Mailbox) {
   };
 }
 
+// RFC 2369 List-Unsubscribe plus RFC 8058 List-Unsubscribe-Post: mailbox
+// providers that support one-click unsubscribe POST
+// "List-Unsubscribe=One-Click" straight to the URL (handled by
+// app/unsubscribe/[token]/one-click/route.ts) instead of opening it.
+function listUnsubscribeHeaders(url: string): Record<string, string> {
+  return {
+    "List-Unsubscribe": `<${url}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
+}
+
 // Sends exactly one email over SMTP using a single mailbox's credentials.
 // No retries, no batching, no connection reuse across calls — a fresh
 // transport per send, matching the "send one message" scope of this class.
@@ -270,6 +281,7 @@ export class SmtpEmailProvider implements EmailProvider {
         // caller that doesn't set it (unchanged behavior for warmup/reply
         // sends, which never do).
         attachments: message.attachments,
+        headers: message.listUnsubscribeUrl ? listUnsubscribeHeaders(message.listUnsubscribeUrl) : undefined,
       });
 
       return { providerMessageId: normalizeMessageId(info.messageId) ?? info.messageId };

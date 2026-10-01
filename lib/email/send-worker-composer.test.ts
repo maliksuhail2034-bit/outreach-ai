@@ -38,7 +38,7 @@ vi.mock("@/lib/monitoring/error-tracking", () => ({ captureError: vi.fn() }));
 
 import { runSendWorker } from "./send-worker";
 import { renderEmailContent } from "./render-email";
-import { buildUnsubscribeUrl } from "./unsubscribe-token";
+import { buildUnsubscribeUrl, oneClickUnsubscribeUrl, verifyUnsubscribeToken } from "./unsubscribe-token";
 import { verifyClickTrackingToken } from "./tracking-token";
 import type { MergeTagLead } from "./merge-tags";
 
@@ -100,7 +100,13 @@ async function sendOnce() {
   db.claimDueSends.mockResolvedValue([claimedLead()]);
   await runSendWorker(supabase, 1, 1);
   expect(send).toHaveBeenCalledTimes(1);
-  return send.mock.calls[0][0] as { subject: string; html: string; text: string; attachments?: unknown[] };
+  return send.mock.calls[0][0] as {
+    subject: string;
+    html: string;
+    text: string;
+    attachments?: unknown[];
+    listUnsubscribeUrl?: string;
+  };
 }
 
 beforeEach(() => {
@@ -168,6 +174,18 @@ describe("send worker — rich-text composer bodies", () => {
     expect(payload.html).toMatch(/<img src="https:\/\/app\.test\/[^"]+" width="1" height="1"/);
     // The footer's unsubscribe link is never tracked.
     expect(payload.html).toContain(`<a href="${buildUnsubscribeUrl(RECIPIENT)}">Unsubscribe</a>`);
+  });
+
+  it("M6: asks for List-Unsubscribe headers pointing at the one-click endpoint for the footer link's own token", async () => {
+    const payload = await sendOnce();
+    const unsubscribeUrl = buildUnsubscribeUrl(RECIPIENT);
+
+    expect(payload.listUnsubscribeUrl).toBe(`${unsubscribeUrl}/one-click`);
+    expect(payload.listUnsubscribeUrl).toBe(oneClickUnsubscribeUrl(unsubscribeUrl));
+    expect(payload.listUnsubscribeUrl?.startsWith("https://")).toBe(true);
+    const token = payload.listUnsubscribeUrl?.split("/").at(-2) ?? "";
+    expect(token.startsWith("v2.")).toBe(true);
+    expect(verifyUnsubscribeToken(token)).toEqual({ kind: "recipient", recipient: RECIPIENT });
   });
 
   it("T: appends the unsubscribe footer to a formatted body that has no unsubscribe link", async () => {

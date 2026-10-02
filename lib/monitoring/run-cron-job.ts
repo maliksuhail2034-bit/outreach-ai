@@ -41,10 +41,18 @@ function isAuthorized(request: Request): boolean {
 // Track, Item 1: no correctness issue, since supabase-js is a stateless
 // PostgREST/HTTP client rather than a pooled DB connection, but still two
 // objects doing the same job where one suffices).
+//
+// `degraded` lets a route flag a run that finished but didn't fully work —
+// e.g. sync-replies with a mailbox that couldn't be fetched. Such a run is
+// recorded as an error (keeping its full summary) and pings the fail
+// heartbeat, but still returns 200: the job itself didn't crash, so the
+// scheduler shouldn't see a failure. It isn't forwarded to error tracking
+// here — the worker already alerted for the underlying failure.
 export async function runCronJob<T extends object>(
   request: Request,
   job: CronJobName,
   run: (supabase: Client) => Promise<T>,
+  degraded?: (summary: T) => string | null,
 ): Promise<NextResponse> {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -58,29 +66,37 @@ export async function runCronJob<T extends object>(
   try {
     const summary = await run(supabase);
     const executionTimeMs = Date.now() - startedAt;
+    const degradedMessage = degraded?.(summary) ?? null;
 
     // The only place a run's outcome was visible short of querying the DB
     // directly (see job_runs write below) — kept here too so it still shows
     // up in hosting/platform logs even if nothing reads the HTTP body or
     // the job_runs table.
-    console.log(logLabel, JSON.stringify({ ...summary, executionTimeMs }));
+    if (degradedMessage) {
+      console.error(logLabel, JSON.stringify({ ...summary, degraded: degradedMessage, executionTimeMs }));
+    } else {
+      console.log(logLabel, JSON.stringify({ ...summary, executionTimeMs }));
+    }
 
     // Best-effort: persisting the run record must never fail the cron
     // response itself — the console.log above already preserved the
     // outcome even if this write fails.
     await recordJobRun(supabase, {
       job,
-      status: "success",
+      status: degradedMessage ? "error" : "success",
       summary: summary as unknown as Json,
-      error: null,
+      error: degradedMessage,
       duration_ms: executionTimeMs,
       started_at: startedAtDate.toISOString(),
     }).catch((dbError) => {
       console.error(logLabel, "failed to persist job_runs row", dbError);
     });
 
-    await pingHeartbeat(job, "success");
+    await pingHeartbeat(job, degradedMessage ? "fail" : "success");
 
+    if (degradedMessage) {
+      return NextResponse.json({ ...summary, executionTimeMs, degraded: true, error: degradedMessage });
+    }
     return NextResponse.json({ ...summary, executionTimeMs });
   } catch (error) {
     // Overlapping invocations are already safe for the claim-based workers

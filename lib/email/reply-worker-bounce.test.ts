@@ -14,6 +14,7 @@ const db = vi.hoisted(() => ({
   getCampaignLeadByCampaignAndLead: vi.fn(),
   getEmailEventByProviderMessageId: vi.fn(),
   getEmailReplyByEventId: vi.fn(),
+  getLatestJobRunSummary: vi.fn(),
   getLeadById: vi.fn(),
   getSentEventForOwner: vi.fn(),
   listActiveCampaignLeadsForMailbox: vi.fn(),
@@ -128,7 +129,7 @@ describe("reply sync — a mapped hard bounce", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 0, bounced: 1, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 0, bounced: 1, failed: 0, mailboxesFailed: 0, failedMailboxIds: [] });
     // The exact (user_id, email) pair the send worker's suppression re-check
     // looks up — getSuppression(campaign.user_id, lead.email) — so every
     // future send to this address, in any campaign, is blocked.

@@ -23,7 +23,9 @@ const {
   updateMailboxSyncCursorMock,
   getReplyProviderMock,
   captureErrorMock,
+  getLatestJobRunSummaryMock,
 } = vi.hoisted(() => ({
+  getLatestJobRunSummaryMock: vi.fn(),
   getSentEventForOwnerMock: vi.fn(),
   claimMailboxesForReplySyncMock: vi.fn(),
   getCampaignLeadByCampaignAndLeadMock: vi.fn(),
@@ -47,6 +49,7 @@ vi.mock("@/lib/db", () => ({
   getCampaignLeadByCampaignAndLead: getCampaignLeadByCampaignAndLeadMock,
   getEmailEventByProviderMessageId: getEmailEventByProviderMessageIdMock,
   getEmailReplyByEventId: getEmailReplyByEventIdMock,
+  getLatestJobRunSummary: getLatestJobRunSummaryMock,
   getLeadById: getLeadByIdMock,
   getSentEventForOwner: getSentEventForOwnerMock,
   listActiveCampaignLeadsForMailbox: listActiveCampaignLeadsForMailboxMock,
@@ -178,6 +181,7 @@ beforeEach(() => {
   updateLeadMock.mockResolvedValue(undefined);
   getLeadByIdMock.mockResolvedValue(makeLead());
   getEmailReplyByEventIdMock.mockResolvedValue(null);
+  getLatestJobRunSummaryMock.mockResolvedValue(null);
   // M4: header matching goes through the owner-scoped lookup. The sent
   // email "sent-1@example.com" belongs to user-1, the default mailbox's
   // owner; the database filter is mirrored by returning it only for them.
@@ -211,7 +215,7 @@ describe("runReplySyncWorker — matched reply persists content", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 1, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 1, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 0, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(recordEmailReplyMock).toHaveBeenCalledTimes(1);
     expect(recordEmailReplyMock).toHaveBeenCalledWith(supabaseStub, {
       email_event_id: insertedEvent.id,
@@ -266,7 +270,7 @@ describe("runReplySyncWorker — duplicate inbound Message-ID", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, bounced: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, bounced: 0, failed: 0, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(recordEmailEventMock).not.toHaveBeenCalled();
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
   });
@@ -311,7 +315,7 @@ describe("runReplySyncWorker — duplicate inbound Message-ID", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, bounced: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 1, bounced: 0, failed: 0, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(recordEmailReplyMock).toHaveBeenCalledTimes(1);
     expect(recordEmailReplyMock).toHaveBeenCalledWith(supabaseStub, expect.objectContaining({ email_event_id: winningEvent.id }));
     // The losing side must never flip campaign_leads/leads itself — only
@@ -331,7 +335,7 @@ describe("runReplySyncWorker — duplicate inbound Message-ID", () => {
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
     expect(updateCampaignLeadMock).not.toHaveBeenCalled();
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-1", { uidValidity: 100, lastUid: 6 });
@@ -386,7 +390,7 @@ describe("runReplySyncWorker — existing matching behavior is unchanged", () =>
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, bounced: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, bounced: 0, failed: 0, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(recordEmailEventMock).not.toHaveBeenCalled();
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
   });
@@ -411,6 +415,98 @@ describe("runReplySyncWorker — mailbox lease/error isolation preserved", () =>
     expect(releaseMailboxReplySyncLockMock).toHaveBeenCalledWith(supabaseStub, "mailbox-failing");
     expect(captureErrorMock).toHaveBeenCalledWith(expect.objectContaining({ job: "sync-replies" }));
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-ok", expect.anything());
+  });
+});
+
+// Mailbox-level failures are counted (so the route can mark the run
+// degraded) and alerted once per failing streak, not every run.
+describe("runReplySyncWorker — mailbox failure counting and alert deduplication", () => {
+  class FakeOAuthError extends Error {
+    constructor(
+      message: string,
+      public readonly outcome: string,
+    ) {
+      super(message);
+      this.name = "GoogleOAuthError";
+    }
+  }
+
+  function failMailbox(id: string, error: unknown = new FakeOAuthError("Bad Request", "invalid_grant")) {
+    getReplyProviderMock.mockImplementation((mailbox: Tables<"mailboxes">) => ({
+      fetchNewMessages:
+        mailbox.id === id ? vi.fn().mockRejectedValue(error) : vi.fn().mockResolvedValue(fetchResultWith([])),
+    }));
+  }
+
+  beforeEach(() => {
+    claimMailboxesForReplySyncMock.mockResolvedValue([
+      makeMailbox({ id: "mailbox-failing" }),
+      makeMailbox({ id: "mailbox-ok" }),
+    ]);
+  });
+
+  it("counts the failed mailbox and still syncs the others", async () => {
+    failMailbox("mailbox-failing");
+
+    const summary = await runReplySyncWorker(supabaseStub);
+
+    expect(summary).toMatchObject({ mailboxesChecked: 2, mailboxesFailed: 1, failedMailboxIds: ["mailbox-failing"], failed: 0 });
+    expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-ok", expect.anything());
+    expect(releaseMailboxReplySyncLockMock).toHaveBeenCalledWith(supabaseStub, "mailbox-failing");
+  });
+
+  it("alerts once with the error class and outcome when a mailbox starts failing", async () => {
+    getLatestJobRunSummaryMock.mockResolvedValue({ mailboxesFailed: 0, failedMailboxIds: [] });
+    failMailbox("mailbox-failing");
+
+    await runReplySyncWorker(supabaseStub);
+
+    expect(getLatestJobRunSummaryMock).toHaveBeenCalledWith(supabaseStub, "sync-replies");
+    expect(captureErrorMock).toHaveBeenCalledTimes(1);
+    expect(captureErrorMock).toHaveBeenCalledWith({
+      job: "sync-replies",
+      message: "Bad Request",
+      context: { mailboxId: "mailbox-failing", errorClass: "GoogleOAuthError", outcome: "invalid_grant" },
+    });
+  });
+
+  it("doesn't alert again while the same mailbox keeps failing, but still counts it", async () => {
+    getLatestJobRunSummaryMock.mockResolvedValue({ mailboxesFailed: 1, failedMailboxIds: ["mailbox-failing"] });
+    failMailbox("mailbox-failing");
+
+    const summary = await runReplySyncWorker(supabaseStub);
+
+    expect(summary).toMatchObject({ mailboxesFailed: 1, failedMailboxIds: ["mailbox-failing"] });
+    expect(captureErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("alerts once when a previously failing mailbox syncs again", async () => {
+    getLatestJobRunSummaryMock.mockResolvedValue({ mailboxesFailed: 1, failedMailboxIds: ["mailbox-failing"] });
+    getReplyProviderMock.mockReturnValue({ fetchNewMessages: vi.fn().mockResolvedValue(fetchResultWith([])) });
+
+    const summary = await runReplySyncWorker(supabaseStub);
+
+    expect(summary).toMatchObject({ mailboxesFailed: 0, failedMailboxIds: [] });
+    expect(captureErrorMock).toHaveBeenCalledTimes(1);
+    expect(captureErrorMock).toHaveBeenCalledWith({
+      job: "sync-replies",
+      message: "Mailbox reply sync recovered — it synced successfully again.",
+      context: { mailboxId: "mailbox-failing" },
+    });
+  });
+
+  it("still alerts when the previous run's failures can't be read", async () => {
+    getLatestJobRunSummaryMock.mockRejectedValue(new Error("db unavailable"));
+    failMailbox("mailbox-failing", new Error("IMAP auth failed"));
+
+    const summary = await runReplySyncWorker(supabaseStub);
+
+    expect(summary.mailboxesFailed).toBe(1);
+    expect(captureErrorMock).toHaveBeenCalledWith({
+      job: "sync-replies",
+      message: "IMAP auth failed",
+      context: { mailboxId: "mailbox-failing", errorClass: "Error" },
+    });
   });
 });
 
@@ -464,7 +560,7 @@ describe("runReplySyncWorker — header matching is scoped to the mailbox owner"
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, bounced: 0, failed: 0 });
+    expect(summary).toEqual({ mailboxesChecked: 1, messagesFetched: 1, matched: 0, unmatched: 1, alreadyRecorded: 0, bounced: 0, failed: 0, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(getSentEventForOwnerMock).toHaveBeenCalledWith(supabaseStub, "sent-1@example.com", "user-1");
     expect(recordEmailEventMock).not.toHaveBeenCalled();
     expect(recordEmailReplyMock).not.toHaveBeenCalled();
@@ -507,7 +603,7 @@ describe("runReplySyncWorker — failure isolation and cursor preservation", () 
     const first = await runReplySyncWorker(supabaseStub);
 
     expect(insertedMessageIds()).toEqual(["reply-101@example.com", "reply-102@example.com", "reply-103@example.com"]);
-    expect(first).toEqual({ mailboxesChecked: 1, messagesFetched: 4, matched: 2, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1 });
+    expect(first).toEqual({ mailboxesChecked: 1, messagesFetched: 4, matched: 2, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1, mailboxesFailed: 0, failedMailboxIds: [] });
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledTimes(1);
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-1", { uidValidity: 100, lastUid: 102 });
 
@@ -572,7 +668,18 @@ describe("runReplySyncWorker — failure isolation and cursor preservation", () 
 
     const summary = await runReplySyncWorker(supabaseStub);
 
-    expect(summary).toEqual({ mailboxesChecked: 2, messagesFetched: 2, matched: 1, unmatched: 0, alreadyRecorded: 0, bounced: 0, failed: 1 });
+    // A message-level failure isn't a mailbox failure — the mailbox itself synced.
+    expect(summary).toEqual({
+      mailboxesChecked: 2,
+      messagesFetched: 2,
+      matched: 1,
+      unmatched: 0,
+      alreadyRecorded: 0,
+      bounced: 0,
+      failed: 1,
+      mailboxesFailed: 0,
+      failedMailboxIds: [],
+    });
     // updateMailboxSyncCursor also clears the mailbox's lease (reply_sync_locked_until).
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-a", { uidValidity: 100, lastUid: 102 });
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-b", { uidValidity: 100, lastUid: 201 });
@@ -597,14 +704,18 @@ describe("runReplySyncWorker — failure isolation and cursor preservation", () 
       if (id === "mailbox-a") throw DB_ERROR;
     });
 
-    await expect(runReplySyncWorker(supabaseStub)).resolves.toMatchObject({ mailboxesChecked: 2 });
+    await expect(runReplySyncWorker(supabaseStub)).resolves.toMatchObject({
+      mailboxesChecked: 2,
+      mailboxesFailed: 1,
+      failedMailboxIds: ["mailbox-a"],
+    });
 
     expect(releaseMailboxReplySyncLockMock).toHaveBeenCalledWith(supabaseStub, "mailbox-a");
     expect(updateMailboxSyncCursorMock).toHaveBeenCalledWith(supabaseStub, "mailbox-b", { uidValidity: 100, lastUid: 5 });
     expect(captureErrorMock).toHaveBeenCalledWith({
       job: "sync-replies",
       message: "Could not save reply-sync progress for a mailbox: invalid byte sequence for encoding UTF8",
-      context: { mailboxId: "mailbox-a" },
+      context: { mailboxId: "mailbox-a", errorClass: "object" },
     });
   });
 

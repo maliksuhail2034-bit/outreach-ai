@@ -4,6 +4,7 @@ import {
   claimMailboxesForReplySync,
   createSuppression,
   getCampaignLeadByCampaignAndLead,
+  getLatestJobRunSummary,
   getEmailEventByProviderMessageId,
   getEmailReplyByEventId,
   getLeadById,
@@ -40,6 +41,12 @@ export interface ReplySyncSummary {
   // Messages that threw while being processed — each stops its mailbox's
   // cursor for this run (see syncMailboxMessages).
   failed: number;
+  // Mailboxes that couldn't be fetched or whose progress couldn't be saved
+  // this run. app/api/cron/sync-replies/route.ts marks the run degraded
+  // when this is non-zero; the ids are what the next run reads back (via
+  // job_runs) to tell a new failure from one that's already been alerted.
+  mailboxesFailed: number;
+  failedMailboxIds: string[];
 }
 
 type ProcessOutcome = "matched" | "unmatched" | "alreadyRecorded" | "bounced";
@@ -63,6 +70,8 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
     alreadyRecorded: 0,
     bounced: 0,
     failed: 0,
+    mailboxesFailed: 0,
+    failedMailboxIds: [],
   };
 
   // Atomic claim (see claim_mailboxes_for_reply_sync()) instead of a plain
@@ -70,6 +79,7 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
   // rather than double-processed by an overlapping invocation. Reliability
   // Track item 6.
   const mailboxes = await claimMailboxesForReplySync(supabase);
+  const previouslyFailing = await loadPreviouslyFailingMailboxIds(supabase);
 
   for (const mailbox of mailboxes) {
     summary.mailboxesChecked += 1;
@@ -84,7 +94,7 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
       // instead of silently never syncing replies again.
       const message = errorMessage(error, "Unknown error.");
       console.error("[reply-worker]", { mailboxId: mailbox.id, error: message });
-      await captureError({ job: "sync-replies", message, context: { mailboxId: mailbox.id } });
+      await recordMailboxFailure(summary, previouslyFailing, mailbox.id, message, error);
       // Release the claim rather than leaving it locked for the full lease —
       // the next scheduled run is this pipeline's only retry mechanism, so
       // holding the lock any longer would just delay that retry with no
@@ -107,16 +117,75 @@ export async function runReplySyncWorker(supabase: Client): Promise<ReplySyncSum
     } catch (error) {
       const message = errorMessage(error, "Unknown error.");
       console.error("[reply-worker] could not save sync progress", { mailboxId: mailbox.id, error: message });
+      await recordMailboxFailure(
+        summary,
+        previouslyFailing,
+        mailbox.id,
+        `Could not save reply-sync progress for a mailbox: ${message}`,
+        error,
+      );
+      await releaseMailboxReplySyncLock(supabase, mailbox.id).catch(() => undefined);
+      continue;
+    }
+
+    if (previouslyFailing?.has(mailbox.id)) {
       await captureError({
         job: "sync-replies",
-        message: `Could not save reply-sync progress for a mailbox: ${message}`,
+        message: "Mailbox reply sync recovered — it synced successfully again.",
         context: { mailboxId: mailbox.id },
       });
-      await releaseMailboxReplySyncLock(supabase, mailbox.id).catch(() => undefined);
     }
   }
 
   return summary;
+}
+
+// The mailboxes the previous run recorded as failing. Null when that can't
+// be read — recordMailboxFailure then alerts anyway, since a duplicate
+// alert beats a missed one.
+async function loadPreviouslyFailingMailboxIds(supabase: Client): Promise<Set<string> | null> {
+  try {
+    const previous = await getLatestJobRunSummary(supabase, "sync-replies");
+    const ids =
+      previous && typeof previous === "object" && !Array.isArray(previous) && Array.isArray(previous.failedMailboxIds)
+        ? previous.failedMailboxIds
+        : [];
+    return new Set(ids.filter((id): id is string => typeof id === "string"));
+  } catch (error) {
+    console.error("[reply-worker] could not read the previous run's mailbox failures", errorMessage(error, "Unknown error."));
+    return null;
+  }
+}
+
+// Counts a mailbox-level failure, alerting only when the mailbox wasn't
+// already failing in the previous run — a mailbox that fails every run
+// (e.g. an expired OAuth token) alerts once when it starts failing, not
+// every two minutes.
+async function recordMailboxFailure(
+  summary: ReplySyncSummary,
+  previouslyFailing: Set<string> | null,
+  mailboxId: string,
+  message: string,
+  error: unknown,
+): Promise<void> {
+  summary.mailboxesFailed += 1;
+  summary.failedMailboxIds.push(mailboxId);
+  if (previouslyFailing?.has(mailboxId)) return;
+
+  await captureError({ job: "sync-replies", message, context: { mailboxId, ...classifyError(error) } });
+}
+
+// Which kind of error it was — e.g. GoogleOAuthError with outcome
+// "invalid_grant" says the mailbox needs reconnecting, which the provider's
+// own message ("Bad Request") doesn't. Only the name and outcome are read,
+// never the error object itself, which can carry payloads.
+function classifyError(error: unknown): { errorClass: string; outcome?: string } {
+  const errorClass = error instanceof Error ? error.name : typeof error;
+  const outcome =
+    typeof error === "object" && error !== null && "outcome" in error && typeof error.outcome === "string"
+      ? error.outcome
+      : undefined;
+  return outcome ? { errorClass, outcome } : { errorClass };
 }
 
 // Processes one mailbox's fetched messages in UID order and returns the

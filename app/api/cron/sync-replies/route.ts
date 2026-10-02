@@ -15,8 +15,18 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 // as the send route — this must run on Node.js, not the edge runtime.
 export const runtime = "nodejs";
 
+// A mailbox that couldn't be synced marks the run degraded, so the heartbeat
+// reports a failure instead of success (see runCronJob).
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "sync-replies", (supabase) => runReplySyncWorker(supabase));
+  return runCronJob(
+    request,
+    "sync-replies",
+    (supabase) => runReplySyncWorker(supabase),
+    (summary) =>
+      summary.mailboxesFailed > 0
+        ? `${summary.mailboxesFailed} of ${summary.mailboxesChecked} mailboxes failed to sync`
+        : null,
+  );
 }
 
 export async function GET(request: Request) {

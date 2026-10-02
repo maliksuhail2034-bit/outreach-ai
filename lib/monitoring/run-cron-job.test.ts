@@ -126,6 +126,40 @@ describe("runCronJob", () => {
     expect(captureErrorMock).toHaveBeenCalledWith({ job: "send-emails", message: "Unknown error running this job." });
   });
 
+  it("on a degraded run: records an error with the full summary, pings fail, doesn't re-alert, and returns 200", async () => {
+    const summary = { mailboxesChecked: 4, mailboxesFailed: 1, failedMailboxIds: ["mb-1"] };
+    const run = vi.fn().mockResolvedValue(summary);
+    const degraded = vi.fn().mockReturnValue("1 of 4 mailboxes failed to sync");
+
+    const response = await runCronJob(makeRequest({ authorization: "Bearer test-secret" }), "sync-replies", run, degraded);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ...summary, degraded: true, error: "1 of 4 mailboxes failed to sync" });
+    expect(degraded).toHaveBeenCalledWith(summary);
+    expect(recordJobRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ job: "sync-replies", status: "error", error: "1 of 4 mailboxes failed to sync", summary }),
+    );
+    expect(pingHeartbeatMock).toHaveBeenCalledWith("sync-replies", "fail");
+    expect(pingHeartbeatMock).not.toHaveBeenCalledWith("sync-replies", "success");
+    expect(captureErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a run as a plain success when the degraded check returns null", async () => {
+    const run = vi.fn().mockResolvedValue({ mailboxesChecked: 4, mailboxesFailed: 0, failedMailboxIds: [] });
+
+    const response = await runCronJob(makeRequest({ authorization: "Bearer test-secret" }), "sync-replies", run, () => null);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.degraded).toBeUndefined();
+    expect(recordJobRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ job: "sync-replies", status: "success", error: null }),
+    );
+    expect(pingHeartbeatMock).toHaveBeenCalledWith("sync-replies", "success");
+  });
+
   it("still returns the job's result even if persisting the job_runs row fails", async () => {
     recordJobRunMock.mockRejectedValue(new Error("db unavailable"));
     const run = vi.fn().mockResolvedValue({ checked: 1, updated: 1, failed: 0 });

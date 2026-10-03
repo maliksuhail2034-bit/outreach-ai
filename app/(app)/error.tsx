@@ -10,10 +10,10 @@ import { ErrorFallback } from "@/components/ui/error-fallback";
 // a fate with an authenticated-page error and vice versa.
 export default function AppError({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     console.error(error);
@@ -23,7 +23,7 @@ export default function AppError({
     <ErrorFallback
       title="Something went wrong loading this page"
       message={error.message}
-      onRetry={() => unstable_retry()}
+      onRetry={() => retry()}
     />
   );
 }

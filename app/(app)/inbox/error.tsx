@@ -8,16 +8,16 @@ import { ErrorFallback } from "@/components/ui/error-fallback";
 // here keeps the app shell and says what couldn't load.
 export default function InboxError({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     console.error(error);
   }, [error]);
 
   return (
-    <ErrorFallback title="Couldn't load your inbox" message={error.message} onRetry={() => unstable_retry()} />
+    <ErrorFallback title="Couldn't load your inbox" message={error.message} onRetry={() => retry()} />
   );
 }

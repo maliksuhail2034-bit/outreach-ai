@@ -835,6 +835,33 @@ export type Database = {
           },
         ]
       }
+      email_send_usage: {
+        Row: {
+          created_at: string
+          id: string
+          month: string
+          sent_count: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          month: string
+          sent_count?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          month?: string
+          sent_count?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       integrations: {
         Row: {
           config: Json

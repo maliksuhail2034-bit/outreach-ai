@@ -1,5 +1,12 @@
 import type { Client } from "@/lib/db/shared";
-import { countCampaigns, countEmailsSentSince, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
+import {
+  countCampaigns,
+  countLeads,
+  countMailboxes,
+  getMonthlySentEmailCount,
+  getUserOrganization,
+  listCampaigns,
+} from "@/lib/db";
 import { getPlanForOrganization } from "./resolve-plan";
 import { UNLIMITED, type Plan } from "./plans";
 
@@ -131,8 +138,9 @@ export async function assertWithinDailySendLimit(
 // for its own UTC day boundary: a fixed, unambiguous cutover rather than
 // anything tied to a particular org's timezone (this app has no
 // per-org/per-user timezone setting to key it off).
-function startOfCurrentMonthIso(now: Date): string {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+// Formatted as the YYYY-MM-01 date that keys email_send_usage.month.
+function startOfCurrentMonthDate(now: Date): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
 }
 
 // Called from lib/email/send-worker.ts (the admin client, no interactive
@@ -150,9 +158,9 @@ export async function isWithinMonthlyEmailLimit(supabase: Client, userId: string
   const plan = await getPlanForOrganization(supabase, organizationId);
   if (plan.limits.emailsPerMonth === UNLIMITED) return true;
 
-  const campaigns = await listCampaigns(supabase, userId);
-  const campaignIds = (campaigns ?? []).map((campaign) => campaign.id);
-
-  const sentThisMonth = await countEmailsSentSince(supabase, campaignIds, startOfCurrentMonthIso(now));
+  // Counted from email_send_usage, not from email_events/send_attempts rows:
+  // those cascade away when a user deletes a campaign, which would reset
+  // their usage. See lib/db/email-send-usage.ts.
+  const sentThisMonth = await getMonthlySentEmailCount(supabase, userId, startOfCurrentMonthDate(now));
   return sentThisMonth < plan.limits.emailsPerMonth;
 }

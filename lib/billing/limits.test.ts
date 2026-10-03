@@ -35,7 +35,10 @@ function createMockClient(overrides: {
       ? { data: overrides.campaigns, error: null }
       : { count: overrides.countResult?.count ?? 0, error: null, data: null },
     leads: { count: overrides.countResult?.count ?? 0, error: null, data: null },
-    email_events: { count: overrides.emailsSentCount ?? 0, error: null, data: null },
+    email_send_usage: {
+      data: overrides.emailsSentCount === undefined ? null : { sent_count: overrides.emailsSentCount },
+      error: null,
+    },
   };
 
   function createChainable(table: string) {
@@ -64,7 +67,7 @@ function createMockClient(overrides: {
   });
 
   const client = { from } as unknown as Client;
-  return { client };
+  return { client, chainablesByTable };
 }
 
 describe("assertWithinMailboxLimit", () => {
@@ -199,18 +202,12 @@ describe("assertWithinDailySendLimit", () => {
 // here rather than the assertWithin*Limit functions' (userId, userEmail).
 describe("isWithinMonthlyEmailLimit", () => {
   it("allows sending while under the free plan's monthly email limit", async () => {
-    const { client } = createMockClient({
-      campaigns: [{ id: "c-1", daily_limit: 10 }],
-      emailsSentCount: 99, // free plan allows 100/month
-    });
+    const { client } = createMockClient({ emailsSentCount: 99 }); // free plan allows 100/month
     expect(await isWithinMonthlyEmailLimit(client, "user-1")).toBe(true);
   });
 
   it("blocks sending once the free plan's monthly email limit is reached", async () => {
-    const { client } = createMockClient({
-      campaigns: [{ id: "c-1", daily_limit: 10 }],
-      emailsSentCount: 100, // at, not just over, the limit — still blocked
-    });
+    const { client } = createMockClient({ emailsSentCount: 100 }); // at, not just over, the limit — still blocked
     expect(await isWithinMonthlyEmailLimit(client, "user-1")).toBe(false);
   });
 
@@ -222,15 +219,30 @@ describe("isWithinMonthlyEmailLimit", () => {
     const { isWithinMonthlyEmailLimit: freshCheck } = await import("./limits");
     const { client } = createMockClient({
       subscription: { status: "active", stripe_price_id: "price_starter_1month" },
-      campaigns: [{ id: "c-1", daily_limit: 10 }],
       emailsSentCount: 150, // over the free plan's 100, well under starter's 3000
     });
     expect(await freshCheck(client, "user-1")).toBe(true);
     vi.unstubAllEnvs();
   });
 
-  it("has nothing to count and allows sending when the account has no campaigns yet", async () => {
-    const { client } = createMockClient({ campaigns: [] });
+  it("allows sending when nothing has been sent this month yet", async () => {
+    const { client } = createMockClient({});
     expect(await isWithinMonthlyEmailLimit(client, "user-1")).toBe(true);
+  });
+
+  // email_events/send_attempts rows cascade away when a campaign is deleted,
+  // so usage must come from the trigger-maintained counter, keyed by the
+  // owner and the UTC month — never from deletable rows.
+  it("reads the owner's undeletable usage counter for the current UTC month", async () => {
+    const { client, chainablesByTable } = createMockClient({ emailsSentCount: 5 });
+
+    await isWithinMonthlyEmailLimit(client, "user-1", new Date("2026-10-31T23:30:00.000Z"));
+
+    expect(client.from).not.toHaveBeenCalledWith("email_events");
+    expect(client.from).not.toHaveBeenCalledWith("send_attempts");
+    const usage = chainablesByTable.email_send_usage;
+    expect(usage.select).toHaveBeenCalledWith("sent_count");
+    expect(usage.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(usage.eq).toHaveBeenCalledWith("month", "2026-10-01");
   });
 });

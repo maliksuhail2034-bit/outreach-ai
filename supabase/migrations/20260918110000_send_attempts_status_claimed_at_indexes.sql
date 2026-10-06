@@ -1,0 +1,46 @@
+-- Pre-launch checklist item #14 (send_attempts indexing). Verified this
+-- session: send_attempts has only two supporting indexes today —
+-- send_attempts_lead_step_key (the unique constraint on
+-- (campaign_lead_id, sequence_step_id), 20260730100030_send_attempts.sql)
+-- and send_attempts_campaign_lead_id_idx on (campaign_lead_id), same
+-- migration. Both cover claim_send_attempt()/getSendAttempt()/
+-- listSendAttemptsForCampaignLeads() (lib/db/send-attempts.ts), which all
+-- filter on campaign_lead_id (with or without sequence_step_id).
+--
+-- Two read functions in that same file have no supporting index and are
+-- called on every /dashboard and /analytics page load
+-- (app/(app)/dashboard/page.tsx, app/(app)/analytics/page.tsx):
+--
+-- - listSendAttempts(): `select("*").order("claimed_at", { ascending:
+--   false }).limit(limit)` — no WHERE clause at all, so satisfying the
+--   ORDER BY at scale requires sorting every RLS-visible row rather than an
+--   index-order scan with an early LIMIT cutoff.
+-- - countSendAttemptsByStatus(status?): `select(..., { count: "exact",
+--   head: true })` with an optional `.eq("status", status)`. Both call
+--   sites that pass a status ("sent", "failed") force a full scan of every
+--   RLS-visible row to find matches, with no index to narrow the search.
+--
+-- Two single-column indexes, matching the two distinct access patterns
+-- actually used today — not a composite (status, claimed_at) index, since
+-- no query filters on status AND orders by claimed_at together.
+--
+-- Note on countSendAttemptsByStatus(undefined) (the unfiltered "total
+-- attempts" call, also used on the analytics page): no index changes this
+-- one's cost. An unqualified COUNT(*) in Postgres cannot be satisfied from
+-- a btree index alone — every candidate row's heap tuple still needs a
+-- visibility check regardless of which index exists. That call was already
+-- a full scan and stays one; out of scope for an index-only fix (would need
+-- a materialized count, which is an application-level change, not this
+-- batch).
+--
+-- claimed_at desc (not ascending) to match this schema's existing
+-- convention for "most recent N" indexes — see job_runs_job_created_at_idx
+-- (20260811100000_job_runs.sql), audit_logs_organization_id_created_at_idx
+-- (20260812100000_audit_logs.sql), rate_limit_events_scope_identity_created_at_idx
+-- (20260813100000_rate_limit_events.sql).
+--
+-- Purely additive: no table structure change, no RLS/policy change, no
+-- application behavior change.
+
+create index send_attempts_status_idx on public.send_attempts (status);
+create index send_attempts_claimed_at_idx on public.send_attempts (claimed_at desc);

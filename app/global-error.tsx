@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button";
 
 export default function GlobalError({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  retry: () => void;
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -20,7 +20,7 @@ export default function GlobalError({
             <p className="text-sm text-muted-foreground">
               {error.message || "A critical error occurred."}
             </p>
-            <Button type="button" onClick={() => unstable_retry()}>
+            <Button type="button" onClick={() => retry()}>
               Try again
             </Button>
           </div>

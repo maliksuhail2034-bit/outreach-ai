@@ -9,7 +9,7 @@ import {
 } from "./offerings";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, PLANS, type BillingInterval, type PaidPlanId } from "./plans";
 import { calculateIntervalPrice, calculateIntervalPriceInrPaise, formatPlanPrice } from "./pricing";
-import type { Currency } from "./currency";
+import { USD_TO_INR_RATE, type Currency } from "./currency";
 
 const ALL_OFFERINGS = PAID_PLAN_IDS.flatMap((planId) => BILLING_INTERVALS.map((interval) => [planId, interval] as const));
 
@@ -54,13 +54,13 @@ describe("razorpayPlanEnvVar", () => {
 });
 
 describe("getPlanOffering — INR", () => {
-  it.each(ALL_OFFERINGS)("%s %s: amount and display are exactly the existing INR pricing", (planId, interval) => {
+  it.each(ALL_OFFERINGS)("%s %s: charges the existing INR amount, displays the USD price", (planId, interval) => {
     const plan = PLANS[planId];
     const offering = getPlanOffering(planId, interval, "INR");
 
     expect(offering.currency).toBe("INR");
     expect(offering.amount).toBe(calculateIntervalPriceInrPaise(plan.launchPriceCents!, interval));
-    expect(offering.price).toEqual(formatPlanPrice(plan.launchPriceCents!, plan.regularPriceCents!, interval, "INR"));
+    expect(offering.price).toEqual(formatPlanPrice(plan.launchPriceCents!, plan.regularPriceCents!, interval));
   });
 
   it("is available, with its plan id, when the INR env var is set", () => {
@@ -70,8 +70,78 @@ describe("getPlanOffering — INR", () => {
       availability: "available",
       razorpayPlanId: "plan_inr_pro_3m",
       amount: 1_422_720,
-      price: { total: "₹14,227.20" },
+      price: { total: "$148.20" },
+      chargedAs: "₹14,227.20",
     });
+  });
+});
+
+describe("display currency (always USD) vs payment currency", () => {
+  // What each INR Razorpay plan charges per cycle — the amounts the live INR
+  // plans must be created with, and what "Charged as" discloses.
+  const EXPECTED_INR_CHARGE: Record<PaidPlanId, string[]> = {
+    starter: ["₹1,152.00", "₹3,283.20", "₹6,220.80", "₹11,059.20"],
+    growth: ["₹2,112.00", "₹6,019.20", "₹11,404.80", "₹20,275.20"],
+    pro: ["₹4,992.00", "₹14,227.20", "₹26,956.80", "₹47,923.20"],
+    scale: ["₹17,184.00", "₹48,974.40", "₹92,793.60", "₹1,64,966.40"],
+  };
+
+  it.each(ALL_OFFERINGS)("%s %s: INR and USD offerings display the same USD price but charge differently", (planId, interval) => {
+    const inr = getPlanOffering(planId, interval, "INR");
+    const usd = getPlanOffering(planId, interval, "USD");
+
+    expect(inr.price).toEqual(usd.price);
+    expect(inr.price.total).toMatch(/^\$/);
+    expect(inr.discountPercent).toBe(usd.discountPercent);
+    expect(inr.currency).toBe("INR");
+    expect(usd.currency).toBe("USD");
+    expect(inr.amount).toBe(usd.amount * USD_TO_INR_RATE);
+  });
+
+  it("India Starter 1-month: shows $12.00, charges ₹1,152 (115,200 paise) on the INR plan", () => {
+    vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH", "plan_inr_starter_1m");
+
+    expect(getPlanOffering("starter", "1_month", "INR")).toMatchObject({
+      price: { total: "$12.00", regular: "$19.00" },
+      currency: "INR",
+      amount: 115_200,
+      razorpayPlanId: "plan_inr_starter_1m",
+      chargedAs: "₹1,152.00",
+    });
+  });
+
+  it("discloses the INR charge, formatted from the offering's own amount, for every INR offering that is sold", () => {
+    configureAll("INR");
+
+    for (const [planId, interval] of ALL_OFFERINGS) {
+      const offering = getPlanOffering(planId, interval, "INR");
+      if (offering.availability === "not_sold") {
+        expect(offering.chargedAs).toBeNull();
+        continue;
+      }
+      expect(offering.chargedAs).toBe(EXPECTED_INR_CHARGE[planId][BILLING_INTERVALS.indexOf(interval)]);
+    }
+  });
+
+  it("discloses nothing for an INR offering that can't be bought (not configured or not sold)", () => {
+    expect(getPlanOffering("starter", "1_month", "INR").chargedAs).toBeNull();
+
+    configureAll("INR");
+    expect(getPlanOffering("scale", "12_month", "INR").chargedAs).toBeNull();
+  });
+
+  it("never discloses a separate charge for a USD offering — the display price is the charge", () => {
+    configureAll("USD");
+
+    for (const [planId, interval] of ALL_OFFERINGS) {
+      expect(getPlanOffering(planId, interval, "USD").chargedAs).toBeNull();
+    }
+  });
+
+  it("passes the disclosure through to the client view", () => {
+    configureAll("INR");
+
+    expect(toPlanOfferingView(getPlanOffering("starter", "1_month", "INR")).chargedAs).toBe("₹1,152.00");
   });
 });
 

@@ -69,13 +69,15 @@ export default async function BillingPage() {
   const planChangeBlocked =
     subscriptionV2?.provider === "razorpay" && NON_TERMINAL_SUBSCRIPTION_STATUSES.has(subscriptionV2.normalized_status);
 
-  // Resolved by the same region -> currency -> offering chain the Razorpay
-  // checkout action re-runs server-side, so the page never offers a checkout
-  // that action would reject. Razorpay plan ids are server-only env vars and
-  // stay here: PlanList (a Client Component) only gets each offering's
-  // price and availability.
-  const billingCurrency = currencyForRegion(billingRegion);
-  const offerings = getPlanOfferingGrid(billingCurrency);
+  // Resolved by the same region -> payment currency -> offering chain the
+  // Razorpay checkout action re-runs server-side, so the page never offers a
+  // checkout that action would reject. Prices display in USD for everyone;
+  // the payment currency only decides the Razorpay plan and, for INR, the
+  // "Charged as ₹…" disclosure. Razorpay plan ids are server-only env vars
+  // and stay here: PlanList (a Client Component) only gets each offering's
+  // price, disclosure and availability.
+  const paymentCurrency = currencyForRegion(billingRegion);
+  const offerings = getPlanOfferingGrid(paymentCurrency);
   // The internal workspace's plan carries the "scale" id only for type
   // reasons — it must not mark the Scale card as its current plan.
   const currentPlanId = internalUnlimited || plan.id === "free" ? null : plan.id;

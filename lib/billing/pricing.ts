@@ -1,5 +1,5 @@
 import { BILLING_INTERVALS, type BillingInterval } from "./plans";
-import { formatMoney, usdCentsToInrPaise, type Currency } from "./currency";
+import { usdCentsToInrPaise } from "./currency";
 
 // Pure pricing math — no database access, no Stripe call, nothing that
 // depends on which plan/interval combinations actually have a configured
@@ -96,11 +96,12 @@ export function formatCents(cents: number): string {
 // the USD price, converted once via lib/billing/currency.ts's fixed
 // USD_TO_INR_RATE. This is deliberately the only path to an INR amount
 // anywhere in the app: whatever this function returns for a given
-// (launchPriceCents, interval) is both what the checkout UI must disclose
-// to an Indian customer before payment AND what a Razorpay INR Plan for
-// that same plan/interval must be created with — a single source makes
-// "displayed INR amount != Razorpay Plan amount" structurally impossible
-// rather than something to keep in sync by hand.
+// (launchPriceCents, interval) is both what the "Charged as ₹…" disclosure
+// shows an Indian customer before payment (via lib/billing/offerings.ts)
+// AND what a Razorpay INR Plan for that same plan/interval must be created
+// with — a single source makes "disclosed INR amount != Razorpay Plan
+// amount" structurally impossible rather than something to keep in sync by
+// hand.
 export function calculateIntervalPriceInrPaise(launchPriceCents: number, interval: BillingInterval): number {
   return usdCentsToInrPaise(calculateIntervalPrice(launchPriceCents, interval).totalCents);
 }
@@ -112,23 +113,16 @@ export interface DisplayPlanPrice {
   regular: string;
 }
 
-// The formatted prices a plan card shows in the visitor's billing currency
-// (see lib/billing/region.ts). USD keeps formatCents' existing "$12.00"
-// style; INR goes through calculateIntervalPriceInrPaise, so the amount an
-// Indian customer sees is exactly what the Razorpay plan charges.
+// The formatted prices a plan card shows. Always USD, for every visitor: USD
+// is the display currency everywhere, whatever currency the payment is
+// processed in (an Indian customer's INR charge is disclosed separately —
+// see PlanOffering.chargedAs in lib/billing/offerings.ts).
 export function formatPlanPrice(
   launchPriceCents: number,
   regularPriceCents: number,
   interval: BillingInterval,
-  currency: Currency,
 ): DisplayPlanPrice {
   const months = monthsForInterval(interval);
-  if (currency === "INR") {
-    return {
-      total: formatMoney(calculateIntervalPriceInrPaise(launchPriceCents, interval), "INR"),
-      regular: formatMoney(usdCentsToInrPaise(regularPriceCents * months), "INR"),
-    };
-  }
   return {
     total: formatCents(calculateIntervalPrice(launchPriceCents, interval).totalCents),
     regular: formatCents(regularPriceCents * months),

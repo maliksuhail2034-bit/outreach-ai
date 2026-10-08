@@ -56,6 +56,7 @@ import {
   releaseBillingCheckout,
 } from "@/lib/db/billing-v2";
 import { getRazorpayClient } from "@/lib/billing/razorpay";
+import { getPlanOffering } from "@/lib/billing/offerings";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import {
@@ -445,6 +446,23 @@ describe("createRazorpaySubscriptionAction — INR/USD plan resolution", () => {
     await createRazorpaySubscriptionAction({ ...CHECKOUT_INPUT, currency: "INR", amount: 1, planIdOverride: INR_STARTER_1M } as never);
 
     expect(create.mock.calls[0][0]).toMatchObject({ plan_id: USD_STARTER_1M, notes: { currency: "USD" } });
+  });
+
+  it("India Starter 1-month: the $12.00 plan is paid on the INR Razorpay plan, charging ₹1,152", async () => {
+    vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH_USD", USD_STARTER_1M);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_inr" }));
+
+    await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    expect(create.mock.calls[0][0]).toMatchObject({ plan_id: INR_STARTER_1M, notes: { currency: "INR" } });
+    expect(mockClaim).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ currency: "INR" }));
+    // What that INR plan must charge, and what the customer was shown for it.
+    expect(getPlanOffering("starter", "1_month", "INR")).toMatchObject({
+      razorpayPlanId: INR_STARTER_1M,
+      amount: 115_200,
+      price: { total: "$12.00" },
+      chargedAs: "₹1,152.00",
+    });
   });
 
   it("a client-supplied currency can't move an Indian request onto the USD plan", async () => {

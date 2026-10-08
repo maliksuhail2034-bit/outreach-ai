@@ -4,11 +4,14 @@ import { ROUTE_CURRENCY, type Currency } from "./currency";
 // The one place Polimatiq decides which billing region a visitor is in.
 // The marketing pricing section, the billing page, and the Razorpay checkout
 // action all call getBillingRegion() rather than each reading a signal of
-// their own, so display and payment can never disagree about a request.
+// their own, so the disclosed charge and the actual payment can never
+// disagree about a request.
 //
-// India sees and pays INR; everyone else sees and pays USD. Both pay through
-// Razorpay — whether a given plan can actually be bought in that currency is
-// decided by lib/billing/offerings.ts, not here. Unknown always means
+// The region decides the PAYMENT currency only: India pays INR, everyone
+// else pays USD, both through Razorpay. The DISPLAY currency is always USD
+// for everyone (an Indian visitor additionally sees the INR charge) — see
+// lib/billing/offerings.ts, which also decides whether a given plan can
+// actually be bought in that payment currency. Unknown always means
 // international: an unresolvable visitor must never be routed into the INR
 // path by default.
 

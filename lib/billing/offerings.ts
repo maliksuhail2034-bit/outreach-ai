@@ -5,12 +5,21 @@ import {
   formatPlanPrice,
   type DisplayPlanPrice,
 } from "./pricing";
-import type { Currency } from "./currency";
+import { formatMoney, type Currency } from "./currency";
 
-// The one place a plan + interval + currency resolves to what is sold:
-// the amount, its display, the Razorpay plan that charges it, and whether
-// it can be bought at all. The billing page, the checkout action and the
-// webhook's plan check all read from here, so they can't disagree.
+// The one place a plan + interval + payment currency resolves to what is
+// sold: the amount charged, how it's displayed, the Razorpay plan that
+// charges it, and whether it can be bought at all. The billing page, the
+// marketing pricing preview, the checkout action and the webhook's plan
+// check all read from here, so they can't disagree.
+//
+// Two currencies, deliberately kept apart:
+// - DISPLAY currency is always USD. `price` is the USD catalog price, the
+//   same for every visitor.
+// - PAYMENT currency is INR in India and USD everywhere else (decided by
+//   lib/billing/region.ts). `currency`/`amount`/`razorpayPlanId` are the
+//   payment side. When the payment currency isn't USD, `chargedAs` discloses
+//   the exact amount Razorpay will charge, formatted from `amount` itself.
 //
 // Server-only in practice: Razorpay plan ids come from server-only env vars,
 // so in the browser every plan would read as not configured. Client
@@ -69,10 +78,15 @@ export interface PlanOffering {
   planId: PaidPlanId;
   interval: BillingInterval;
   currency: Currency;
-  // In the currency's smallest unit (paise/cents): exactly what the Razorpay
-  // plan for this offering must charge per billing cycle.
+  // The payment currency's smallest unit (paise/cents): exactly what the
+  // Razorpay plan for this offering must charge per billing cycle.
   amount: number;
+  // The customer-facing price — always USD, whatever the payment currency.
   price: DisplayPlanPrice;
+  // `amount` formatted in the payment currency (e.g. "₹1,152.00"), shown as
+  // "Charged as … via Razorpay". Set only when the payment currency isn't
+  // the USD display currency and the offering can actually be bought.
+  chargedAs: string | null;
   discountPercent: number;
   availability: OfferingAvailability;
   // Set only when availability is "available".
@@ -116,7 +130,8 @@ export function getPlanOffering(planId: PaidPlanId, interval: BillingInterval, c
     interval,
     currency,
     amount,
-    price: formatPlanPrice(plan.launchPriceCents, plan.regularPriceCents, interval, currency),
+    price: formatPlanPrice(plan.launchPriceCents, plan.regularPriceCents, interval),
+    chargedAs: currency !== "USD" && availability === "available" ? formatMoney(amount, currency) : null,
     discountPercent: calculateIntervalPrice(plan.launchPriceCents, interval).discountPercent,
     availability,
     razorpayPlanId: availability === "available" ? configuredPlanId : null,
@@ -133,6 +148,7 @@ export function toPlanOfferingView(offering: PlanOffering): PlanOfferingView {
     currency: offering.currency,
     amount: offering.amount,
     price: offering.price,
+    chargedAs: offering.chargedAs,
     discountPercent: offering.discountPercent,
     availability: offering.availability,
     requiresRecurringAuthentication: offering.requiresRecurringAuthentication,

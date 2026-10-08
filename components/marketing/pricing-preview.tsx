@@ -2,7 +2,7 @@ import Link from "next/link";
 import { CheckIcon } from "lucide-react";
 
 import { PAID_PLAN_IDS, PLANS, UNLIMITED, type PaidPlanId } from "@/lib/billing/plans";
-import { formatPlanPrice } from "@/lib/billing/pricing";
+import { getPlanOffering } from "@/lib/billing/offerings";
 import { currencyForRegion, getBillingRegion } from "@/lib/billing/region";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,10 +34,13 @@ function limitLine(label: string, value: number) {
 // has actually signed up.
 const PREVIEW_INTERVAL = "1_month" as const;
 
-// Priced in the visitor's billing currency — INR in India, USD everywhere
-// else and whenever the region can't be determined (lib/billing/region.ts).
+// Prices display in USD for every visitor. The region only decides the
+// payment currency (lib/billing/region.ts): an Indian visitor also sees the
+// exact INR amount Razorpay will charge, from the same offering the checkout
+// uses (lib/billing/offerings.ts); everyone else, including visitors whose
+// region can't be determined, sees the USD price alone.
 export async function PricingPreview() {
-  const currency = currencyForRegion(await getBillingRegion());
+  const paymentCurrency = currencyForRegion(await getBillingRegion());
 
   return (
     <section id="pricing" className="scroll-mt-16 border-b border-border bg-sidebar/40 py-20 sm:py-28">
@@ -58,30 +61,28 @@ export async function PricingPreview() {
           <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {PAID_PLAN_IDS.map((planId) => {
               const plan = PLANS[planId];
-              const price =
-                plan.launchPriceCents !== null && plan.regularPriceCents !== null
-                  ? formatPlanPrice(plan.launchPriceCents, plan.regularPriceCents, PREVIEW_INTERVAL, currency)
-                  : null;
+              const { price, chargedAs } = getPlanOffering(planId, PREVIEW_INTERVAL, paymentCurrency);
 
               return (
                 <Card key={planId} className="flex flex-col">
                   <CardHeader>
                     <CardTitle>{plan.name}</CardTitle>
                     <p className="text-sm text-muted-foreground">{PLAN_BLURBS[planId]}</p>
-                    {price && (
-                      <div className="mt-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-2xl font-semibold tracking-tight">{price.total}</span>
-                          <span className="text-sm text-muted-foreground">/month</span>
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                          <span className="line-through">{price.regular}</span>
-                          <Badge variant="secondary" className="text-[10px]">
-                            Launch price
-                          </Badge>
-                        </div>
+                    <div className="mt-1">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-semibold tracking-tight">{price.total}</span>
+                        <span className="text-sm text-muted-foreground">/month</span>
                       </div>
-                    )}
+                      <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="line-through">{price.regular}</span>
+                        <Badge variant="secondary" className="text-[10px]">
+                          Launch price
+                        </Badge>
+                      </div>
+                      {chargedAs && (
+                        <p className="mt-1 text-xs text-muted-foreground">Charged as {chargedAs} via Razorpay</p>
+                      )}
+                    </div>
                   </CardHeader>
                   <CardContent className="flex-1">
                     <ul className="space-y-2 text-sm text-muted-foreground">

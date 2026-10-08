@@ -145,8 +145,9 @@ describe("calculateIntervalPriceInrPaise", () => {
   });
 });
 
-// Region-based display (lib/billing/region.ts picks the currency). Pinned to
-// the approved launch prices so neither currency can drift.
+// The customer-facing price, always USD (the INR charge disclosure is
+// covered in offerings.test.ts). Pinned to the approved launch prices so it
+// can't drift.
 describe("formatPlanPrice", () => {
   const EXPECTED_USD: Record<string, string[]> = {
     starter: ["$12.00", "$34.20", "$64.80", "$115.20"],
@@ -154,31 +155,17 @@ describe("formatPlanPrice", () => {
     pro: ["$52.00", "$148.20", "$280.80", "$499.20"],
     scale: ["$179.00", "$510.15", "$966.60", "$1718.40"],
   };
-  const EXPECTED_INR: Record<string, string[]> = {
-    starter: ["₹1,152.00", "₹3,283.20", "₹6,220.80", "₹11,059.20"],
-    growth: ["₹2,112.00", "₹6,019.20", "₹11,404.80", "₹20,275.20"],
-    pro: ["₹4,992.00", "₹14,227.20", "₹26,956.80", "₹47,923.20"],
-    scale: ["₹17,184.00", "₹48,974.40", "₹92,793.60", "₹1,64,966.40"],
-  };
   const INTERVALS = ["1_month", "3_month", "6_month", "12_month"] as const;
 
   it.each(Object.keys(EXPECTED_USD))("%s in USD matches the approved prices for every duration", (planId) => {
     const plan = PLANS[planId as keyof typeof PLANS];
     INTERVALS.forEach((interval, i) => {
-      expect(formatPlanPrice(plan.launchPriceCents!, plan.regularPriceCents!, interval, "USD").total).toBe(EXPECTED_USD[planId][i]);
+      expect(formatPlanPrice(plan.launchPriceCents!, plan.regularPriceCents!, interval).total).toBe(EXPECTED_USD[planId][i]);
     });
   });
 
-  it.each(Object.keys(EXPECTED_INR))("%s in INR matches the Razorpay plan amounts for every duration", (planId) => {
-    const plan = PLANS[planId as keyof typeof PLANS];
-    INTERVALS.forEach((interval, i) => {
-      expect(formatPlanPrice(plan.launchPriceCents!, plan.regularPriceCents!, interval, "INR").total).toBe(EXPECTED_INR[planId][i]);
-    });
-  });
-
-  it("derives the crossed-out regular price from the same currency and duration", () => {
-    expect(formatPlanPrice(1200, 1900, "1_month", "USD").regular).toBe("$19.00");
-    expect(formatPlanPrice(1200, 1900, "3_month", "USD").regular).toBe("$57.00");
-    expect(formatPlanPrice(1200, 1900, "1_month", "INR").regular).toBe("₹1,824.00");
+  it("derives the crossed-out regular price from the same duration", () => {
+    expect(formatPlanPrice(1200, 1900, "1_month").regular).toBe("$19.00");
+    expect(formatPlanPrice(1200, 1900, "3_month").regular).toBe("$57.00");
   });
 });

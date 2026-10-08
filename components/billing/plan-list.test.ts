@@ -52,16 +52,44 @@ function renderAction(planId: PaidPlanId, interval: BillingInterval, currency: C
   );
 }
 
+const USD_PRICES = ["$12.00", "$22.00", "$52.00", "$179.00"];
+
+// The price figures a card shows (total and crossed-out regular), in order.
+function displayedPrices(html: string): string[] {
+  return [...html.matchAll(/(?:tracking-tight">|line-through">)([$₹][^<]+)</g)].map((match) => match[1]);
+}
+
 describe("PlanList by billing region", () => {
-  it("India: INR prices with a Razorpay checkout on every plan", () => {
+  it("India: USD prices, each disclosing its INR charge, with a Razorpay checkout on every plan", () => {
     configurePlans("INR", true);
     const html = renderFor("india");
 
-    for (const amount of ["₹1,152.00", "₹2,112.00", "₹4,992.00", "₹17,184.00"]) expect(html).toContain(amount);
-    expect(html).not.toMatch(/\$\d/);
+    for (const amount of USD_PRICES) expect(html).toContain(amount);
+    for (const charge of ["₹1,152.00", "₹2,112.00", "₹4,992.00", "₹17,184.00"]) {
+      expect(html).toContain(`Charged as ${charge} via Razorpay`);
+    }
     expect(html.match(/data-checkout="razorpay"/g)).toHaveLength(4);
     expect(html).toContain("Billed in INR via Razorpay");
     expect(html).not.toContain("International checkout coming soon");
+  });
+
+  it("India, international and unknown country all display the same USD prices", () => {
+    configurePlans("INR", true);
+    configurePlans("USD", true);
+    const india = displayedPrices(renderFor("india"));
+
+    expect(india).toEqual(["$12.00", "$19.00", "$22.00", "$29.00", "$52.00", "$79.00", "$179.00", "$199.00"]);
+    expect(displayedPrices(renderFor("international"))).toEqual(india);
+    expect(displayedPrices(renderFor(billingRegionForCountry(null)))).toEqual(india);
+  });
+
+  it("India without INR plans configured: USD prices and no INR disclosure, since nothing can be bought", () => {
+    configurePlans("INR", false);
+    const html = renderFor("india");
+
+    for (const amount of USD_PRICES) expect(html).toContain(amount);
+    expect(html).not.toContain("Charged as");
+    expect(html).not.toContain("₹");
   });
 
   it("international without USD plans: USD prices, no checkout, and an honest coming-soon state", () => {
@@ -69,8 +97,9 @@ describe("PlanList by billing region", () => {
     configurePlans("USD", false);
     const html = renderFor("international");
 
-    for (const amount of ["$12.00", "$22.00", "$52.00", "$179.00"]) expect(html).toContain(amount);
+    for (const amount of USD_PRICES) expect(html).toContain(amount);
     expect(html).not.toContain("₹");
+    expect(html).not.toContain("Charged as");
     expect(html).not.toContain('data-checkout="razorpay"');
     expect(html).not.toContain('data-checkout="stripe"');
     expect(html.match(/International checkout coming soon/g)).toHaveLength(4);
@@ -80,8 +109,9 @@ describe("PlanList by billing region", () => {
     configurePlans("USD", true);
     const html = renderFor("international");
 
-    for (const amount of ["$12.00", "$22.00", "$52.00", "$179.00"]) expect(html).toContain(amount);
+    for (const amount of USD_PRICES) expect(html).toContain(amount);
     expect(html).not.toContain("₹");
+    expect(html).not.toContain("Charged as");
     expect(html.match(/data-checkout="razorpay"/g)).toHaveLength(4);
     expect(html.match(/Billed in USD via Razorpay/g)).toHaveLength(4);
     expect(html).not.toContain("International checkout coming soon");

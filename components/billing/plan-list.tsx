@@ -108,8 +108,9 @@ export function PlanList({
   // internal unlimited workspace, which isn't on any sellable plan.
   currentPlanId: PaidPlanId | null;
   // Resolved on the server (app/(app)/billing/page.tsx) for this request's
-  // billing currency by lib/billing/offerings.ts — this component only
+  // payment currency by lib/billing/offerings.ts — this component only
   // renders them, it never works out a region, currency or price itself.
+  // Prices are always USD; an INR payment shows its charge via chargedAs.
   offerings: PlanOfferingGrid;
   // The organization already has a live Razorpay subscription, and starting
   // another is rejected server-side (plan changes aren't supported yet) —
@@ -168,6 +169,9 @@ export function PlanList({
                       </Badge>
                     )}
                   </div>
+                  {offering.chargedAs && (
+                    <p className="mt-1 text-xs text-muted-foreground">Charged as {offering.chargedAs} via Razorpay</p>
+                  )}
                 </div>
               </CardHeader>
               <CardContent>

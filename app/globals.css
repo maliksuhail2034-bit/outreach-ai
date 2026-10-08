@@ -205,32 +205,33 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* Branded loading motion (components/ui/brand-loader.tsx). Deliberately slow
-   and small-amplitude. Both stop under prefers-reduced-motion: the breathing
-   mark via motion-reduce:animate-none, the glow via motion-reduce:hidden. */
+/* Branded loading reveal (components/ui/brand-loader.tsx). brand-draw writes
+   the pen mask along the P; brand-settle opens the full mask as the pen
+   finishes, so the drawn P ends exactly as the asset. `both` holds the blank
+   start through the short delay; each element's own resting state is the
+   finished mark, which is what prefers-reduced-motion (animate-none) shows.
+   Timing: the pen finishes at 460ms (20ms delay + 440ms) and the settle
+   (20ms + 93% of 480ms = 466ms) completes the mark at 500ms. */
 @theme {
-  --animate-brand-breathe: brand-breathe 2.4s ease-in-out infinite;
-  --animate-brand-glow: brand-glow 2.4s ease-in-out infinite;
+  --animate-brand-draw: brand-draw 440ms cubic-bezier(0.4, 0, 0.2, 1) 20ms both;
+  --animate-brand-settle: brand-settle 480ms linear 20ms both;
 
-  @keyframes brand-breathe {
-    0%,
-    100% {
-      opacity: 0.8;
-      transform: scale(0.94);
+  @keyframes brand-draw {
+    from {
+      stroke-dashoffset: 1;
     }
-    50% {
-      opacity: 1;
-      transform: scale(1);
+    to {
+      stroke-dashoffset: 0;
     }
   }
 
-  @keyframes brand-glow {
+  @keyframes brand-settle {
     0%,
-    100% {
-      opacity: 0.25;
+    93% {
+      opacity: 0;
     }
-    50% {
-      opacity: 0.6;
+    100% {
+      opacity: 1;
     }
   }
 }

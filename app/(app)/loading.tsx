@@ -1,19 +1,9 @@
 import { RouteLoading } from "@/components/ui/brand-loader";
-import { Skeleton } from "@/components/ui/skeleton";
 
-// Generic fallback for app/(app)/ segments that don't define their own,
-// more specific loading.tsx (every current top-level route already does —
-// see app/(app)/dashboard/loading.tsx and its siblings). Kept deliberately
-// small: it renders inside <main>, alongside the already-interactive
-// Sidebar/TopNav, not as a full-screen overlay that blocks the rest of the
-// shell while a page streams in.
+// Fallback for any app/(app)/ segment without its own loading.tsx. Every
+// route's loading state is the same branded mark (components/ui/
+// brand-loader.tsx), rendered inside <main> so the Sidebar/TopNav stay
+// interactive while a page streams in.
 export default function AppLoading() {
-  return (
-    <RouteLoading label="Loading…">
-      <div className="space-y-6 sm:space-y-8">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-64 w-full rounded-xl" />
-      </div>
-    </RouteLoading>
-  );
+  return <RouteLoading />;
 }

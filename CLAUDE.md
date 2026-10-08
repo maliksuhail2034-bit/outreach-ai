@@ -88,6 +88,36 @@ default for every feature.
   could ship an API key to the browser). Treat AI output as untrusted input —
   validate/sanitize before using it to drive side effects (sending an email,
   writing to the DB).
+- **Billing (Razorpay, INR + USD)**: **display currency is always USD**
+  (every visitor sees the same `$12`/`$22`/`$52`/`$179` catalog prices);
+  **payment currency** is decided by `lib/billing/region.ts` from Vercel's
+  `x-vercel-ip-country` (India → INR, anything else or unknown → USD). An
+  Indian visitor additionally sees "Charged as ₹… via Razorpay", formatted
+  from the INR offering's own amount (USD × the fixed `USD_TO_INR_RATE`).
+  `lib/billing/offerings.ts` is the single place a plan + interval + payment
+  currency resolves to its amount, USD display price, INR disclosure,
+  Razorpay plan id and availability; the billing page, the marketing pricing
+  preview, `createRazorpaySubscriptionAction` and the Razorpay webhook all
+  read from it. The server alone decides currency, amount and plan — nothing
+  the client sends.
+  - Razorpay plan ids are server-only env vars holding **real plan ids
+    created in the Razorpay Dashboard** (Test Mode ids for a test
+    environment, Live Mode ids for production — never invented, never
+    mixed with the other mode's key):
+    - INR (16, set in production): `RAZORPAY_PLAN_<PLAN>_<INTERVAL>`
+    - USD (16, not yet created): `RAZORPAY_PLAN_<PLAN>_<INTERVAL>_USD`
+    - `<PLAN>` is `STARTER`/`GROWTH`/`PRO`/`SCALE`; `<INTERVAL>` is
+      `1MONTH`/`3MONTH`/`6MONTH`/`12MONTH` — e.g.
+      `RAZORPAY_PLAN_SCALE_12MONTH_USD`.
+  - Each plan must charge exactly the offering's amount
+    (`getPlanOffering(...).amount`) per cycle, in its currency, on the
+    matching cycle — the webhook refuses to grant access otherwise.
+  - A missing id fails closed: that offering shows as unavailable and the
+    checkout action refuses it; there is no fallback to the other currency.
+  - INR Scale 6/12-month aren't sold (`NOT_SOLD` in `offerings.ts`) while
+    they exceed Razorpay's ₹50,000 per-transaction limit.
+  - `.env*` (including `.env.example`) is git-ignored, so this list is the
+    tracked record of the plan variables.
 
 ## 5. Folder structure
 

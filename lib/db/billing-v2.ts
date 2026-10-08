@@ -118,6 +118,92 @@ export async function recordPaymentWebhookEventProcessed(
   if (error && !isUniqueViolation(error)) throw error;
 }
 
+// billing_checkouts: the organization's single open checkout (see
+// supabase/migrations/20261007100000_billing_checkouts.sql). claim/attach/
+// release run with the user's own session — the functions check membership
+// against auth.uid() themselves. Only completeBillingCheckout runs as the
+// service role (from the webhook).
+//
+// claimToken is the private capability attach/release require. It only ever
+// lives in the server action that made the claim: never log it, put it in an
+// error, or return it to the browser.
+
+export type BillingCheckoutClaim =
+  | { outcome: "claimed"; checkoutId: string; claimToken: string }
+  // providerSubscriptionId is null while another request is still creating it.
+  | { outcome: "existing"; checkoutId: string; providerSubscriptionId: string | null }
+  | { outcome: "conflict" };
+
+export async function claimBillingCheckout(
+  supabase: Client,
+  values: { organizationId: string; internalPlanId: string; billingInterval: string; currency: string },
+): Promise<BillingCheckoutClaim> {
+  const { data, error } = await supabase
+    .rpc("claim_billing_checkout", {
+      p_organization_id: values.organizationId,
+      p_internal_plan_id: values.internalPlanId,
+      p_billing_interval: values.billingInterval,
+      p_currency: values.currency,
+    })
+    .single();
+  if (error) throw error;
+
+  switch (data.claim_outcome) {
+    case "claimed":
+      if (!data.claim_token) throw new Error("Checkout claim returned no claim token.");
+      return { outcome: "claimed", checkoutId: data.checkout_id, claimToken: data.claim_token };
+    case "existing":
+      return { outcome: "existing", checkoutId: data.checkout_id, providerSubscriptionId: data.checkout_subscription_id };
+    case "conflict":
+      return { outcome: "conflict" };
+    default:
+      throw new Error(`Unexpected checkout claim outcome: ${data.claim_outcome}`);
+  }
+}
+
+export async function attachBillingCheckoutSubscription(
+  supabase: Client,
+  claim: { checkoutId: string; claimToken: string },
+  providerSubscriptionId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("attach_billing_checkout_subscription", {
+    p_checkout_id: claim.checkoutId,
+    p_claim_token: claim.claimToken,
+    p_provider_subscription_id: providerSubscriptionId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function releaseBillingCheckout(
+  supabase: Client,
+  claim: { checkoutId: string; claimToken: string },
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("release_billing_checkout", {
+    p_checkout_id: claim.checkoutId,
+    p_claim_token: claim.claimToken,
+  });
+  if (error) throw error;
+  return data;
+}
+
+// Service role only (the webhook). Marks the open checkout that created this
+// subscription completed; a no-op when there is none (a subscription created
+// before billing_checkouts existed, or one already completed/expired).
+export async function completeBillingCheckout(
+  supabase: Client,
+  provider: string,
+  providerSubscriptionId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("billing_checkouts")
+    .update({ status: "completed" })
+    .eq("provider", provider)
+    .eq("provider_subscription_id", providerSubscriptionId)
+    .eq("status", "open");
+  if (error) throw error;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }

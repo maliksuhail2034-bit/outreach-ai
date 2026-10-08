@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAuditEvent } from "@/lib/db";
 import {
+  completeBillingCheckout,
   hasPaymentWebhookEventBeenProcessed,
   recordPaymentWebhookEventProcessed,
 } from "@/lib/db/billing-v2";
 import { getRazorpayClient, verifyRazorpayWebhookSignature } from "@/lib/billing/razorpay";
 import {
   syncSubscriptionFromRazorpay,
+  toRazorpayPlanEntity,
   toRazorpaySubscriptionEntity,
+  type RazorpayPlanEntity,
   type RazorpaySubscriptionEntity,
   type RazorpaySyncResult,
 } from "@/lib/billing/sync-subscription-v2";
@@ -65,6 +68,13 @@ async function reportSyncOutcome(result: RazorpaySyncResult, context: Record<str
   switch (result.outcome) {
     case "unmapped":
       await reportFailure("subscription notes don't identify an organization/plan/interval — not synced", context);
+      return;
+    case "plan_mismatch":
+      await reportFailure("subscription notes don't match its Razorpay plan — not synced, no access granted", {
+        ...context,
+        organizationId: result.organizationId,
+        reason: result.reason,
+      });
       return;
     case "skipped_other_current_subscription": {
       const details = { ...context, organizationId: result.organizationId, currentSubscriptionId: result.currentSubscriptionId };
@@ -179,9 +189,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Handler failed." }, { status: 500 });
   }
 
+  // The plan is what the subscription actually charges (currency, amount,
+  // cycle); the sync checks the subscription's notes against it before
+  // writing anything. A failed fetch is retried like a failed re-fetch.
+  let plan: RazorpayPlanEntity;
+  try {
+    plan = toRazorpayPlanEntity(await getRazorpayClient().plans.fetch(subscription.plan_id));
+  } catch (error) {
+    console.error("[webhooks/razorpay] plan fetch failed", context, error);
+    await reportFailure("couldn't fetch the subscription's plan from Razorpay — will retry", {
+      ...context,
+      planId: subscription.plan_id,
+    });
+    return NextResponse.json({ error: "Handler failed." }, { status: 500 });
+  }
+
   let result: RazorpaySyncResult;
   try {
-    result = await syncSubscriptionFromRazorpay(supabase, subscription);
+    result = await syncSubscriptionFromRazorpay(supabase, subscription, plan);
 
     // actor_user_id is null — no interactive user in a webhook. Mirrors
     // app/api/webhooks/stripe/route.ts's identical audit-logging shape for
@@ -193,8 +218,13 @@ export async function POST(request: Request) {
         action: "billing_subscription_changed",
         target_type: "subscription",
         target_id: subscription.id,
-        metadata: { razorpayEventType: event.event, razorpayStatus: subscription.status },
+        metadata: { razorpayEventType: event.event, razorpayStatus: subscription.status, currency: result.currency },
       });
+      // Only once the signature, re-fetch and plan check have all passed and
+      // the subscription is synced: from here subscriptions_v2 is what
+      // guards against a second checkout, so the open checkout that created
+      // this subscription is done.
+      await completeBillingCheckout(supabase, PROVIDER, subscription.id);
     }
   } catch (error) {
     // Deliberately not recorded as processed — returning a non-2xx here is

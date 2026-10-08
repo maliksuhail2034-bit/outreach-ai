@@ -25,6 +25,9 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/db/billing-v2", () => ({
   getSubscriptionV2: vi.fn(),
+  claimBillingCheckout: vi.fn(),
+  attachBillingCheckoutSubscription: vi.fn(),
+  releaseBillingCheckout: vi.fn(),
 }));
 vi.mock("@/lib/billing/subscription-view", () => ({
   getActiveSubscriptionView: vi.fn(),
@@ -32,15 +35,6 @@ vi.mock("@/lib/billing/subscription-view", () => ({
 vi.mock("@/lib/billing/razorpay", () => ({
   getRazorpayClient: vi.fn(),
   totalCountForInterval: vi.fn(),
-}));
-vi.mock("@/lib/billing/plans", () => ({
-  getRazorpayPlanId: vi.fn(),
-  // Real value, not mocked — lib/validations/billing.ts's checkoutSchema
-  // (imported transitively by razorpay-actions.ts) builds a real z.enum()
-  // from this at module-load time, so it must stay a real, non-empty array
-  // for that import to succeed at all, independent of what any individual
-  // test needs from it.
-  PAID_PLAN_IDS: ["starter", "growth", "pro", "scale"],
 }));
 vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
   checkRateLimit: vi.fn(),
@@ -55,9 +49,14 @@ vi.mock("@/lib/rate-limit/check-rate-limit", () => ({
 import { headers } from "next/headers";
 import { requireUser } from "@/lib/supabase/auth";
 import { getUserOrganization } from "@/lib/db";
-import { getSubscriptionV2 } from "@/lib/db/billing-v2";
+import {
+  attachBillingCheckoutSubscription,
+  claimBillingCheckout,
+  getSubscriptionV2,
+  releaseBillingCheckout,
+} from "@/lib/db/billing-v2";
 import { getRazorpayClient } from "@/lib/billing/razorpay";
-import { getRazorpayPlanId } from "@/lib/billing/plans";
+import { getPlanOffering } from "@/lib/billing/offerings";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import {
@@ -70,10 +69,22 @@ const mockRequireUser = vi.mocked(requireUser);
 const mockGetUserOrganization = vi.mocked(getUserOrganization);
 const mockGetSubscriptionV2 = vi.mocked(getSubscriptionV2);
 const mockGetRazorpayClient = vi.mocked(getRazorpayClient);
-const mockGetRazorpayPlanId = vi.mocked(getRazorpayPlanId);
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
 const mockGetActiveSubscriptionView = vi.mocked(getActiveSubscriptionView);
 const mockHeaders = vi.mocked(headers);
+const mockClaim = vi.mocked(claimBillingCheckout);
+const mockAttach = vi.mocked(attachBillingCheckoutSubscription);
+const mockRelease = vi.mocked(releaseBillingCheckout);
+
+// The private claim token a fresh claim returns. Distinctive so any leak into
+// a log line, an error or the response is easy to detect.
+const CLAIM_TOKEN = "tok_9f2c6b1e7d4a83c05e1f6a2b9d7c4e8f1a3b5c7d9e0f2a4b6c8d0e1f3a5b7c9d";
+const CLAIM = { checkoutId: "checkout-1", claimToken: CLAIM_TOKEN };
+
+// The real offering resolver (lib/billing/offerings.ts) runs; Razorpay plan
+// ids come from these env vars, the way production configures them.
+const INR_STARTER_1M = "plan_test_starter_1m";
+const USD_STARTER_1M = "plan_test_starter_1m_usd";
 
 // A request as Vercel's edge would present it.
 function requestFrom(values: Record<string, string>) {
@@ -122,7 +133,13 @@ beforeEach(() => {
   // Allowed by default — tests exercising the rate-limit block override this
   // with a rejected promise instead.
   mockCheckRateLimit.mockResolvedValue(undefined);
-  mockGetRazorpayPlanId.mockReturnValue("plan_test_starter_1m");
+  // A fresh claim unless a test sets up an existing open checkout.
+  mockClaim.mockResolvedValue({ outcome: "claimed", ...CLAIM });
+  mockAttach.mockResolvedValue(true);
+  mockRelease.mockResolvedValue(true);
+  // Only the INR Starter 1-month plan is configured unless a test adds more.
+  vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH", INR_STARTER_1M);
+  vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH_USD", "");
   // An Indian request on Vercel unless a test says otherwise.
   vi.stubEnv("VERCEL", "1");
   requestFrom({ "x-vercel-ip-country": "IN" });
@@ -275,7 +292,7 @@ describe("createRazorpaySubscriptionAction", () => {
 
     await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(RateLimitError);
 
-    expect(mockGetRazorpayPlanId).not.toHaveBeenCalled();
+    expect(mockHeaders).not.toHaveBeenCalled();
     expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
   });
@@ -292,12 +309,9 @@ describe("createRazorpaySubscriptionAction", () => {
   });
 });
 
-// Polled after Razorpay Checkout's client-side success callback — the page
-// refreshes into the paid plan only once the WEBHOOK has confirmed it.
-// The button is hidden outside India, but the action is reachable by a
-// direct POST — so it must refuse non-Indian requests on its own, from the
-// server-side country signal only.
-describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
+// The action is reachable by a direct POST, so it decides region, currency
+// and plan on its own, from the server-side country signal only.
+describe("createRazorpaySubscriptionAction — server-side region and currency", () => {
   beforeEach(() => {
     mockRequireUser.mockResolvedValue(USER as never);
     mockGetSubscriptionV2.mockResolvedValue(null);
@@ -318,21 +332,20 @@ describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
     ["GB", { "x-vercel-ip-country": "GB" }],
     ["missing country", {}],
     ["malformed country", { "x-vercel-ip-country": "india" }],
-  ])("rejects a %s request before touching Razorpay or the plan config", async (_label, values) => {
+  ])("treats a %s request as international: no USD plan configured, so it fails closed without touching Razorpay", async (_label, values) => {
     requestFrom(values as Record<string, string>);
     const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
 
-    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/isn't available in your region/);
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/International checkout isn't available yet/);
     expect(create).not.toHaveBeenCalled();
-    expect(mockGetRazorpayPlanId).not.toHaveBeenCalled();
     expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-Indian request whose browser language/locale looks Indian", async () => {
+  it("never gives a non-Indian request whose browser language/locale looks Indian the INR plan", async () => {
     requestFrom({ "x-vercel-ip-country": "US", "accept-language": "hi-IN,en-IN;q=0.9" });
     const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
 
-    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/isn't available in your region/);
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/International checkout isn't available yet/);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -341,7 +354,7 @@ describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
     const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
     const forged = { ...CHECKOUT_INPUT, currency: "INR", provider: "razorpay", country: "IN", region: "india" };
 
-    await expect(createRazorpaySubscriptionAction(forged as never)).rejects.toThrow(/isn't available in your region/);
+    await expect(createRazorpaySubscriptionAction(forged as never)).rejects.toThrow(/International checkout isn't available yet/);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -356,7 +369,7 @@ describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
       plan_id: "plan_test_starter_1m",
       total_count: undefined,
       customer_notify: true,
-      notes: { organization_id: ORGANIZATION.id, internal_plan_id: "starter", billing_interval: "1_month" },
+      notes: { organization_id: ORGANIZATION.id, internal_plan_id: "starter", billing_interval: "1_month", currency: "INR" },
     });
   });
 
@@ -365,7 +378,7 @@ describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
     requestFrom({ "x-vercel-ip-country": "IN" });
     const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
 
-    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/isn't available in your region/);
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/International checkout isn't available yet/);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -388,6 +401,165 @@ describe("createRazorpaySubscriptionAction — India-only enforcement", () => {
     const create = mockCreate(() => Promise.resolve({ id: "sub_second" }));
 
     await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/already have an active subscription/);
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("createRazorpaySubscriptionAction — INR/USD plan resolution", () => {
+  beforeEach(() => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(null);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("international with a configured USD plan: subscribes on the USD plan and notes USD", async () => {
+    vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH_USD", USD_STARTER_1M);
+    requestFrom({ "x-vercel-ip-country": "US" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_usd" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).resolves.toEqual({
+      subscriptionId: "sub_usd",
+      prefillEmail: USER.email,
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plan_id: USD_STARTER_1M,
+        notes: { organization_id: ORGANIZATION.id, internal_plan_id: "starter", billing_interval: "1_month", currency: "USD" },
+      }),
+    );
+  });
+
+  it("international without a USD plan: fails closed, never falls back to the configured INR plan, and logs the missing env var", async () => {
+    requestFrom({ "x-vercel-ip-country": "DE" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/International checkout isn't available yet/);
+    expect(create).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("RAZORPAY_PLAN_STARTER_1MONTH_USD is not set"));
+  });
+
+  it("a client-supplied currency can't move an international request onto the INR plan", async () => {
+    vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH_USD", USD_STARTER_1M);
+    requestFrom({ "x-vercel-ip-country": "US" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_usd" }));
+
+    await createRazorpaySubscriptionAction({ ...CHECKOUT_INPUT, currency: "INR", amount: 1, planIdOverride: INR_STARTER_1M } as never);
+
+    expect(create.mock.calls[0][0]).toMatchObject({ plan_id: USD_STARTER_1M, notes: { currency: "USD" } });
+  });
+
+  it("India Starter 1-month: the $12.00 plan is paid on the INR Razorpay plan, charging ₹1,152", async () => {
+    vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH_USD", USD_STARTER_1M);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_inr" }));
+
+    await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    expect(create.mock.calls[0][0]).toMatchObject({ plan_id: INR_STARTER_1M, notes: { currency: "INR" } });
+    expect(mockClaim).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ currency: "INR" }));
+    // What that INR plan must charge, and what the customer was shown for it.
+    expect(getPlanOffering("starter", "1_month", "INR")).toMatchObject({
+      razorpayPlanId: INR_STARTER_1M,
+      amount: 115_200,
+      price: { total: "$12.00" },
+      chargedAs: "₹1,152.00",
+    });
+  });
+
+  it("a client-supplied currency can't move an Indian request onto the USD plan", async () => {
+    vi.stubEnv("RAZORPAY_PLAN_STARTER_1MONTH_USD", USD_STARTER_1M);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_inr" }));
+
+    await createRazorpaySubscriptionAction({ ...CHECKOUT_INPUT, currency: "USD" } as never);
+
+    expect(create.mock.calls[0][0]).toMatchObject({ plan_id: INR_STARTER_1M, notes: { currency: "INR" } });
+  });
+
+  it("India: an unconfigured INR plan fails closed with the existing message", async () => {
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+    await expect(createRazorpaySubscriptionAction({ planId: "growth", interval: "1_month" })).rejects.toThrow(
+      /This plan isn't available yet/,
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("RAZORPAY_PLAN_GROWTH_1MONTH is not set"));
+  });
+
+  it.each(["6_month", "12_month"] as const)(
+    "India: Scale %s isn't sold (over the ₹50,000 per-transaction limit) even with a plan id configured",
+    async (interval) => {
+      vi.stubEnv(`RAZORPAY_PLAN_SCALE_${interval === "6_month" ? "6" : "12"}MONTH`, "plan_inr_scale_long");
+      const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+      await expect(createRazorpaySubscriptionAction({ planId: "scale", interval })).rejects.toThrow(
+        /isn't available for payments in India yet/,
+      );
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["6_month", "12_month"] as const)("international: Scale %s is sold once its USD plan is configured", async (interval) => {
+    vi.stubEnv(`RAZORPAY_PLAN_SCALE_${interval === "6_month" ? "6" : "12"}MONTH_USD`, "plan_usd_scale_long");
+    requestFrom({ "x-vercel-ip-country": "US" });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_usd_scale" }));
+
+    await createRazorpaySubscriptionAction({ planId: "scale", interval });
+
+    expect(create.mock.calls[0][0]).toMatchObject({ plan_id: "plan_usd_scale_long", notes: { currency: "USD", internal_plan_id: "scale" } });
+  });
+
+  it("refuses the internal unlimited workspace before any rate limit or Razorpay call", async () => {
+    mockGetUserOrganization.mockResolvedValue({ id: "7ef89392-80ba-4447-a7b7-ba642ff00a53" } as never);
+    const create = mockCreate(() => Promise.resolve({ id: "sub_should_not_exist" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/already has unlimited access/);
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("createRazorpaySubscriptionAction — concurrent checkout guard", () => {
+  beforeEach(() => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(null);
+  });
+
+  it("claims the one-per-window billing:checkout_start slot for the organization before creating the subscription", async () => {
+    const create = mockCreate(() => Promise.resolve({ id: "sub_first" }));
+
+    await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    expect(mockCheckRateLimit).toHaveBeenCalledWith("billing:checkout_start", ORGANIZATION.id);
+    const guardCall = mockCheckRateLimit.mock.invocationCallOrder[mockCheckRateLimit.mock.calls.findIndex((c) => c[0] === "billing:checkout_start")];
+    expect(guardCall).toBeLessThan(create.mock.invocationCallOrder[0]);
+  });
+
+  it("refuses a second checkout started inside the window, without creating another subscription", async () => {
+    mockCheckRateLimit.mockImplementation(async (scope) => {
+      if (scope === "billing:checkout_start") throw new RateLimitError(90);
+    });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_second" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/A checkout was just started for this workspace/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("doesn't use up the window on a request rejected earlier (live subscription, unavailable plan)", async () => {
+    mockGetSubscriptionV2.mockResolvedValue(razorpaySubscription({ normalized_status: "active" }) as never);
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/already have an active subscription/);
+
+    mockGetSubscriptionV2.mockResolvedValue(null);
+    await expect(createRazorpaySubscriptionAction({ planId: "pro", interval: "1_month" })).rejects.toThrow(/isn't available yet/);
+
+    expect(mockCheckRateLimit).not.toHaveBeenCalledWith("billing:checkout_start", expect.anything());
+  });
+
+  it("passes through a non-rate-limit failure of the guard (which fails closed) rather than masking it", async () => {
+    mockCheckRateLimit.mockImplementation(async (scope) => {
+      if (scope === "billing:checkout_start") throw new Error("db down");
+    });
+    const create = mockCreate(() => Promise.resolve({ id: "sub_x" }));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow("db down");
     expect(create).not.toHaveBeenCalled();
   });
 });
@@ -442,5 +614,253 @@ describe("getRazorpayCheckoutStatusAction", () => {
     mockRequireUser.mockResolvedValue(USER as never);
     await expect(getRazorpayCheckoutStatusAction("not-a-subscription-id")).rejects.toBeTruthy();
     expect(mockGetSubscriptionV2).not.toHaveBeenCalled();
+  });
+});
+
+describe("createRazorpaySubscriptionAction — durable one-open-checkout claim", () => {
+  beforeEach(() => {
+    mockRequireUser.mockResolvedValue(USER as never);
+    mockGetSubscriptionV2.mockResolvedValue(null);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // What Razorpay returns for an open checkout's subscription and its plan:
+  // INR Starter 1-month, created by this organization, not yet paid.
+  function mockResume(
+    subscriptionOverrides: Record<string, unknown> = {},
+    planOverrides: Record<string, unknown> = {},
+  ) {
+    const create = vi.fn(async () => ({ id: "sub_should_not_exist" }));
+    const fetchSubscription = vi.fn(async () => ({
+      id: "sub_open",
+      plan_id: INR_STARTER_1M,
+      customer_id: null,
+      status: "created",
+      notes: { organization_id: ORGANIZATION.id, internal_plan_id: "starter", billing_interval: "1_month", currency: "INR" },
+      ...subscriptionOverrides,
+    }));
+    const fetchPlan = vi.fn(async () => ({
+      id: INR_STARTER_1M,
+      period: "monthly",
+      interval: 1,
+      item: { amount: 115_200, currency: "INR" },
+      ...planOverrides,
+    }));
+    mockGetRazorpayClient.mockReturnValue({
+      subscriptions: { create, fetch: fetchSubscription },
+      plans: { fetch: fetchPlan },
+    } as unknown as ReturnType<typeof getRazorpayClient>);
+    return { create, fetchSubscription };
+  }
+
+  function existingCheckout(providerSubscriptionId: string | null) {
+    mockClaim.mockResolvedValue({ outcome: "existing", checkoutId: "checkout-1", providerSubscriptionId });
+  }
+
+  it("claims the checkout for the caller's own organization and offering before creating the subscription, then attaches its id", async () => {
+    const create = mockCreate(async () => ({ id: "sub_new" }));
+
+    const result = await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    expect(result.subscriptionId).toBe("sub_new");
+    expect(mockClaim).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: ORGANIZATION.id,
+      internalPlanId: "starter",
+      billingInterval: "1_month",
+      currency: "INR",
+    });
+    expect(mockClaim.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
+    expect(mockAttach).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(CLAIM), "sub_new");
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("keeps the billing:checkout_start rate limit in front of the claim", async () => {
+    mockCreate(async () => ({ id: "sub_new" }));
+
+    await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    const startCall = mockCheckRateLimit.mock.calls.findIndex(([scope]) => scope === "billing:checkout_start");
+    expect(startCall).toBeGreaterThanOrEqual(0);
+    expect(mockCheckRateLimit.mock.invocationCallOrder[startCall]).toBeLessThan(mockClaim.mock.invocationCallOrder[0]);
+  });
+
+  it("never creates a subscription when the claim itself fails (e.g. caller not a member)", async () => {
+    const create = mockCreate(async () => ({ id: "sub_new" }));
+    mockClaim.mockRejectedValue(new Error("not authorized for this organization"));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow();
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("never claims for a request rejected earlier (live subscription, unavailable offering)", async () => {
+    mockGetSubscriptionV2.mockResolvedValueOnce(razorpaySubscription({ normalized_status: "active" }) as never);
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/already have an active subscription/);
+
+    await expect(createRazorpaySubscriptionAction({ planId: "growth", interval: "1_month" })).rejects.toThrow();
+
+    expect(mockClaim).not.toHaveBeenCalled();
+  });
+
+  it("releases the claim when Razorpay explicitly fails to create the subscription, so the org isn't blocked", async () => {
+    mockCreate(async () => {
+      throw { statusCode: 500, error: { description: "internal razorpay detail" } };
+    });
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(
+      "Couldn't start checkout. Try again shortly or contact support.",
+    );
+
+    expect(mockRelease).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(CLAIM));
+    expect(mockAttach).not.toHaveBeenCalled();
+  });
+
+  it("still returns the sanitized error if releasing the claim also fails", async () => {
+    mockCreate(async () => {
+      throw new Error("razorpay down");
+    });
+    mockRelease.mockRejectedValue(new Error("db down"));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(
+      "Couldn't start checkout. Try again shortly or contact support.",
+    );
+  });
+
+  it("returns the created subscription even if attaching its id fails — it exists at Razorpay, so the claim is kept, not released", async () => {
+    mockCreate(async () => ({ id: "sub_new" }));
+    mockAttach.mockRejectedValue(new Error("db down"));
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).resolves.toEqual({
+      subscriptionId: "sub_new",
+      prefillEmail: USER.email,
+    });
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("reuses an open checkout's existing subscription for the same offering instead of creating another", async () => {
+    existingCheckout("sub_open");
+    const { create, fetchSubscription } = mockResume();
+
+    const result = await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    expect(result).toEqual({ subscriptionId: "sub_open", prefillEmail: USER.email });
+    expect(fetchSubscription).toHaveBeenCalledWith("sub_open");
+    expect(create).not.toHaveBeenCalled();
+    expect(mockAttach).not.toHaveBeenCalled();
+  });
+
+  it("never creates a second subscription while another request holds the claim without a provider id yet", async () => {
+    existingCheckout(null);
+    const { create, fetchSubscription } = mockResume();
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/still being prepared/);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(fetchSubscription).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different plan, interval or currency while another checkout is open, without touching Razorpay", async () => {
+    mockClaim.mockResolvedValue({ outcome: "conflict" });
+    const { create } = mockResume();
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/Another checkout is already in progress/);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  const OWN_NOTES = { organization_id: ORGANIZATION.id, internal_plan_id: "starter", billing_interval: "1_month", currency: "INR" };
+
+  it.each([
+    ["another organization's subscription", { notes: { ...OWN_NOTES, organization_id: "org-2" } }, {}],
+    ["a different plan in its notes", { notes: { ...OWN_NOTES, internal_plan_id: "pro" } }, {}],
+    ["a different interval in its notes", { notes: { ...OWN_NOTES, billing_interval: "3_month" } }, {}],
+    ["a different currency in its notes", { notes: { ...OWN_NOTES, currency: "USD" } }, {}],
+    ["a plan charging the wrong amount", {}, { item: { amount: 1, currency: "INR" } }],
+    ["a plan in the wrong currency", {}, { item: { amount: 115_200, currency: "USD" } }],
+    ["a plan on the wrong cycle", {}, { period: "yearly" }],
+    ["a different subscription than requested", { id: "sub_other" }, {}],
+  ])("refuses to reopen an existing subscription with %s, and never creates another", async (_, subscriptionOverrides, planOverrides) => {
+    existingCheckout("sub_open");
+    const { create } = mockResume(subscriptionOverrides, planOverrides);
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/can't be reopened/);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reopen a subscription that is no longer payable (already authenticated, active or cancelled)", async () => {
+    existingCheckout("sub_open");
+    for (const status of ["authenticated", "active", "cancelled"]) {
+      const { create } = mockResume({ status });
+      await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/can't be reopened/);
+      expect(create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("sanitizes a failed re-fetch of the existing subscription and never creates another", async () => {
+    existingCheckout("sub_open");
+    const { create, fetchSubscription } = mockResume();
+    fetchSubscription.mockRejectedValue({ statusCode: 502, error: { description: "raw provider detail" } });
+
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(
+      "Couldn't start checkout. Try again shortly or contact support.",
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("never attaches to or releases an existing checkout — it has no token for one, in progress or not", async () => {
+    existingCheckout(null);
+    mockResume();
+    await expect(createRazorpaySubscriptionAction(CHECKOUT_INPUT)).rejects.toThrow(/still being prepared/);
+
+    existingCheckout("sub_open");
+    mockResume();
+    await createRazorpaySubscriptionAction(CHECKOUT_INPUT);
+
+    expect(mockAttach).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("never lets the claim token reach a log line, an error or the response, on any path", async () => {
+    const logged: unknown[] = [];
+    for (const method of ["error", "warn", "log", "info"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        logged.push(...args);
+      });
+    }
+    const outcomes: unknown[] = [];
+    const run = async () => {
+      try {
+        outcomes.push(await createRazorpaySubscriptionAction(CHECKOUT_INPUT));
+      } catch (error) {
+        outcomes.push(error instanceof Error ? error.message : error);
+      }
+    };
+
+    // Success.
+    mockCreate(async () => ({ id: "sub_new" }));
+    await run();
+    // Razorpay fails; the release then fails too.
+    mockCreate(async () => {
+      throw new Error("razorpay down");
+    });
+    mockRelease.mockRejectedValueOnce(new Error("db down"));
+    await run();
+    // Attach reports nothing attached, then attach throws.
+    mockCreate(async () => ({ id: "sub_new" }));
+    mockAttach.mockResolvedValueOnce(false);
+    await run();
+    mockAttach.mockRejectedValueOnce(new Error("db down"));
+    await run();
+
+    expect(logged.length).toBeGreaterThan(0);
+    const serialized = JSON.stringify([logged.map((entry) => (entry instanceof Error ? entry.message : entry)), outcomes]);
+    expect(serialized).not.toContain(CLAIM_TOKEN);
   });
 });

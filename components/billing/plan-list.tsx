@@ -10,11 +10,9 @@ import {
   UNLIMITED,
   type BillingInterval,
   type PaidPlanId,
-  type PlanId,
 } from "@/lib/billing/plans";
-import { calculateIntervalPrice, formatPlanPrice } from "@/lib/billing/pricing";
-import type { Currency } from "@/lib/billing/currency";
-import type { CheckoutProvider } from "@/lib/billing/region";
+import { discountPercentForInterval } from "@/lib/billing/pricing";
+import type { PlanOfferingGrid, PlanOfferingView } from "@/lib/billing/offerings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,28 +30,95 @@ const INTERVAL_LABEL: Record<BillingInterval, string> = {
   "12_month": "12 months",
 };
 
+function DisabledAction({ label, note }: { label: string; note: string }) {
+  return (
+    <>
+      <Button variant="outline" className="w-full" disabled>
+        {label}
+      </Button>
+      <p className="text-center text-xs text-muted-foreground">{note}</p>
+    </>
+  );
+}
+
+// What a plan card offers for one offering when nothing above (current
+// plan, internal workspace, existing subscription) takes precedence.
+export function OfferingAction({ offering }: { offering: PlanOfferingView }) {
+  const { planId, interval, currency, availability } = offering;
+
+  if (availability === "available") {
+    return (
+      <>
+        <p className="text-center text-xs text-muted-foreground">
+          {currency === "INR"
+            ? "Billed in INR via Razorpay (UPI, cards, netbanking)"
+            : "Billed in USD via Razorpay (international cards)"}
+        </p>
+        <RazorpayCheckoutButton planId={planId} interval={interval}>
+          Upgrade
+        </RazorpayCheckoutButton>
+        {offering.requiresRecurringAuthentication && (
+          <p className="text-center text-xs text-muted-foreground">
+            Each renewal is over ₹15,000, so under RBI rules your bank will ask you to approve it (for example
+            with an OTP). Renewals aren&apos;t automatic until you do.
+          </p>
+        )}
+      </>
+    );
+  }
+
+  if (availability === "not_sold") {
+    return currency === "INR" ? (
+      <DisabledAction
+        label="Not available in India yet"
+        note="Payments over ₹50,000 can't be processed yet. Choose a shorter duration."
+      />
+    ) : (
+      <DisabledAction label="Not available in your region" note="This duration can't be purchased in your region yet." />
+    );
+  }
+
+  // not_configured: no Razorpay plan exists for this offering yet.
+  if (currency === "USD") {
+    return (
+      <DisabledAction
+        label="International checkout coming soon"
+        note="Paid plans for customers outside India aren't available yet."
+      />
+    );
+  }
+  // Stays wired to Stripe so it starts working again unmodified if
+  // STRIPE_PRICE_<PLAN>_<INTERVAL> is ever set; until then it's a disabled
+  // "Coming soon".
+  const priceId = PLANS[planId].priceIds[interval];
+  return (
+    <CheckoutButton planId={planId} interval={interval} disabled={!priceId}>
+      {priceId ? "Upgrade" : "Coming soon"}
+    </CheckoutButton>
+  );
+}
+
 export function PlanList({
   currentPlanId,
-  razorpayPlanIds,
+  offerings,
   planChangeBlocked,
-  currency,
-  checkoutProvider,
+  internalUnlimited,
 }: {
-  currentPlanId: PlanId;
-  // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is a server-only env var — resolved in
-  // the Server Component (app/(app)/billing/page.tsx) and passed down as
-  // plain data, since this component is a Client Component and reading it
-  // here directly would always see `undefined` in the browser bundle.
-  razorpayPlanIds: Record<PaidPlanId, Record<BillingInterval, string | null>>;
+  // null when the organization has no paid plan of its own — including the
+  // internal unlimited workspace, which isn't on any sellable plan.
+  currentPlanId: PaidPlanId | null;
+  // Resolved on the server (app/(app)/billing/page.tsx) for this request's
+  // payment currency by lib/billing/offerings.ts — this component only
+  // renders them, it never works out a region, currency or price itself.
+  // Prices are always USD; an INR payment shows its charge via chargedAs.
+  offerings: PlanOfferingGrid;
   // The organization already has a live Razorpay subscription, and starting
   // another is rejected server-side (plan changes aren't supported yet) —
   // so no other plan is offered as a purchasable "Upgrade".
   planChangeBlocked: boolean;
-  // Both decided on the server by lib/billing/region.ts for this request —
-  // this component only renders them, it never works out a region itself.
-  // INR + "razorpay" in India; USD + null (no checkout yet) everywhere else.
-  currency: Currency;
-  checkoutProvider: CheckoutProvider;
+  // The internal workspace already has unlimited access; nothing is offered
+  // for purchase (the checkout action refuses it too).
+  internalUnlimited: boolean;
 }) {
   const [interval, setInterval] = useState<BillingInterval>("1_month");
 
@@ -80,14 +145,8 @@ export function PlanList({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {PAID_PLAN_IDS.map((planId) => {
           const plan = PLANS[planId];
+          const offering = offerings[planId][interval];
           const isCurrent = currentPlanId === planId;
-          const priceId = plan.priceIds[interval];
-          const razorpayPlanId = razorpayPlanIds[planId][interval];
-          const price = plan.launchPriceCents !== null ? calculateIntervalPrice(plan.launchPriceCents, interval) : null;
-          const displayPrice =
-            plan.launchPriceCents !== null && plan.regularPriceCents !== null
-              ? formatPlanPrice(plan.launchPriceCents, plan.regularPriceCents, interval, currency)
-              : null;
 
           return (
             <Card key={planId} className={isCurrent ? "border-primary/40" : undefined}>
@@ -96,23 +155,24 @@ export function PlanList({
                   <CardTitle>{plan.name}</CardTitle>
                   {isCurrent && <Badge>Current plan</Badge>}
                 </div>
-                {price && displayPrice && (
-                  <div className="mt-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-semibold tracking-tight">{displayPrice.total}</span>
-                      <span className="text-sm text-muted-foreground">/ {INTERVAL_LABEL[interval]}</span>
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="line-through">{displayPrice.regular}</span>
-                      <span>launch price</span>
-                      {price.discountPercent > 0 && (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Save {price.discountPercent}%
-                        </Badge>
-                      )}
-                    </div>
+                <div className="mt-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-semibold tracking-tight">{offering.price.total}</span>
+                    <span className="text-sm text-muted-foreground">/ {INTERVAL_LABEL[interval]}</span>
                   </div>
-                )}
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="line-through">{offering.price.regular}</span>
+                    <span>launch price</span>
+                    {offering.discountPercent > 0 && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Save {offering.discountPercent}%
+                      </Badge>
+                    )}
+                  </div>
+                  {offering.chargedAs && (
+                    <p className="mt-1 text-xs text-muted-foreground">Charged as {offering.chargedAs} via Razorpay</p>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2 text-sm text-muted-foreground">
@@ -134,61 +194,17 @@ export function PlanList({
                   <Button variant="outline" className="w-full" disabled>
                     Current plan
                   </Button>
+                ) : internalUnlimited ? (
+                  <Button variant="outline" className="w-full" disabled>
+                    Included in Unlimited
+                  </Button>
                 ) : planChangeBlocked ? (
-                  <>
-                    <Button variant="outline" className="w-full" disabled>
-                      Plan changes not available yet
-                    </Button>
-                    <p className="text-center text-xs text-muted-foreground">
-                      You already have a subscription. Switching plans isn&apos;t supported yet.
-                    </p>
-                  </>
-                ) : checkoutProvider === null ? (
-                  // Outside India (or region unknown): no international
-                  // provider exists yet, and Razorpay's Indian rails would
-                  // decline a foreign card — so no checkout at all, and the
-                  // Razorpay action refuses these requests server-side too.
-                  <>
-                    <Button variant="outline" className="w-full" disabled>
-                      International checkout coming soon
-                    </Button>
-                    <p className="text-center text-xs text-muted-foreground">
-                      Paid plans for customers outside India aren&apos;t available yet.
-                    </p>
-                  </>
-                ) : razorpayPlanId ? (
-                  // Razorpay is the active payment provider (Stripe was
-                  // dropped — priceId below is null for every plan/interval
-                  // until Stripe is reconfigured, if ever). A configured
-                  // Razorpay plan id means this plan/interval is genuinely
-                  // purchasable right now, so it gets the real, primary
-                  // action instead of sitting under a misleading "Coming
-                  // soon" Stripe button. No test/live wording here by
-                  // design — NEXT_PUBLIC_RAZORPAY_KEY_ID's rzp_test_/
-                  // rzp_live_ prefix determines what actually happens when
-                  // this button is pressed; the label doesn't try to track
-                  // that env-configured mode, so it can never say "test
-                  // mode" while a live key is quietly charging someone.
-                  <>
-                    {/* Only reached in India, where the card's price above is
-                        already the INR amount this plan's Razorpay plan
-                        charges (formatPlanPrice -> calculateIntervalPriceInrPaise). */}
-                    <p className="text-center text-xs text-muted-foreground">
-                      Billed in INR via Razorpay (UPI, cards, netbanking)
-                    </p>
-                    <RazorpayCheckoutButton planId={planId} interval={interval}>
-                      Upgrade
-                    </RazorpayCheckoutButton>
-                  </>
+                  <DisabledAction
+                    label="Plan changes not available yet"
+                    note="You already have a subscription. Switching plans isn't supported yet."
+                  />
                 ) : (
-                  // Neither provider has a plan id configured for this
-                  // plan/interval — nothing to sell yet, so "Coming soon" is
-                  // accurate rather than disabled-with-no-explanation. Stays
-                  // wired to Stripe so it starts working again unmodified if
-                  // STRIPE_PRICE_<PLAN>_<INTERVAL> is ever set.
-                  <CheckoutButton planId={planId} interval={interval} disabled={!priceId}>
-                    {priceId ? "Upgrade" : "Coming soon"}
-                  </CheckoutButton>
+                  <OfferingAction offering={offering} />
                 )}
               </CardFooter>
             </Card>
@@ -197,12 +213,4 @@ export function PlanList({
       </div>
     </div>
   );
-}
-
-// Local copy of the badge's discount percent (not the full breakdown the
-// price display needs) so the duration toggle above can label itself
-// without depending on any one plan's launchPriceCents — the discount
-// fraction is the same across every plan.
-function discountPercentForInterval(interval: BillingInterval): number {
-  return calculateIntervalPrice(100, interval).discountPercent;
 }

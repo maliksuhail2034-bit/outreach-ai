@@ -4,17 +4,18 @@ import { ROUTE_CURRENCY, type Currency } from "./currency";
 // The one place Polimatiq decides which billing region a visitor is in.
 // The marketing pricing section, the billing page, and the Razorpay checkout
 // action all call getBillingRegion() rather than each reading a signal of
-// their own, so display and payment can never disagree about a request.
+// their own, so the disclosed charge and the actual payment can never
+// disagree about a request.
 //
-// India sees INR and pays through Razorpay; everyone else sees USD. Unknown
-// always means international: an unresolvable visitor must never be routed
-// into the INR/Razorpay path by default.
+// The region decides the PAYMENT currency only: India pays INR, everyone
+// else pays USD, both through Razorpay. The DISPLAY currency is always USD
+// for everyone (an Indian visitor additionally sees the INR charge) — see
+// lib/billing/offerings.ts, which also decides whether a given plan can
+// actually be bought in that payment currency. Unknown always means
+// international: an unresolvable visitor must never be routed into the INR
+// path by default.
 
 export type BillingRegion = "india" | "international";
-
-// Null until the international provider exists — international visitors get
-// no checkout rather than a Razorpay one Indian rails would decline.
-export type CheckoutProvider = "razorpay" | null;
 
 // Set by Vercel's edge from the requester's IP: a two-letter ISO 3166-1 code.
 // Browser language, Accept-Language, timezone, and anything the client sends
@@ -39,10 +40,6 @@ export function billingRegionForCountry(country: string | null): BillingRegion {
 
 export function currencyForRegion(region: BillingRegion): Currency {
   return region === "india" ? ROUTE_CURRENCY.razorpay_india : ROUTE_CURRENCY.international;
-}
-
-export function checkoutProviderForRegion(region: BillingRegion): CheckoutProvider {
-  return region === "india" ? "razorpay" : null;
 }
 
 export async function getBillingRegion(): Promise<BillingRegion> {

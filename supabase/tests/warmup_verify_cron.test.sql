@@ -87,10 +87,10 @@ select is((select array_agg(distinct outcome) from call_results), array['denied'
   'anon, authenticated and service_role are all denied for both /api/cron/warmup-cycle and /api/cron/verify-leads');
 
 -- Allowlist -------------------------------------------------------------------
-select throws_ok($$select private.invoke_cron_endpoint('/api/cron/analytics-rollup')$$, '42501', null,
+select throws_ok($$select private.invoke_cron_endpoint('/api/cron/not-a-cron-job')$$, '42501', null,
   'an unrelated cron route is still rejected');
-select throws_ok($$select private.invoke_cron_endpoint('/api/cron/deliverability-health-check')$$, '42501', null,
-  'deliverability-health-check (not migrated in this batch) is rejected');
+select throws_ok($$select private.invoke_cron_endpoint('/api/cron/deliverability-health-check-all')$$, '42501', null,
+  'a path sharing a later-allowed route prefix but not explicitly allowed is rejected');
 select throws_ok($$select private.invoke_cron_endpoint('/api/cron/warmup-cycle/../send-emails')$$, '42501', null,
   'a path that merely starts with the new allowed warmup route is rejected');
 select throws_ok($$select private.invoke_cron_endpoint('/api/cron/verify-leads-all')$$, '42501', null,

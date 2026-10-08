@@ -16,7 +16,7 @@ vi.mock("@/lib/db", () => ({
   upsertMailboxHealth: upsertMailboxHealthMock,
 }));
 
-import { runDeliverabilityHealthCheckWorker } from "./health-check-worker";
+import { deliverabilityHealthCheckDegraded, runDeliverabilityHealthCheckWorker } from "./health-check-worker";
 
 const supabase = {} as unknown as Client;
 
@@ -105,5 +105,18 @@ describe("runDeliverabilityHealthCheckWorker", () => {
 
     expect(summary).toEqual({ checked: 0, updated: 0, failed: 0 });
     expect(upsertMailboxHealthMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("deliverabilityHealthCheckDegraded", () => {
+  it("treats a run with no failed mailboxes as healthy", () => {
+    expect(deliverabilityHealthCheckDegraded({ checked: 7, updated: 7, failed: 0 })).toBeNull();
+    expect(deliverabilityHealthCheckDegraded({ checked: 0, updated: 0, failed: 0 })).toBeNull();
+  });
+
+  it("marks a run degraded as soon as one mailbox fails", () => {
+    expect(deliverabilityHealthCheckDegraded({ checked: 7, updated: 6, failed: 1 })).toBe(
+      "1 of 7 mailbox health checks failed",
+    );
   });
 });

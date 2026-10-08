@@ -17,6 +17,14 @@ export interface DeliverabilityHealthCheckSummary {
   failed: number;
 }
 
+// A run where any mailbox's recompute failed is degraded (see
+// lib/monitoring/run-cron-job.ts): the recompute only reads and writes our
+// own data, so a failure is ours to fix, and the heartbeat should say so
+// rather than stay green behind the per-mailbox alerts.
+export function deliverabilityHealthCheckDegraded(summary: DeliverabilityHealthCheckSummary): string | null {
+  return summary.failed > 0 ? `${summary.failed} of ${summary.checked} mailbox health checks failed` : null;
+}
+
 // Orchestration only, mirrors lib/email/reply-worker.ts's shape: this file
 // contains no scoring logic of its own, only the same recompute
 // recalculateMailboxHealthAction (settings/deliverability/actions.ts)

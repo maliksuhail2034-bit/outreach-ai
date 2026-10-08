@@ -10,6 +10,14 @@ export interface AnalyticsRollupSummary {
   failed: number;
 }
 
+// A run where any rollup row (mailbox, campaign or domain level) failed to
+// save is degraded (see lib/monitoring/run-cron-job.ts): the analytics for
+// that day are incomplete, so the heartbeat should fail rather than stay
+// green behind the per-row alerts.
+export function analyticsRollupDegraded(summary: AnalyticsRollupSummary): string | null {
+  return summary.failed > 0 ? `${summary.failed} rollup rows failed to save for ${summary.since}..${summary.until}` : null;
+}
+
 // Defaults to "yesterday" (one full UTC day) — a daily cron tick rolling up
 // the day that just completed. A wider {since, until} range (Scalability
 // Track item 5's backfill capability) is how the same worker computes

@@ -7,14 +7,15 @@ import { PolimatiqLogo } from "@/components/shell/polimatiq-logo";
 import { Container } from "./container";
 
 const NAV_LINKS = [
-  { label: "Features", href: "#features" },
-  { label: "How it works", href: "#how-it-works" },
-  { label: "Pricing", href: "#pricing" },
+  { label: "Features", href: "/#features" },
+  { label: "How it works", href: "/#how-it-works" },
+  { label: "Pricing", href: "/#pricing" },
 ];
 
-// No usePathname/active-link state needed — this only ever renders on the
-// single-page marketing site, so it stays a Server Component; the Sheet
-// primitive brings its own client boundary only for the mobile menu.
+// No usePathname/active-link state needed — this renders on the single-page
+// marketing site and the public legal pages, so it stays a Server Component;
+// the Sheet primitive brings its own client boundary only for the mobile
+// menu. Section links point at "/#…" so they work from the legal pages too.
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">

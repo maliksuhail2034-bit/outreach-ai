@@ -93,6 +93,21 @@ export default function SignupPage() {
               {pending ? "Creating account…" : "Create account"}
             </Button>
           </form>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            By creating an account, you agree to our{" "}
+            <Link href="/terms" className="font-medium text-foreground hover:underline">
+              Terms of Service
+            </Link>
+            ,{" "}
+            <Link href="/acceptable-use" className="font-medium text-foreground hover:underline">
+              Acceptable Use Policy
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="font-medium text-foreground hover:underline">
+              Privacy Policy
+            </Link>
+            .
+          </p>
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Already have an account?{" "}
             <Link href="/login" className="font-medium text-foreground hover:underline">

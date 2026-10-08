@@ -9,6 +9,24 @@
 -- returned warmup_profiles rows continues to drive all downstream scoping
 -- (peer selection, sends, stats), which was already organization-scoped —
 -- see lib/warmup/warmup-worker.ts.
+--
+-- create or replace function cannot change an existing function's argument
+-- list — a different signature creates a second overload instead of
+-- replacing the original (this is what made the first attempt at this
+-- migration fail: the ensuing unqualified `comment on function` became
+-- ambiguous between the two overloads, SQLSTATE 42725). The old
+-- (p_organization_id uuid, p_limit integer) overload is explicitly dropped
+-- by its exact argument types first, so exactly one function named
+-- claim_due_warmup_sends exists afterward. No CASCADE: nothing in this
+-- schema references this function by a dependency Postgres tracks (it's
+-- only ever invoked via supabase.rpc() from application code, which has no
+-- DB-level dependency on it), so a plain DROP is sufficient and safer than
+-- risking an unintended cascade. Grants are unaffected — this schema's
+-- functions all rely on Supabase's project-level default privileges
+-- (EXECUTE to anon/authenticated/service_role), not per-migration GRANT
+-- statements, so a newly created function picks up the identical default
+-- ACL with nothing extra to restate here.
+drop function if exists public.claim_due_warmup_sends(uuid, integer);
 
 create or replace function public.claim_due_warmup_sends(p_limit integer default 10)
 returns setof public.warmup_profiles
@@ -44,4 +62,4 @@ begin
 end;
 $$;
 
-comment on function public.claim_due_warmup_sends is 'Atomically claims warmup_profiles due for a cycle (fresh send and/or a reply owed) across ALL organizations. Never touches campaign_leads, send_attempts, or claim_due_sends() at all.';
+comment on function public.claim_due_warmup_sends(integer) is 'Atomically claims warmup_profiles due for a cycle (fresh send and/or a reply owed) across ALL organizations. Never touches campaign_leads, send_attempts, or claim_due_sends() at all.';

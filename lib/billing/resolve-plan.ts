@@ -11,12 +11,19 @@ import { getPlan, UNLIMITED, type Plan } from "./plans";
 // including future real ones.
 const INTERNAL_UNLIMITED_ORGANIZATION_ID = "7ef89392-80ba-4447-a7b7-ba642ff00a53";
 
+export function isInternalUnlimitedOrganization(organizationId: string): boolean {
+  return organizationId === INTERNAL_UNLIMITED_ORGANIZATION_ID;
+}
+
 // Unlike PLANS.scale, this has no cap at all on any dimension — the highest
 // real paid tier still caps dailySends/emailsPerMonth at concrete numbers,
 // which doesn't fit "unlimited". Never sold, so no price of any kind.
+// Its id is "scale" only because Plan.id must be a PlanId; the billing UI
+// uses isInternalUnlimitedOrganization() rather than this id, so the Scale
+// card is never shown as this organization's current plan.
 const INTERNAL_UNLIMITED_PLAN: Plan = {
   id: "scale",
-  name: "Unlimited (Internal)",
+  name: "Unlimited",
   limits: { mailboxes: UNLIMITED, leads: UNLIMITED, campaigns: UNLIMITED, dailySends: UNLIMITED, emailsPerMonth: UNLIMITED },
   regularPriceCents: null,
   launchPriceCents: null,
@@ -33,7 +40,7 @@ const INTERNAL_UNLIMITED_PLAN: Plan = {
 // between them — this function is now a thin wrapper around it, keeping
 // the one pre-existing special case (below) ahead of normal resolution.
 export async function getPlanForOrganization(supabase: Client, organizationId: string): Promise<Plan> {
-  if (organizationId === INTERNAL_UNLIMITED_ORGANIZATION_ID) return INTERNAL_UNLIMITED_PLAN;
+  if (isInternalUnlimitedOrganization(organizationId)) return INTERNAL_UNLIMITED_PLAN;
 
   const view = await getActiveSubscriptionView(supabase, organizationId);
   return view.grantsAccess ? getPlan(view.planId) : getPlan("free");

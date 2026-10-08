@@ -3,12 +3,13 @@ import { CalendarClockIcon, MailIcon, MegaphoneIcon, SendIcon, UsersIcon } from 
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { countCampaigns, countLeads, countMailboxes, getUserOrganization, listCampaigns } from "@/lib/db";
-import { getPlanForOrganization } from "@/lib/billing/resolve-plan";
+import { getPlanForOrganization, isInternalUnlimitedOrganization } from "@/lib/billing/resolve-plan";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
 import { NON_TERMINAL_SUBSCRIPTION_STATUSES } from "@/lib/billing/razorpay-status";
 import { getSubscriptionV2 } from "@/lib/db/billing-v2";
-import { checkoutProviderForRegion, currencyForRegion, getBillingRegion } from "@/lib/billing/region";
-import { BILLING_INTERVALS, PAID_PLAN_IDS, UNLIMITED, getRazorpayPlanId } from "@/lib/billing/plans";
+import { currencyForRegion, getBillingRegion } from "@/lib/billing/region";
+import { UNLIMITED } from "@/lib/billing/plans";
+import { getPlanOfferingGrid } from "@/lib/billing/offerings";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,34 +62,23 @@ export default async function BillingPage() {
 
   const dailySendTotal = (campaigns ?? []).reduce((sum, campaign) => sum + campaign.daily_limit, 0);
   const isPaidPlan = plan.id !== "free";
+  const internalUnlimited = isInternalUnlimitedOrganization(organization.id);
   // Same row and same status set createRazorpaySubscriptionAction's
   // duplicate-checkout guard checks, so the page never offers a checkout
   // that action would reject.
   const planChangeBlocked =
     subscriptionV2?.provider === "razorpay" && NON_TERMINAL_SUBSCRIPTION_STATUSES.has(subscriptionV2.normalized_status);
 
-  // Resolved once per request by the same resolver the Razorpay checkout
-  // action re-runs server-side, so the page never offers a checkout that
-  // action would reject.
+  // Resolved by the same region -> currency -> offering chain the Razorpay
+  // checkout action re-runs server-side, so the page never offers a checkout
+  // that action would reject. Razorpay plan ids are server-only env vars and
+  // stay here: PlanList (a Client Component) only gets each offering's
+  // price and availability.
   const billingCurrency = currencyForRegion(billingRegion);
-  const checkoutProvider = checkoutProviderForRegion(billingRegion);
-
-  // RAZORPAY_PLAN_<PLAN>_<INTERVAL> is server-only (not NEXT_PUBLIC_), so it
-  // must be resolved here (a Server Component) and passed down as data —
-  // PlanList is a Client Component and calling getRazorpayPlanId() from
-  // there would silently always return null in the browser bundle. Only
-  // resolved where Razorpay is this request's checkout provider.
-  const razorpayPlanIds = Object.fromEntries(
-    PAID_PLAN_IDS.map((planId) => [
-      planId,
-      Object.fromEntries(
-        BILLING_INTERVALS.map((interval) => [
-          interval,
-          checkoutProvider === "razorpay" ? getRazorpayPlanId(planId, interval) : null,
-        ]),
-      ),
-    ]),
-  ) as Record<(typeof PAID_PLAN_IDS)[number], Record<(typeof BILLING_INTERVALS)[number], string | null>>;
+  const offerings = getPlanOfferingGrid(billingCurrency);
+  // The internal workspace's plan carries the "scale" id only for type
+  // reasons — it must not mark the Scale card as its current plan.
+  const currentPlanId = internalUnlimited || plan.id === "free" ? null : plan.id;
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -173,11 +163,10 @@ export default async function BillingPage() {
       <FadeIn delay={0.15} className="space-y-3">
         <h2 className="font-semibold tracking-tight">Plans</h2>
         <PlanList
-          currentPlanId={plan.id}
-          razorpayPlanIds={razorpayPlanIds}
+          currentPlanId={currentPlanId}
+          offerings={offerings}
           planChangeBlocked={planChangeBlocked}
-          currency={billingCurrency}
-          checkoutProvider={checkoutProvider}
+          internalUnlimited={internalUnlimited}
         />
       </FadeIn>
     </div>

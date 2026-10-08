@@ -7,7 +7,6 @@ vi.mock("next/headers", () => ({
 import { headers } from "next/headers";
 import {
   billingRegionForCountry,
-  checkoutProviderForRegion,
   countryFromHeaders,
   currencyForRegion,
   getBillingRegion,
@@ -70,15 +69,13 @@ describe("countryFromHeaders", () => {
   });
 });
 
-describe("currency and provider per region", () => {
-  it("India bills in INR through Razorpay", () => {
+describe("currencyForRegion", () => {
+  it("India bills in INR", () => {
     expect(currencyForRegion("india")).toBe("INR");
-    expect(checkoutProviderForRegion("india")).toBe("razorpay");
   });
 
-  it("international bills in USD with no checkout provider yet", () => {
+  it("international bills in USD", () => {
     expect(currencyForRegion("international")).toBe("USD");
-    expect(checkoutProviderForRegion("international")).toBeNull();
   });
 });
 

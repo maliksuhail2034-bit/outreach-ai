@@ -365,6 +365,59 @@ export type Database = {
           },
         ]
       }
+      billing_checkouts: {
+        Row: {
+          billing_interval: string
+          claim_token_hash: string | null
+          created_at: string
+          currency: string
+          expires_at: string
+          id: string
+          internal_plan_id: string
+          organization_id: string
+          provider: string
+          provider_subscription_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          billing_interval: string
+          claim_token_hash?: string | null
+          created_at?: string
+          currency: string
+          expires_at: string
+          id?: string
+          internal_plan_id: string
+          organization_id: string
+          provider: string
+          provider_subscription_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          billing_interval?: string
+          claim_token_hash?: string | null
+          created_at?: string
+          currency?: string
+          expires_at?: string
+          id?: string
+          internal_plan_id?: string
+          organization_id?: string
+          provider?: string
+          provider_subscription_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_checkouts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_customers_v2: {
         Row: {
           created_at: string
@@ -2034,6 +2087,28 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      attach_billing_checkout_subscription: {
+        Args: {
+          p_checkout_id: string
+          p_claim_token: string
+          p_provider_subscription_id: string
+        }
+        Returns: boolean
+      }
+      claim_billing_checkout: {
+        Args: {
+          p_billing_interval: string
+          p_currency: string
+          p_internal_plan_id: string
+          p_organization_id: string
+        }
+        Returns: {
+          checkout_id: string
+          checkout_subscription_id: string
+          claim_outcome: string
+          claim_token: string
+        }[]
+      }
       claim_due_sends: {
         Args: { p_limit?: number }
         Returns: {
@@ -2244,6 +2319,10 @@ export type Database = {
           p_send_attempt_id: string
         }
         Returns: undefined
+      }
+      release_billing_checkout: {
+        Args: { p_checkout_id: string; p_claim_token: string }
+        Returns: boolean
       }
       request_send_now: {
         Args: { p_campaign_lead_id: string }

@@ -8,6 +8,14 @@
 
 export type Currency = "USD" | "INR";
 
+export const CURRENCIES: readonly Currency[] = ["INR", "USD"];
+
+// For values that come from outside the type system — a Razorpay plan's
+// currency, a subscription's notes — before they're trusted as a Currency.
+export function isCurrency(value: unknown): value is Currency {
+  return typeof value === "string" && (CURRENCIES as readonly string[]).includes(value);
+}
+
 // Fixed, deterministic USD->INR basis — approved 2026-09-15 against a
 // then-current market spot of ~95.8, not a live FX rate. Deliberately NOT
 // looked up per-checkout: a subscription's INR amount must stay stable for
@@ -26,12 +34,10 @@ export function usdCentsToInrPaise(usdCents: number): number {
   return usdCents * USD_TO_INR_RATE;
 }
 
-// Which currency a given payment route charges in. Only the two routes this
-// app actually has (or is actively building) are listed — not a
-// speculative full provider matrix. "razorpay_india" is live;
-// "international" (Razorpay International and/or PayPal, both USD) is not
-// implemented yet, but already needs a currency answer for the pricing
-// architecture above it.
+// Which currency a given payment route charges in. Both routes run through
+// Razorpay: India on INR plans, everyone else on USD plans (see
+// lib/billing/offerings.ts for how plan + interval + currency resolves to a
+// Razorpay plan).
 export type PaymentRoute = "razorpay_india" | "international";
 
 export const ROUTE_CURRENCY: Record<PaymentRoute, Currency> = {

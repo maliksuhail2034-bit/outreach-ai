@@ -157,3 +157,23 @@ describe("getPlanForOrganization", () => {
     expect(plan.id).toBe("starter");
   });
 });
+
+describe("internal unlimited workspace", () => {
+  const INTERNAL_ORGANIZATION_ID = "7ef89392-80ba-4447-a7b7-ba642ff00a53";
+
+  it("is recognized by its organization id only", async () => {
+    const { isInternalUnlimitedOrganization } = await import("./resolve-plan");
+
+    expect(isInternalUnlimitedOrganization(INTERNAL_ORGANIZATION_ID)).toBe(true);
+    expect(isInternalUnlimitedOrganization("00000000-0000-0000-0000-000000000000")).toBe(false);
+  });
+
+  it("keeps unlimited access, shown as \"Unlimited\" rather than as a sellable plan", async () => {
+    const getPlanForOrganization = await freshGetPlanForOrganization();
+
+    const plan = await getPlanForOrganization(createMockClient({}), INTERNAL_ORGANIZATION_ID);
+
+    expect(plan.name).toBe("Unlimited");
+    expect(plan.limits).toEqual({ mailboxes: -1, leads: -1, campaigns: -1, dailySends: -1, emailsPerMonth: -1 });
+  });
+});

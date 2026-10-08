@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMoney, usdCentsToInrPaise, USD_TO_INR_RATE, ROUTE_CURRENCY } from "./currency";
+import { formatMoney, isCurrency, usdCentsToInrPaise, USD_TO_INR_RATE, ROUTE_CURRENCY } from "./currency";
 
 describe("USD_TO_INR_RATE", () => {
   it("is the approved fixed conversion basis (96), not a live rate", () => {
@@ -52,5 +52,13 @@ describe("ROUTE_CURRENCY", () => {
   it("maps the Razorpay India route to INR and the international route to USD", () => {
     expect(ROUTE_CURRENCY.razorpay_india).toBe("INR");
     expect(ROUTE_CURRENCY.international).toBe("USD");
+  });
+});
+
+describe("isCurrency", () => {
+  it("accepts exactly the billing currencies", () => {
+    expect(isCurrency("INR")).toBe(true);
+    expect(isCurrency("USD")).toBe(true);
+    for (const value of ["inr", "EUR", "GBP", "", null, undefined, 840]) expect(isCurrency(value)).toBe(false);
   });
 });

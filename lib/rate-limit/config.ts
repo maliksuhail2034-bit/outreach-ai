@@ -19,6 +19,7 @@ export type RateLimitScope =
   | "campaign:send_now"
   | "leads:import"
   | "billing:checkout"
+  | "billing:checkout_start"
   | "billing:manage";
 
 interface ScopeConfig {
@@ -71,6 +72,15 @@ export const RATE_LIMIT_CONFIG: Record<RateLimitScope, ScopeConfig> = {
   // needs this a handful of times (initial purchase, a couple of retries
   // after a failed/abandoned payment).
   "billing:checkout": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
+  // At most one new Razorpay subscription per organization per window, so
+  // two near-simultaneous checkouts (a double click, two tabs) can't both
+  // create a subscription the customer could then pay twice. The check runs
+  // under the rate limiter's per-scope advisory lock, so concurrent requests
+  // are serialized. Fails closed: if the check itself errors, refusing a
+  // checkout is safer than risking a duplicate charge. This narrows the
+  // race; it doesn't close it for checkouts started further apart than the
+  // window (see createRazorpaySubscriptionAction).
+  "billing:checkout_start": { windowSeconds: 2 * MINUTE, maxAttempts: 1, failClosed: true },
   // Managing an existing subscription — shared across both providers
   // (createPortalSessionAction/Stripe, cancelRazorpaySubscriptionAction/
   // Razorpay). Same reasoning as billing:checkout; cancelling in particular

@@ -1,3 +1,4 @@
+import type { Plans } from "razorpay/dist/types/plans";
 import type { Subscriptions } from "razorpay/dist/types/subscriptions";
 import type { Client } from "@/lib/db/shared";
 import { getSubscriptionV2, upsertBillingCustomerV2, upsertSubscriptionV2 } from "@/lib/db/billing-v2";
@@ -7,20 +8,11 @@ import {
   normalizeRazorpaySubscriptionStatus,
 } from "./razorpay-status";
 import { BILLING_INTERVALS, PAID_PLAN_IDS, type BillingInterval, type PaidPlanId } from "./plans";
-import { ROUTE_CURRENCY } from "./currency";
+import { isCurrency, type Currency } from "./currency";
+import { getPlanOffering } from "./offerings";
+import { monthsForInterval } from "./pricing";
 
 const PROVIDER = "razorpay";
-
-// This webhook handler is exclusively the Razorpay India payment route —
-// see the Razorpay architecture investigation: Indian payment rails
-// (UPI/Indian cards/netbanking) can only ever charge INR, and this
-// account's Razorpay Plans are always INR-denominated (see
-// lib/billing/currency.ts's ROUTE_CURRENCY). Hardcoded, not inferred from
-// any field on the webhook payload or user input — a future
-// Razorpay-International or PayPal sync function would hardcode its own
-// route's currency ("international" -> USD) the same way, in its own
-// module, rather than this one branching on provider/currency at runtime.
-const CURRENCY = ROUTE_CURRENCY.razorpay_india;
 
 // The subset of Razorpay's Subscription entity this webhook handler
 // actually reads — not the SDK's own Subscriptions.RazorpaySubscription
@@ -57,10 +49,35 @@ export function toRazorpaySubscriptionEntity(subscription: Subscriptions.Razorpa
   };
 }
 
+// The Razorpay plan a subscription is actually on, fetched from Razorpay by
+// the webhook. It's the authority for what the subscription charges —
+// currency, amount per cycle, and cycle length.
+export interface RazorpayPlanEntity {
+  id: string;
+  period: string;
+  interval: number;
+  amount: number;
+  currency: string;
+}
+
+export function toRazorpayPlanEntity(plan: Plans.RazorPayPlans): RazorpayPlanEntity {
+  return {
+    id: plan.id,
+    period: plan.period,
+    interval: plan.interval,
+    amount: Number(plan.item.amount),
+    currency: plan.item.currency,
+  };
+}
+
 export type RazorpaySyncResult =
-  | { outcome: "synced"; organizationId: string; unrecognizedStatus: boolean }
+  | { outcome: "synced"; organizationId: string; currency: Currency; unrecognizedStatus: boolean }
   // notes don't identify an organization/plan/interval — nothing written.
   | { outcome: "unmapped" }
+  // The subscription's notes (plan, interval, currency) don't match the
+  // Razorpay plan it's actually on — nothing written, so no paid access is
+  // granted or extended on its strength.
+  | { outcome: "plan_mismatch"; organizationId: string; reason: string }
   // The organization's current row is a different subscription that is
   // still live, so this one was not written over it. `incomingNonTerminal`
   // says whether this one is live too (two live subscriptions — needs a
@@ -71,6 +88,65 @@ export type RazorpaySyncResult =
       currentSubscriptionId: string;
       incomingNonTerminal: boolean;
     };
+
+function monthsPerCycle(plan: RazorpayPlanEntity): number | null {
+  if (plan.period === "monthly") return plan.interval;
+  if (plan.period === "yearly") return plan.interval * 12;
+  return null;
+}
+
+// Checks that the Razorpay plan a subscription is on is the one its notes
+// say it was bought as. Returns why not, or null when everything agrees.
+// Compared against the plan's own currency, amount and cycle rather than
+// against the configured plan id, so rotating a RAZORPAY_PLAN_* env var later
+// can't make existing subscriptions fail this check.
+function planMismatch(
+  subscription: RazorpaySubscriptionEntity,
+  plan: RazorpayPlanEntity,
+  internalPlanId: PaidPlanId,
+  billingInterval: BillingInterval,
+  notedCurrency: unknown,
+): { reason: string } | { currency: Currency } {
+  if (plan.id !== subscription.plan_id) {
+    return { reason: "fetched plan is not the subscription's plan" };
+  }
+  if (!isCurrency(plan.currency)) {
+    return { reason: `plan currency ${plan.currency} is not supported` };
+  }
+  // Subscriptions created before USD support carry no currency note; their
+  // currency is the plan's, still checked against the expected amount below.
+  if (notedCurrency !== undefined && notedCurrency !== plan.currency) {
+    return { reason: `notes currency ${String(notedCurrency)} does not match plan currency ${plan.currency}` };
+  }
+  if (monthsPerCycle(plan) !== monthsForInterval(billingInterval)) {
+    return { reason: `plan cycle ${plan.interval} ${plan.period} does not match ${billingInterval}` };
+  }
+  const expectedAmount = getPlanOffering(internalPlanId, billingInterval, plan.currency).amount;
+  if (plan.amount !== expectedAmount) {
+    return {
+      reason: `plan amount ${plan.amount} ${plan.currency} does not match ${internalPlanId} ${billingInterval} (${expectedAmount})`,
+    };
+  }
+  return { currency: plan.currency };
+}
+
+// Before an open checkout's existing Razorpay subscription is handed back to
+// the browser again: checks it was created for this organization and this
+// exact offering, using the same plan check (currency, cycle, amount) the
+// webhook applies. Returns why not, or null when it matches.
+export function checkoutSubscriptionMismatch(
+  subscription: RazorpaySubscriptionEntity,
+  plan: RazorpayPlanEntity,
+  expected: { organizationId: string; planId: PaidPlanId; interval: BillingInterval; currency: Currency },
+): string | null {
+  const notes = subscription.notes ?? {};
+  if (notes.organization_id !== expected.organizationId) return "subscription belongs to a different organization";
+  if (notes.internal_plan_id !== expected.planId) return "subscription is for a different plan";
+  if (notes.billing_interval !== expected.interval) return "subscription is for a different interval";
+  if (notes.currency !== expected.currency) return "subscription is in a different currency";
+  const match = planMismatch(subscription, plan, expected.planId, expected.interval, notes.currency);
+  return "reason" in match ? match.reason : null;
+}
 
 function unixToIso(seconds: number | null | undefined): string | null {
   return typeof seconds === "number" ? new Date(seconds * 1000).toISOString() : null;
@@ -108,9 +184,15 @@ function isBillingInterval(value: unknown): value is BillingInterval {
 // subscription replaces the current one. That's only allowed once the
 // current one has ended; otherwise a late event for an old subscription
 // could overwrite (and revoke) the subscription the customer is paying for.
+//
+// `plan` is the Razorpay plan the subscription is on, fetched from Razorpay.
+// The notes must agree with it (see planMismatch) before anything is
+// written, and the stored currency is the plan's — never a hardcoded value
+// or anything from the browser.
 export async function syncSubscriptionFromRazorpay(
   supabase: Client,
   subscription: RazorpaySubscriptionEntity,
+  plan: RazorpayPlanEntity,
 ): Promise<RazorpaySyncResult> {
   const notes = subscription.notes ?? {};
   const organizationId = typeof notes.organization_id === "string" ? notes.organization_id : null;
@@ -123,6 +205,12 @@ export async function syncSubscriptionFromRazorpay(
       subscription.id,
     );
     return { outcome: "unmapped" };
+  }
+
+  const match = planMismatch(subscription, plan, internalPlanId, billingInterval, notes.currency);
+  if ("reason" in match) {
+    console.error("[razorpay] subscription notes don't match its Razorpay plan", subscription.id, match.reason);
+    return { outcome: "plan_mismatch", organizationId, reason: match.reason };
   }
 
   const normalizedStatus = normalizeRazorpaySubscriptionStatus(subscription.status);
@@ -156,7 +244,7 @@ export async function syncSubscriptionFromRazorpay(
     provider_plan_id: subscription.plan_id,
     internal_plan_id: internalPlanId,
     billing_interval: billingInterval,
-    currency: CURRENCY,
+    currency: match.currency,
     provider_status: subscription.status,
     normalized_status: normalizedStatus,
     current_period_start: unixToIso(subscription.current_start),
@@ -171,5 +259,10 @@ export async function syncSubscriptionFromRazorpay(
     cancel_at_period_end: false,
   });
 
-  return { outcome: "synced", organizationId, unrecognizedStatus: !isRecognizedRazorpayStatus(subscription.status) };
+  return {
+    outcome: "synced",
+    organizationId,
+    currency: match.currency,
+    unrecognizedStatus: !isRecognizedRazorpayStatus(subscription.status),
+  };
 }

@@ -3,9 +3,22 @@
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getUserOrganization } from "@/lib/db";
-import { getSubscriptionV2 } from "@/lib/db/billing-v2";
-import { getRazorpayPlanId } from "@/lib/billing/plans";
+import {
+  attachBillingCheckoutSubscription,
+  claimBillingCheckout,
+  getSubscriptionV2,
+  releaseBillingCheckout,
+} from "@/lib/db/billing-v2";
+import { getPlanOffering, type PlanOffering } from "@/lib/billing/offerings";
 import { getRazorpayClient, totalCountForInterval } from "@/lib/billing/razorpay";
+import {
+  checkoutSubscriptionMismatch,
+  toRazorpayPlanEntity,
+  toRazorpaySubscriptionEntity,
+} from "@/lib/billing/sync-subscription-v2";
+import type { BillingInterval, PaidPlanId } from "@/lib/billing/plans";
+import type { Currency } from "@/lib/billing/currency";
+import { isInternalUnlimitedOrganization } from "@/lib/billing/resolve-plan";
 // Checking against non-terminal statuses (not just "any row exists") lets an
 // org whose old subscription genuinely ended (cancelled/expired/completed)
 // start a fresh checkout instead of being permanently blocked by a stale
@@ -13,9 +26,58 @@ import { getRazorpayClient, totalCountForInterval } from "@/lib/billing/razorpay
 // what "already has a live subscription" means.
 import { NON_TERMINAL_SUBSCRIPTION_STATUSES as NON_TERMINAL_STATUSES } from "@/lib/billing/razorpay-status";
 import { getActiveSubscriptionView } from "@/lib/billing/subscription-view";
-import { checkoutProviderForRegion, getBillingRegion } from "@/lib/billing/region";
+import { currencyForRegion, getBillingRegion } from "@/lib/billing/region";
 import { checkoutSchema, razorpaySubscriptionIdSchema, type CheckoutInput } from "@/lib/validations/billing";
-import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
+import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
+
+// Why an offering can't be bought, in words the customer can act on. Which
+// env var is missing goes to the server log, never to the client.
+function unavailableMessage(offering: PlanOffering): string {
+  if (offering.availability === "not_sold") {
+    return offering.currency === "INR"
+      ? "This billing duration isn't available for payments in India yet. Choose a shorter duration."
+      : "This plan isn't available in your region yet.";
+  }
+  return offering.currency === "USD"
+    ? "International checkout isn't available yet. Try again later or contact support."
+    : "This plan isn't available yet. Try again shortly or contact support.";
+}
+
+const CHECKOUT_IN_PROGRESS_MESSAGE =
+  "A checkout for this plan is still being prepared. Try again in a few seconds.";
+const CHECKOUT_NOT_RESUMABLE_MESSAGE =
+  "The checkout already in progress for this workspace can't be reopened. If you completed payment, it will appear on this page shortly; otherwise you can start a new checkout within 30 minutes.";
+
+// An open checkout already has a Razorpay subscription: hand that same one
+// back (the customer closed the payment window and clicked again) instead of
+// creating a second. Re-fetched from Razorpay and checked against this exact
+// offering with the webhook's own plan check, so only a subscription that is
+// still unpaid and still sells what was asked for is ever reopened.
+async function resumeCheckoutSubscription(
+  providerSubscriptionId: string,
+  expected: { organizationId: string; planId: PaidPlanId; interval: BillingInterval; currency: Currency },
+): Promise<string> {
+  try {
+    const razorpay = getRazorpayClient();
+    const subscription = toRazorpaySubscriptionEntity(await razorpay.subscriptions.fetch(providerSubscriptionId));
+    const plan = toRazorpayPlanEntity(await razorpay.plans.fetch(subscription.plan_id));
+    const mismatch = subscription.id === providerSubscriptionId
+      ? checkoutSubscriptionMismatch(subscription, plan, expected)
+      : "Razorpay returned a different subscription than requested";
+    if (mismatch) {
+      console.error("[razorpay] open checkout's subscription doesn't match the offering", providerSubscriptionId, mismatch);
+      throw new Error(CHECKOUT_NOT_RESUMABLE_MESSAGE);
+    }
+    // "created" is the only state checkout.js can still authenticate. Any
+    // other means it was already paid (the webhook will confirm it) or ended.
+    if (subscription.status !== "created") throw new Error(CHECKOUT_NOT_RESUMABLE_MESSAGE);
+    return subscription.id;
+  } catch (error) {
+    if (error instanceof Error && error.message === CHECKOUT_NOT_RESUMABLE_MESSAGE) throw error;
+    console.error("[razorpay] failed to re-fetch open checkout's subscription", error);
+    throw new Error("Couldn't start checkout. Try again shortly or contact support.");
+  }
+}
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client only ever offers
@@ -41,62 +103,135 @@ export async function createRazorpaySubscriptionAction(
   const supabase = await createClient();
 
   const organization = await getUserOrganization(supabase, user);
+  if (isInternalUnlimitedOrganization(organization.id)) {
+    throw new Error("This workspace already has unlimited access.");
+  }
   await checkRateLimit("billing:checkout", organization.id);
 
-  // India-only, decided here from the request itself — never from anything
-  // the client sends (checkoutSchema only accepts planId/interval and strips
-  // any other field). Hiding the button outside India isn't enough: this
-  // action is reachable by a direct POST.
-  if (checkoutProviderForRegion(await getBillingRegion()) !== "razorpay") {
-    throw new Error("Checkout isn't available in your region yet.");
-  }
-
-  const razorpayPlanId = getRazorpayPlanId(parsed.planId, parsed.interval);
-  if (!razorpayPlanId) {
-    throw new Error("This plan isn't available yet. Try again shortly or contact support.");
+  // Currency, amount and Razorpay plan are all decided here from the request
+  // itself — never from anything the client sends (checkoutSchema only
+  // accepts planId/interval and strips any other field, so a posted
+  // currency, amount or plan id is ignored). The UI hiding a button isn't
+  // enough: this action is reachable by a direct POST.
+  const currency = currencyForRegion(await getBillingRegion());
+  const offering = getPlanOffering(parsed.planId, parsed.interval, currency);
+  if (offering.availability !== "available" || !offering.razorpayPlanId) {
+    if (offering.availability === "not_configured") {
+      console.error(`[razorpay] checkout unavailable: ${offering.razorpayPlanEnvVar} is not set`);
+    }
+    throw new Error(unavailableMessage(offering));
   }
 
   // Duplicate-checkout guard: block starting a second subscription while a
   // confirmed, non-terminal one already exists. This only ever sees
   // webhook-confirmed rows (subscriptions_v2 is never written from this
-  // action) — a narrow race between two near-simultaneous requests before
-  // either reaches a webhook-confirmed state is a known, accepted gap for
-  // this phase (see the Phase 0 design review's duplicate-checkout
-  // analysis), not something this check alone can close;
-  // subscriptions_v2's own unique(organization_id) constraint remains the
-  // real backstop against two *confirmed* rows ever coexisting.
+  // action); subscriptions_v2's own unique(organization_id) constraint
+  // remains the backstop against two *confirmed* rows ever coexisting.
   const existing = await getSubscriptionV2(supabase, organization.id);
   if (existing && NON_TERMINAL_STATUSES.has(existing.normalized_status)) {
     throw new Error("You already have an active subscription. Manage it from the Billing page instead.");
   }
 
+  // The check above can't see a checkout that's been started but not yet
+  // paid and confirmed. This atomic one-per-window guard stops two
+  // near-simultaneous checkouts (a double click, two tabs) from both
+  // creating a payable subscription. Checked last, so a request rejected
+  // above doesn't use up the window.
+  try {
+    await checkRateLimit("billing:checkout_start", organization.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      throw new Error(
+        "A checkout was just started for this workspace. Finish it in the payment window that's already open, or try again in a couple of minutes.",
+      );
+    }
+    throw error;
+  }
+
+  // The durable guard: at most one open checkout per organization, held in
+  // billing_checkouts (see supabase/migrations/20261007100000_billing_checkouts.sql).
+  // Claimed BEFORE any Razorpay subscription is created, so a checkout left
+  // open longer than the rate-limit window above still can't be joined by a
+  // second payable subscription. A new claim carries a private claim token
+  // that attach/release require; it stays inside this function (logs below
+  // only name the checkout id) and is never part of the response.
+  const claim = await claimBillingCheckout(supabase, {
+    organizationId: organization.id,
+    internalPlanId: parsed.planId,
+    billingInterval: parsed.interval,
+    currency: offering.currency,
+  });
+  if (claim.outcome === "conflict") {
+    throw new Error(
+      "Another checkout is already in progress for this workspace. Finish it, or wait up to 30 minutes for it to expire, before choosing a different plan or duration.",
+    );
+  }
+  if (claim.outcome === "existing") {
+    // No provider id yet: another request holds the claim and is creating
+    // the subscription right now (or crashed mid-way — the claim's 30-minute
+    // expiry is what eventually frees it). Never create a second one here.
+    if (claim.providerSubscriptionId === null) throw new Error(CHECKOUT_IN_PROGRESS_MESSAGE);
+    const subscriptionId = await resumeCheckoutSubscription(claim.providerSubscriptionId, {
+      organizationId: organization.id,
+      planId: parsed.planId,
+      interval: parsed.interval,
+      currency: offering.currency,
+    });
+    return { subscriptionId, prefillEmail: user.email };
+  }
+
+  let subscriptionId: string;
   try {
     const subscription = await getRazorpayClient().subscriptions.create({
-      plan_id: razorpayPlanId,
+      plan_id: offering.razorpayPlanId,
       total_count: totalCountForInterval(parsed.interval),
       customer_notify: true,
       // The primary, officially-supported organization-resolution
       // mechanism the webhook reads from — see
       // lib/billing/sync-subscription-v2.ts. internal_plan_id/
-      // billing_interval are captured here too (not re-derived from
-      // razorpayPlanId at webhook time) so a later env var reconfiguration
-      // can never retroactively change what an already-created
-      // subscription resolves to.
+      // billing_interval/currency are captured here too (not re-derived
+      // from the plan id at webhook time) so a later env var
+      // reconfiguration can never retroactively change what an
+      // already-created subscription resolves to. The webhook checks them
+      // against the Razorpay plan the subscription is actually on.
       notes: {
         organization_id: organization.id,
         internal_plan_id: parsed.planId,
         billing_interval: parsed.interval,
+        currency: offering.currency,
       },
     });
-
-    return { subscriptionId: subscription.id, prefillEmail: user.email };
+    subscriptionId = subscription.id;
   } catch (error) {
     // Sanitized for the client — getRazorpayClient()'s own "not configured"
     // error, or a raw Razorpay API failure, must never reach the browser
     // verbatim. Full detail stays server-side only.
     console.error("[razorpay] failed to create subscription", error);
+    // Razorpay reported a failure, so no subscription exists for this claim:
+    // release it rather than blocking the organization for the full TTL.
+    // (A process crash after Razorpay succeeded never reaches here — that
+    // claim stays open with no id until it expires; see the migration.)
+    try {
+      await releaseBillingCheckout(supabase, claim);
+    } catch (releaseError) {
+      console.error("[razorpay] failed to release checkout after a failed create", claim.checkoutId, releaseError);
+    }
     throw new Error("Couldn't start checkout. Try again shortly or contact support.");
   }
+
+  // The subscription exists at Razorpay now, so the customer can still pay
+  // it even if recording the id fails. Logged, not thrown: the claim then
+  // stays open with no id (blocking a second subscription) until it expires,
+  // and the webhook still syncs the subscription by its notes.
+  try {
+    if (!(await attachBillingCheckoutSubscription(supabase, claim, subscriptionId))) {
+      console.error("[razorpay] checkout was no longer open to attach its subscription", claim.checkoutId, subscriptionId);
+    }
+  } catch (error) {
+    console.error("[razorpay] failed to attach subscription to checkout", claim.checkoutId, subscriptionId, error);
+  }
+
+  return { subscriptionId, prefillEmail: user.email };
 }
 
 // Provider-aware counterpart to app/(app)/billing/actions.ts's

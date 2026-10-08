@@ -113,4 +113,9 @@ describe("RouteLoading", () => {
   it("sets the mark on a dark tile in light mode only, so its pale stem stays visible on white", () => {
     expect(html).toMatch(/<span class="[^"]*\bbg-foreground\b[^"]*\bdark:bg-transparent\b[^"]*"><svg/);
   });
+
+  it("stays compact: a 36px mark on a 48px tile, not a splash-screen logo", () => {
+    expect(html).toMatch(/<svg [^>]*width="36" height="36"/);
+    expect(html).toMatch(/<span class="[^"]*\bp-1\.5\b[^"]*"><svg/);
+  });
 });

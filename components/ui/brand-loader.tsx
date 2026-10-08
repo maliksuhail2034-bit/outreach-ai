@@ -64,6 +64,12 @@ export function BrandMarkReveal({ size = 64, className }: { size?: number; class
 // all but vanish on white, so light mode sets it on a dark tile (the
 // production app-icon treatment); dark mode shows it bare. The tile is
 // static: only the mark itself is drawn in.
+//
+// Kept small on purpose — a subtle branded pause, not a splash screen: a
+// 36px mark on a 48px tile (6px padding, 10px radius, close to the corner
+// proportion of the earlier 84px tile).
+const ROUTE_MARK_SIZE = 36;
+
 export function RouteLoading() {
   return (
     <div
@@ -72,8 +78,8 @@ export function RouteLoading() {
       aria-busy="true"
       className="grid min-h-[calc(100svh-4rem-2rem)] place-items-center sm:min-h-[calc(100svh-4rem-3rem)] lg:min-h-[calc(100svh-4rem-4rem)]"
     >
-      <span className="rounded-2xl bg-foreground p-2.5 dark:bg-transparent">
-        <BrandMarkReveal size={64} />
+      <span className="rounded-[10px] bg-foreground p-1.5 dark:bg-transparent">
+        <BrandMarkReveal size={ROUTE_MARK_SIZE} />
       </span>
     </div>
   );

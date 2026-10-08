@@ -1,5 +1,8 @@
 import type { NextResponse } from "next/server";
-import { runDeliverabilityHealthCheckWorker } from "@/lib/deliverability/health-check-worker";
+import {
+  deliverabilityHealthCheckDegraded,
+  runDeliverabilityHealthCheckWorker,
+} from "@/lib/deliverability/health-check-worker";
 import { runCronJob } from "@/lib/monitoring/run-cron-job";
 
 // Same host-agnostic trigger model as the other cron routes (send-emails,
@@ -13,7 +16,12 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "deliverability-health-check", (supabase) => runDeliverabilityHealthCheckWorker(supabase));
+  return runCronJob(
+    request,
+    "deliverability-health-check",
+    (supabase) => runDeliverabilityHealthCheckWorker(supabase),
+    deliverabilityHealthCheckDegraded,
+  );
 }
 
 export async function GET(request: Request) {

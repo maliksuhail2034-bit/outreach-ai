@@ -1,5 +1,5 @@
 import type { NextResponse } from "next/server";
-import { runAnalyticsRollupWorker } from "@/lib/analytics/rollup-worker";
+import { analyticsRollupDegraded, runAnalyticsRollupWorker } from "@/lib/analytics/rollup-worker";
 import { runCronJob } from "@/lib/monitoring/run-cron-job";
 
 // Same host-agnostic trigger model as the other cron routes: any external
@@ -12,7 +12,12 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "analytics-rollup", (supabase) => runAnalyticsRollupWorker(supabase));
+  return runCronJob(
+    request,
+    "analytics-rollup",
+    (supabase) => runAnalyticsRollupWorker(supabase),
+    analyticsRollupDegraded,
+  );
 }
 
 export async function GET(request: Request) {

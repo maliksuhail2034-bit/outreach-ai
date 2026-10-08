@@ -33,8 +33,16 @@ const REQUEST_TIMEOUT_MS = 5_000;
 // This is what actually detects "the scheduler stopped calling this route
 // at all" — job_runs (lib/db/job-runs.ts) can't, since a job that never
 // runs never gets a row there either.
+//
+// A ping that throws or gets a non-2xx response (an unreachable provider, or
+// a mistyped URL that 404s) is logged so a misconfiguration shows up in the
+// platform logs, but never fails the job, never changes its job_runs row and
+// is never forwarded to error tracking: a monitoring outage isn't a job
+// failure, and this runs every minute for send-emails. The log names the env
+// var, never the URL, which carries the check's secret ping key.
 export async function pingHeartbeat(job: CronJobName, outcome: "success" | "fail"): Promise<void> {
-  const baseUrl = process.env[HEARTBEAT_ENV_VAR[job]];
+  const envVar = HEARTBEAT_ENV_VAR[job];
+  const baseUrl = process.env[envVar];
   if (!baseUrl) return;
 
   const url = outcome === "fail" ? `${baseUrl.replace(/\/$/, "")}/fail` : baseUrl;
@@ -42,10 +50,13 @@ export async function pingHeartbeat(job: CronJobName, outcome: "success" | "fail
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    await fetch(url, { method: "GET", signal: controller.signal });
-  } catch {
-    // Best-effort only — the heartbeat provider being unreachable must never
-    // fail the cron job it's monitoring.
+    const response = await fetch(url, { method: "GET", signal: controller.signal });
+    if (!response.ok) {
+      console.error("[heartbeat]", "ping was rejected", { job, outcome, envVar, status: response.status });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error.";
+    console.error("[heartbeat]", "ping failed", { job, outcome, envVar, error: message });
   } finally {
     clearTimeout(timeout);
   }

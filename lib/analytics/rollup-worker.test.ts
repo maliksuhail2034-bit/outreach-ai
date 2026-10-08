@@ -16,7 +16,7 @@ vi.mock("@/lib/monitoring/error-tracking", () => ({
   captureError: captureErrorMock,
 }));
 
-import { runAnalyticsRollupWorker } from "./rollup-worker";
+import { analyticsRollupDegraded, runAnalyticsRollupWorker } from "./rollup-worker";
 
 function createSupabaseStub(rpcResult: { data?: unknown; error?: unknown }) {
   const rpc = vi.fn().mockResolvedValue(rpcResult);
@@ -163,5 +163,32 @@ describe("runAnalyticsRollupWorker", () => {
     await runAnalyticsRollupWorker(supabase, { since: "2026-08-15", until: "2026-08-15" });
 
     expect(listMailboxDomainsByIdsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("analyticsRollupDegraded", () => {
+  const base = { since: "2026-10-07", until: "2026-10-07", rowsComputed: 5, rowsUpserted: 5, failed: 0 };
+
+  it("treats a run with no failed rows as healthy, including a day with nothing to roll up", () => {
+    expect(analyticsRollupDegraded(base)).toBeNull();
+    expect(analyticsRollupDegraded({ ...base, rowsComputed: 0, rowsUpserted: 0 })).toBeNull();
+  });
+
+  it("marks a run degraded as soon as one rollup row fails to save", () => {
+    expect(analyticsRollupDegraded({ ...base, rowsUpserted: 4, failed: 1 })).toBe(
+      "1 rollup rows failed to save for 2026-10-07..2026-10-07",
+    );
+  });
+
+  it("counts a failed run from the worker itself as degraded", async () => {
+    upsertDailyRollupMock.mockRejectedValue(new Error("upsert failed"));
+    captureErrorMock.mockResolvedValue(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const supabase = createSupabaseStub({ data: [CAMPAIGN_ROW], error: null });
+
+    const summary = await runAnalyticsRollupWorker(supabase, { since: "2026-08-15", until: "2026-08-15" });
+
+    expect(summary.failed).toBeGreaterThan(0);
+    expect(analyticsRollupDegraded(summary)).not.toBeNull();
   });
 });

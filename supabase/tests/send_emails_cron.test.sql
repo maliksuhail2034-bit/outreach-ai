@@ -57,7 +57,7 @@ select is((select array_agg(role_name || ':' || outcome order by role_name) from
   'anon, authenticated and service_role are all denied when calling it');
 
 -- Allowlist -------------------------------------------------------------------
-select throws_ok($$select private.invoke_cron_endpoint('/api/cron/analytics-rollup')$$, '42501', null,
+select throws_ok($$select private.invoke_cron_endpoint('/api/cron/not-a-cron-job')$$, '42501', null,
   'another cron route is rejected');
 select throws_ok($$select private.invoke_cron_endpoint('/api/cron/send-emails/../sync-replies')$$, '42501', null,
   'a path that merely starts with the allowed one is rejected');

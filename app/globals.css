@@ -205,37 +205,6 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* Branded loading reveal (components/ui/brand-loader.tsx). brand-draw writes
-   the pen mask along the P; brand-settle opens the full mask as the pen
-   finishes, so the drawn P ends exactly as the asset. `both` holds the blank
-   start through the short delay; each element's own resting state is the
-   finished mark, which is what prefers-reduced-motion (animate-none) shows.
-   Timing: the pen finishes at 460ms (20ms delay + 440ms) and the settle
-   (20ms + 93% of 480ms = 466ms) completes the mark at 500ms. */
-@theme {
-  --animate-brand-draw: brand-draw 440ms cubic-bezier(0.4, 0, 0.2, 1) 20ms both;
-  --animate-brand-settle: brand-settle 480ms linear 20ms both;
-
-  @keyframes brand-draw {
-    from {
-      stroke-dashoffset: 1;
-    }
-    to {
-      stroke-dashoffset: 0;
-    }
-  }
-
-  @keyframes brand-settle {
-    0%,
-    93% {
-      opacity: 0;
-    }
-    100% {
-      opacity: 1;
-    }
-  }
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GEOIP_DB_PATH_ENV, lookupCountryByIp, resetGeoipCacheForTests } from "./geoip";
+import { GEOIP_DB_PATH_ENV, lookupCountryByIp, resetGeoipCacheForTests, usesLocalGeoip } from "./geoip";
 import { buildCountryMmdb } from "./test-country-mmdb";
 
 const dir = mkdtempSync(join(tmpdir(), "polimatiq-geoip-"));
@@ -85,7 +85,7 @@ describe("lookupCountryByIp", () => {
   });
 
   it("returns null and logs when the database file is corrupt", () => {
-    writeFileSync(dbPath, "not a maxmind database");
+    writeFileSync(dbPath, "not an mmdb database");
     expect(lookupCountryByIp("49.36.12.34")).toBeNull();
     expect(console.error).toHaveBeenCalled();
   });
@@ -194,18 +194,18 @@ describe("stale database detection", () => {
 
   it("doesn't warn about a fresh database", () => {
     vi.setSystemTime(T0);
-    writeDatabase(buildCountryMmdb(NETWORKS, at(-29 * DAY_MS)), at(-29 * DAY_MS));
+    writeDatabase(buildCountryMmdb(NETWORKS, at(-44 * DAY_MS)), at(-44 * DAY_MS));
     expect(lookupCountryByIp("49.36.12.34")).toBe("IN");
     expect(console.warn).not.toHaveBeenCalled();
   });
 
-  it("warns about a database older than 30 days — still using it — at most once a day", () => {
+  it("warns about a database older than 45 days — still using it — at most once a day", () => {
     vi.setSystemTime(T0);
-    writeDatabase(buildCountryMmdb(NETWORKS, at(-31 * DAY_MS)), at(-31 * DAY_MS));
+    writeDatabase(buildCountryMmdb(NETWORKS, at(-46 * DAY_MS)), at(-46 * DAY_MS));
 
     for (let i = 0; i < 5; i++) expect(lookupCountryByIp("49.36.12.34")).toBe("IN");
     expect(console.warn).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(console.warn).mock.calls[0][0]).toMatch(/country database is 31 days old \(built 2026-09-20T00:00:00\.000Z\)/);
+    expect(vi.mocked(console.warn).mock.calls[0][0]).toMatch(/country database is 46 days old \(built 2026-09-05T00:00:00\.000Z\)/);
 
     // Hourly re-checks within the day don't repeat it...
     vi.setSystemTime(at(HOUR_MS + 1_000));
@@ -220,9 +220,9 @@ describe("stale database detection", () => {
     expect(console.warn).toHaveBeenCalledTimes(2);
   });
 
-  it("warns once a loaded database ages past 30 days while the process keeps running", () => {
+  it("warns once a loaded database ages past 45 days while the process keeps running", () => {
     vi.setSystemTime(T0);
-    writeDatabase(buildCountryMmdb(NETWORKS, at(-29 * DAY_MS)), at(-29 * DAY_MS));
+    writeDatabase(buildCountryMmdb(NETWORKS, at(-44 * DAY_MS)), at(-44 * DAY_MS));
     lookupCountryByIp("49.36.12.34");
     expect(console.warn).not.toHaveBeenCalled();
 
@@ -233,7 +233,7 @@ describe("stale database detection", () => {
 
   it("stops warning once an up-to-date database replaces the stale one", () => {
     vi.setSystemTime(T0);
-    writeDatabase(buildCountryMmdb(NETWORKS, at(-40 * DAY_MS)), at(-40 * DAY_MS));
+    writeDatabase(buildCountryMmdb(NETWORKS, at(-50 * DAY_MS)), at(-50 * DAY_MS));
     lookupCountryByIp("49.36.12.34");
     expect(console.warn).toHaveBeenCalledTimes(1);
 
@@ -241,5 +241,23 @@ describe("stale database detection", () => {
     vi.setSystemTime(at(2 * DAY_MS));
     lookupCountryByIp("49.36.12.34");
     expect(console.warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("usesLocalGeoip", () => {
+  it("is true off Vercel with a database configured", () => {
+    vi.stubEnv("VERCEL", "");
+    expect(usesLocalGeoip()).toBe(true);
+  });
+
+  it("is false on Vercel, where the country comes from Vercel's header", () => {
+    vi.stubEnv("VERCEL", "1");
+    expect(usesLocalGeoip()).toBe(false);
+  });
+
+  it("is false with no database configured", () => {
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv(GEOIP_DB_PATH_ENV, "");
+    expect(usesLocalGeoip()).toBe(false);
   });
 });

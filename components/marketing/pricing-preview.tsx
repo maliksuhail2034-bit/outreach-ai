@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { FadeIn } from "@/components/motion/fade-in";
+import { GeoipAttribution } from "@/components/billing/geoip-attribution";
 import { Container } from "./container";
 
 // Reads the same plan/limit/price constants the real billing page uses (see
@@ -111,6 +112,7 @@ export async function PricingPreview() {
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Save up to 20% on 3/6/12-month billing — pick a duration during checkout.
           </p>
+          <GeoipAttribution className="mt-2 text-center" />
         </FadeIn>
       </Container>
     </section>

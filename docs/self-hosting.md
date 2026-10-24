@@ -52,111 +52,113 @@ it. This is only correct when all of the following hold:
 
 ## GeoIP country database
 
-Polimatiq uses MaxMind's free GeoLite2-Country database (`.mmdb`). The app
-reads only `country.iso_code` from it. Point `GEOIP_COUNTRY_DB_PATH` at the
-file.
+Polimatiq uses DB-IP's free **IP to Country Lite** database, in the MaxMind DB
+format (`.mmdb`). The app reads only `country.iso_code` from it. Point
+`GEOIP_COUNTRY_DB_PATH` at the file. Any `.mmdb` country database with that
+field works (MaxMind GeoLite2-Country does too) if the source ever changes.
 
 The app re-checks the file's modification time at most once an hour and
 reloads it when it changes, so updating the database needs no restart.
 
-### Installing GeoLite2-Country with `geoipupdate`
+### Licence and attribution
 
-Free, with no recurring fee. It needs a free MaxMind account, and updates come
-from MaxMind's official updater.
+- **Licence:** [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+  No account or key. The download page asks you to agree to the licensing
+  terms; agreeing is the site owner's decision, made once, before the first
+  download.
+- **Attribution (required).** DB-IP's terms for web applications: a link back
+  to DB-IP.com on the pages that use the results, with this wording:
+  `<a href='https://db-ip.com'>IP Geolocation by DB-IP</a>`. In the app:
+  - `components/billing/geoip-attribution.tsx` renders exactly that link on
+    the two pages whose content depends on the visitor's country: the pricing
+    section and `/billing`. It renders only when the local database is in use
+    (`usesLocalGeoip()`: off Vercel, with `GEOIP_COUNTRY_DB_PATH` set).
+  - The privacy policy names DB-IP as the source, with the licence link.
+- **No modification.** The file is used as published. If it is ever modified,
+  CC BY 4.0 requires saying so.
+- **Accuracy.** IP geolocation is approximate. A visitor on a VPN or a
+  misattributed range can land in the wrong region. The worst case is USD for
+  an Indian visitor, never INR for someone abroad by header spoofing.
 
-1. Create a free account at maxmind.com, then generate a license key. The
-   account ID and key are secrets. They go only in `/etc/GeoIP.conf` on the
-   server, never in the app's environment or in git.
-2. Install the updater and configure it:
+### Monthly update
 
-   ```bash
-   sudo apt-get install -y geoipupdate
-   sudo tee /etc/GeoIP.conf >/dev/null <<'EOF'
-   AccountID <your-account-id>
-   LicenseKey <your-license-key>
-   EditionIDs GeoLite2-Country
-   DatabaseDirectory /var/lib/GeoIP
-   EOF
-   sudo chmod 600 /etc/GeoIP.conf
-   sudo geoipupdate -v
-   ls -l /var/lib/GeoIP/GeoLite2-Country.mmdb
-   ```
+DB-IP publishes a new Lite release each month as
+`https://download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz`.
+The updater below downloads it, checks it, and only then swaps it in; on any
+failure the current file is left untouched.
 
-3. Keep the database current. MaxMind publishes updates twice a week, and the
-   GeoLite2 EULA requires using an up-to-date copy:
+```bash
+# /usr/local/sbin/update-dbip-country  (root:root, 0755)
+#!/usr/bin/env bash
+set -euo pipefail
+DEST=/var/lib/dbip/dbip-country-lite.mmdb
+NODE_MODULES=/srv/polimatiq/current/node_modules   # for mmdb-lib, used in the check
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-   ```ini
-   # /etc/systemd/system/geoipupdate.service
-   [Unit]
-   Description=Update GeoLite2 databases
-   [Service]
-   Type=oneshot
-   ExecStart=/usr/bin/geoipupdate
+fetch() { curl -fsSL --max-time 300 -o "$TMP/db.gz" "https://download.db-ip.com/free/dbip-country-lite-$1.mmdb.gz"; }
+# Early in a month the new file may not be published yet: fall back to last month's.
+fetch "$(date -u +%Y-%m)" || fetch "$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)"
+gunzip -c "$TMP/db.gz" > "$TMP/db.mmdb"
 
-   # /etc/systemd/system/geoipupdate.timer
-   [Unit]
-   Description=Update GeoLite2 databases twice a week
-   [Timer]
-   OnCalendar=Wed,Sat 06:00
-   RandomizedDelaySec=1h
-   Persistent=true
-   [Install]
-   WantedBy=timers.target
-   ```
+# Refuse a file that doesn't resolve well-known addresses correctly.
+NODE_PATH=$NODE_MODULES node -e '
+  const { Reader } = require("mmdb-lib");
+  const r = new Reader(require("fs").readFileSync(process.argv[1]));
+  const want = { "8.8.8.8": "US", "49.36.0.1": "IN" };
+  for (const [ip, cc] of Object.entries(want)) {
+    const got = r.get(ip)?.country?.iso_code;
+    if (got !== cc) { console.error(`check failed: ${ip} -> ${got}, expected ${cc}`); process.exit(1); }
+  }
+  console.log("ok, built", r.metadata.buildEpoch.toISOString());' "$TMP/db.mmdb"
 
-   ```bash
-   sudo systemctl daemon-reload && sudo systemctl enable --now geoipupdate.timer
-   ```
+install -d -m 0755 /var/lib/dbip
+install -m 0644 "$TMP/db.mmdb" "$DEST.new"
+mv -f "$DEST.new" "$DEST"   # atomic: the app never sees a half-written file
+```
 
-4. Set `GEOIP_COUNTRY_DB_PATH=/var/lib/GeoIP/GeoLite2-Country.mmdb`.
+```ini
+# /etc/systemd/system/update-dbip-country.service
+[Unit]
+Description=Update DB-IP IP to Country Lite
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-dbip-country
 
-### Attribution and licence obligations
+# /etc/systemd/system/update-dbip-country.timer
+[Unit]
+Description=Update DB-IP IP to Country Lite monthly
+[Timer]
+OnCalendar=*-*-03 06:00
+RandomizedDelaySec=2h
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
 
-Attribution is required before going live.
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start update-dbip-country      # first download (after the licence is accepted)
+sudo systemctl enable --now update-dbip-country.timer
+systemctl list-timers update-dbip-country.timer
+```
 
-**MaxMind GeoLite2** ([GeoLite End User License Agreement](https://www.maxmind.com/en/geolite/eula),
-checked against the version "Updated on: February 12, 2026"):
-- **Attribution is required (§3: "You must provide attribution of your use to
-  MaxMind").** Use the EULA's own example wording, unchanged. The displayed URL
-  is `https://www.maxmind.com`, linking to `https://www.maxmind.com/en/home`:
+Then set `GEOIP_COUNTRY_DB_PATH=/var/lib/dbip/dbip-country-lite.mmdb` in the
+environment file and restart the service.
 
-  > This product includes GeoLite Data created by MaxMind, available from
-  > [https://www.maxmind.com](https://www.maxmind.com/en/home).
-
-  Ready to paste into a web page:
-
-  ```html
-  This product includes GeoLite Data created by MaxMind, available from
-  <a href="https://www.maxmind.com/en/home">https://www.maxmind.com</a>.
-  ```
-
-- **Where it goes:** the EULA requires attribution but doesn't say where. This
-  file carries it for the self-hosted deployment (see "Third-party data
-  notices" below). Because the data decides what visitors are charged, also
-  show it to end users, e.g. on the privacy policy page next to the description
-  of how the billing region is chosen.
-- **Notices:** §3 also forbids removing or obscuring any copyright or other
-  notice contained in the data, so don't strip anything from the `.mmdb` files.
-- **Old data must go (§6.3).** Use a new release promptly, and destroy old
-  versions within 30 days of an update. MaxMind's developer docs put it as:
-  "you must delete GeoLite databases within 30 days of a new release".
-  - `geoipupdate` writes each new release to a temporary file and renames it
-    over `GeoLite2-Country.mmdb`, so the old version is gone once the new one
-    is in place. Don't keep copies or backups of old `.mmdb` files.
-  - The app logs `[geoip] country database is N days old` (at most once a day)
-    when the loaded database is more than 30 days old. Age is measured from the
-    **build date recorded inside the database** (its `build_epoch` metadata),
-    not the file's modification time. A warning means the updater has stopped
-    fetching new releases.
+- The app logs `[geoip] country database is N days old` (at most once a day)
+  when the loaded database is more than 45 days old, measured from the build
+  date inside the file. A healthy monthly update keeps it under ~33 days, so a
+  warning means the timer has stopped working: check
+  `journalctl -u update-dbip-country`.
 
 ## Third-party data notices
 
-Self-hosted deployments of Polimatiq use MaxMind GeoLite2-Country for billing
+Self-hosted deployments of Polimatiq use DB-IP IP to Country Lite for billing
 region detection, under the
-[GeoLite End User License Agreement](https://www.maxmind.com/en/geolite/eula).
-
-This product includes GeoLite Data created by MaxMind, available from
-[https://www.maxmind.com](https://www.maxmind.com/en/home).
+[Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
+licence. <a href='https://db-ip.com'>IP Geolocation by DB-IP</a>.
 
 ## Caddy
 
@@ -216,7 +218,7 @@ environment, plus:
 
 | Variable | Value |
 |---|---|
-| `GEOIP_COUNTRY_DB_PATH` | Absolute path to the `.mmdb` file, e.g. `/var/lib/GeoIP/GeoLite2-Country.mmdb`. If unset, the app logs `[geoip] GEOIP_COUNTRY_DB_PATH is not set` once and bills everyone in USD. |
+| `GEOIP_COUNTRY_DB_PATH` | Absolute path to the `.mmdb` file, e.g. `/var/lib/dbip/dbip-country-lite.mmdb`. If unset, the app logs `[geoip] GEOIP_COUNTRY_DB_PATH is not set` once and bills everyone in USD. |
 | `VERCEL` | **Must not be set** |
 
 **Permissions:**
@@ -412,7 +414,7 @@ ss -ltnp | grep 3000          # expect 127.0.0.1:3000, not 0.0.0.0:3000
 # 2. The database loads and resolves known addresses.
 #    Expect "IN" (an Indian ISP address) then "US":
 cd /srv/polimatiq/current && sudo -u polimatiq \
-  env GEOIP_COUNTRY_DB_PATH=/var/lib/GeoIP/GeoLite2-Country.mmdb node -e '
+  env GEOIP_COUNTRY_DB_PATH=/var/lib/dbip/dbip-country-lite.mmdb node -e '
 const { Reader } = require("mmdb-lib");
 const r = new Reader(require("fs").readFileSync(process.env.GEOIP_COUNTRY_DB_PATH));
 for (const ip of ["49.36.12.34", "8.8.8.8"]) console.log(ip, r.get(ip)?.country?.iso_code);'
@@ -428,3 +430,5 @@ End to end:
   `-H 'x-vercel-ip-country: IN'` through Caddy must not change that.
 - From an Indian network or VPN exit, the pricing section shows
   "Charged as ₹… via Razorpay".
+- With the database configured, the pricing section and `/billing` show the
+  "IP Geolocation by DB-IP" link; on Vercel or with no database, they don't.

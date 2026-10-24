@@ -69,8 +69,9 @@ const sections: LegalSection[] = [
           <strong>Technical data:</strong> information your browser sends, such as IP address and approximate
           country (used, for example, to decide which payment currency applies to you), plus security, rate-limit
           and service logs. Your country is looked up from your IP address in a database stored on our own servers;
-          your IP address is not sent to a third party for this. This product includes GeoLite Data created by
-          MaxMind, available from <a href="https://www.maxmind.com/en/home">https://www.maxmind.com</a>.
+          your IP address is not sent to a third party for this. That database is{" "}
+          <a href="https://db-ip.com">IP Geolocation by DB-IP</a>, licensed under{" "}
+          <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
         </p>
         <p>
           <strong>Communications:</strong> messages you send to support and related records.

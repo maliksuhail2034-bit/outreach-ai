@@ -197,7 +197,13 @@ Environment=NODE_OPTIONS=--max-old-space-size=1024
 ExecStart=/srv/polimatiq/current/node_modules/.bin/next start -H 127.0.0.1 -p 3000
 Restart=always
 RestartSec=5
+# next start exits 143 on SIGTERM; that is a clean stop, not a failure.
+SuccessExitStatus=143
 MemoryMax=1600M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
@@ -366,7 +372,15 @@ Staging environment rules:
 
 The staging service is the production unit with `polimatiq-staging`
 substituted, `-p 3001`, and `EnvironmentFile=/etc/polimatiq/staging.env`.
-Its Caddy site is private (`sudo caddy hash-password` produces the hash; the
+Its Caddy site must be private. Either allow only your own addresses
+(simplest; IPv6 privacy addresses rotate, so allow your /64):
+
+```caddyfile
+	@outsiders not remote_ip 203.0.113.7/32 2001:db8:1234:5678::/64
+	respond @outsiders "Forbidden" 403
+```
+
+or use basic auth (`sudo caddy hash-password` produces the hash; the
 password itself never goes in the file):
 
 ```caddyfile

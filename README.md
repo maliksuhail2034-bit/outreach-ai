@@ -37,6 +37,6 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Self-hosting
 
-To run on your own Linux server behind Caddy (e.g. a DigitalOcean Droplet), see
+To run on your own Linux server behind Caddy (e.g. a Hostinger VPS), see
 [docs/self-hosting.md](docs/self-hosting.md). It covers the required trusted-proxy
 setup and the GeoIP database that billing region detection needs off Vercel.

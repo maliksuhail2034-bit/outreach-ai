@@ -68,7 +68,9 @@ const sections: LegalSection[] = [
         <p>
           <strong>Technical data:</strong> information your browser sends, such as IP address and approximate
           country (used, for example, to decide which payment currency applies to you), plus security, rate-limit
-          and service logs.
+          and service logs. Your country is looked up from your IP address in a database stored on our own servers;
+          your IP address is not sent to a third party for this. This product includes GeoLite Data created by
+          MaxMind, available from <a href="https://www.maxmind.com/en/home">https://www.maxmind.com</a>.
         </p>
         <p>
           <strong>Communications:</strong> messages you send to support and related records.
@@ -105,7 +107,7 @@ const sections: LegalSection[] = [
       <>
         <p>We share personal data only as needed to run the Service, with:</p>
         <ul>
-          <li><strong>Infrastructure providers:</strong> Supabase (database and authentication) and Vercel (application hosting);</li>
+          <li><strong>Infrastructure providers:</strong> Supabase (database and authentication) and Hostinger (application hosting);</li>
           <li><strong>Payment processing:</strong> Razorpay;</li>
           <li><strong>Email delivery for account messages</strong> such as confirmations and password resets;</li>
           <li>

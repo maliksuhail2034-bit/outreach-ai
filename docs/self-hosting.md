@@ -1,8 +1,9 @@
-# Self-hosting Polimatiq (DigitalOcean Droplet + Caddy)
+# Self-hosting Polimatiq (Ubuntu VPS + Caddy)
 
-How to run Polimatiq on a single Linux server instead of Vercel. This only
-covers what differs from Vercel. Every other environment variable is the same
-as in production.
+How to run Polimatiq on a single Linux server instead of Vercel. Written for
+a Hostinger VPS running Ubuntu LTS, but nothing below is Hostinger-specific
+except the "Hostinger VPS" section. This only covers what differs from
+Vercel. Every other environment variable is the same as in production.
 
 ```
 Internet ──443──▶ Caddy (TLS, sets X-Forwarded-For) ──▶ 127.0.0.1:3000  next start
@@ -45,7 +46,7 @@ it. This is only correct when all of the following hold:
      `-H 127.0.0.1`.
    - Allow only 22, 80 and 443 in the firewall.
 3. **No other proxy hop sits in front of Caddy.** That rules out a Cloudflare
-   proxy, a DigitalOcean Load Balancer, or another CDN. Adding one means
+   proxy, a hosting provider's load balancer, or another CDN. Adding one means
    `{remote_host}` becomes that hop's address. Configure Caddy's
    `trusted_proxies` and use `{client_ip}` instead before adding one.
 
@@ -259,15 +260,132 @@ sudo systemd-run --uid=polimatiq --gid=polimatiq \
   --wait --pipe --collect \
   /usr/bin/npm run build
 
-# 4. next build rewrites the tracked next-env.d.ts; keep the checkout clean.
-sudo -u polimatiq git -C "$REL" checkout -- next-env.d.ts
-
-# 5. Switch over. Roll back by pointing `current` at the previous release.
+# 4. Switch over. Roll back by pointing `current` at the previous release.
 sudo ln -sfn "$REL" /srv/polimatiq/current
 sudo systemctl restart polimatiq
 ```
 
-The build needs a swapfile on a 2 GB Droplet.
+The build needs about 1.5 GB of memory: add a swapfile on a server with 2 GB
+of RAM or less.
+
+### Rollback
+
+Releases are never modified after they are built, so rolling back is a
+symlink switch to the previous release and a restart:
+
+```bash
+ls -1t /srv/polimatiq/releases            # newest first
+sudo ln -sfn /srv/polimatiq/releases/<previous-sha> /srv/polimatiq/current
+sudo systemctl restart polimatiq
+curl -fsS https://your.app.hostname/api/health
+```
+
+Keep at least the previous two releases. A rollback never touches the
+database: no release applies migrations (those are applied separately with
+the Supabase CLI), so an older release only needs to be compatible with the
+current schema.
+
+### Logs
+
+```bash
+journalctl -u polimatiq -f                       # follow
+journalctl -u polimatiq --since "1 hour ago" -p err
+journalctl -u caddy --since today
+```
+
+Ubuntu keeps the journal on disk (`/var/log/journal`) across reboots. Check
+with `journalctl --list-boots`. Each cron run is also recorded in the
+`job_runs` table.
+
+## Hostinger VPS
+
+- **SSH keys:** VPS dashboard → Manage → Settings → SSH keys → Add SSH key.
+  Only the public key goes there.
+- **Two firewalls.** Hostinger's managed firewall (VPS dashboard → Security
+  → Firewall) drops all inbound traffic once a rule group is active, so add
+  accept rules for 22, 80 and 443 *before* activating one, or SSH is locked
+  out. `ufw` on the server is a second, independent layer: allow OpenSSH
+  before `ufw enable`.
+  ```bash
+  sudo ufw allow OpenSSH && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
+  sudo ufw enable && sudo ufw status verbose
+  ```
+- **Outbound mail ports:** Hostinger states it does not block outbound SMTP on
+  VPS plans. Verify 465/587/993 from the server before relying on it (see
+  "Outbound SMTP/IMAP check" below).
+- **Node.js:** install the current LTS from NodeSource (Node 24; the app needs
+  ≥ 20.9). Use the same major version for every build and run.
+
+## Outbound SMTP/IMAP check
+
+Prove the server can reach mail providers without sending mail or using any
+mailbox credentials: open the connection, read the greeting, then quit. No
+AUTH, LOGIN, MAIL FROM or RCPT TO is ever sent.
+
+```bash
+for t in smtp.gmail.com:465 smtp.gmail.com:587 imap.gmail.com:993 \
+         smtp.office365.com:587 outlook.office365.com:993 \
+         smtp.hostinger.com:465 smtp.hostinger.com:587 imap.hostinger.com:993; do
+  host=${t%:*}; port=${t#*:}
+  case $port in
+    # openssl does the greeting, EHLO and STARTTLS itself; sending anything
+    # after the handshake gets rejected by some servers for pipelining.
+    587) out=$(timeout 15 openssl s_client -brief -starttls smtp -connect "$t" -servername "$host" </dev/null 2>&1 | grep -m1 'CONNECTION ESTABLISHED') ;;
+    993) out=$(printf 'a1 LOGOUT\r\n' | timeout 15 openssl s_client -quiet -connect "$t" -servername "$host" 2>/dev/null | grep -m1 -E '^\* OK') ;;
+    *)   out=$(printf 'QUIT\r\n' | timeout 15 openssl s_client -quiet -connect "$t" -servername "$host" 2>/dev/null | grep -m1 -E '^220') ;;
+  esac
+  [ -n "$out" ] && echo "OK   $t" || echo "FAIL $t"
+done
+```
+
+## Staging on the same server
+
+Staging runs as a second, fully separate instance: its own checkout, port,
+service, environment file and hostname. It must never share a value with
+production.
+
+| | Production | Staging |
+|---|---|---|
+| Releases | `/srv/polimatiq/releases` | `/srv/polimatiq-staging/releases` |
+| Port | `127.0.0.1:3000` | `127.0.0.1:3001` |
+| Service | `polimatiq` | `polimatiq-staging` |
+| Env file | `/etc/polimatiq/prod.env` | `/etc/polimatiq/staging.env` |
+| Supabase | production project | staging project only |
+
+Staging environment rules:
+- Staging Supabase URL, anon key and service-role key only. Never production's.
+- Newly generated `MAILBOX_ENCRYPTION_KEY`, `AI_PROVIDER_KEY_ENCRYPTION_KEY`,
+  `VERIFICATION_PROVIDER_KEY_ENCRYPTION_KEY`, `TRACKING_TOKEN_SECRET`,
+  `CLICK_TRACKING_TOKEN_SECRET`, `UNSUBSCRIBE_TOKEN_SECRET` and `CRON_SECRET`
+  (`openssl rand -hex 32` each).
+- `WARMUP_DRY_RUN=true`.
+- No OAuth, Stripe, heartbeat or error-tracking variables. Razorpay only with
+  Test Mode keys, if at all.
+- Don't put the staging hostname in the staging project's Vault
+  `cron_app_url`: staging cron routes are only ever called by hand.
+
+The staging service is the production unit with `polimatiq-staging`
+substituted, `-p 3001`, and `EnvironmentFile=/etc/polimatiq/staging.env`.
+Its Caddy site is private (`sudo caddy hash-password` produces the hash; the
+password itself never goes in the file):
+
+```caddyfile
+staging.your.app.hostname {
+	encode zstd gzip
+	header X-Robots-Tag "noindex, nofollow"
+
+	basic_auth {
+		staging <bcrypt-hash-from-caddy-hash-password>
+	}
+
+	reverse_proxy 127.0.0.1:3001 {
+		header_up X-Forwarded-For {remote_host}
+		header_up -X-Vercel-IP-Country
+		header_up -CF-IPCountry
+		header_up -X-Real-IP
+	}
+}
+```
 
 ## Verifying region detection on the server
 

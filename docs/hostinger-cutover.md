@@ -72,9 +72,54 @@ There is no equivalent fallback: current unsubscribe tokens are encrypted
 with a key derived from `UNSUBSCRIBE_TOKEN_SECRET`, so without it an old
 token cannot even be read. An unverifiable link shows "Link no longer valid"
 with a `mailto:` to the support address, changes nothing, and logs
-`[unsubscribe] link could not be verified` (format only). After go-live,
-any of those log lines for links sent before cutover means the secret
-was wrong: `journalctl -u polimatiq | grep "could not be verified"`.
+`[unsubscribe] link could not be verified` (format only). The RFC 8058
+one-click POST answers 400 and changes nothing.
+
+As of the 2026-10-25 cutover the old secret is confirmed lost (a real
+campaign link verified against none of the recovered values), so **every
+unsubscribe link sent before cutover lands on that page**. Those recipients
+can only be removed by hand: see [Removal requests](#removal-requests).
+`journalctl -u polimatiq | grep "could not be verified"` shows how often
+old links are still used.
+
+### Removal requests
+
+The "Link no longer valid" page asks the recipient to email the support
+address. Each such request must end as a suppression, or it is lost: the
+app has no screen for adding one, so use `scripts/record-removal-request.mts`,
+which writes a `manual` suppression for every account that holds the address
+(or that owns the mailbox the email came from) and stops their open
+enrollments. Suppressions are honoured at enrolment (warning), at claim time
+(`claimable_due_sends`) and immediately before each send.
+
+1. Note the request: the address to remove, when it arrived, and the
+   support message's identifier (`--request-ref`). If the recipient
+   forwarded the campaign email, its `From:` is the sending mailbox
+   (`--sender-mailbox`), which identifies the account even when the lead
+   has since been deleted.
+2. Dry run (read-only), as root, with systemd loading the env file:
+
+   ```bash
+   sudo systemd-run --working-directory=/srv/polimatiq/current \
+     --property=EnvironmentFile=/etc/polimatiq/prod.env \
+     --wait --pipe --collect \
+     /usr/bin/node --no-warnings scripts/record-removal-request.mts \
+       --email 'person@example.com' --request-ref 'support 2026-10-26 <message-id>' \
+       [--sender-mailbox 'sales@customer.example'] [--owner <user-uuid>]
+   ```
+
+   It prints the project, every matching account, existing suppressions,
+   the open enrollments it would stop, and a plan digest. Nothing is written.
+3. **(production write)** Re-run with `--apply --plan-digest <digest>
+   --audit-log /root/removal-requests.jsonl`. It appends a `pending` line to
+   the audit log before writing and a `done` line (or `failed`) after, then
+   re-reads the suppressions to confirm them. If anything changed since the
+   dry run, the digest no longer matches and nothing is written.
+4. If no account matches (`unmatched`), `--apply` records that in the audit
+   log and writes nothing: ask the recipient to forward the email they
+   received, then repeat with `--sender-mailbox`.
+5. Reply to the recipient only after the `done` line, and keep the audit log
+   (root, 0600) as the record that the request was honoured.
 
 ## Verifying secrets without changing anything
 
@@ -128,7 +173,9 @@ starts sending, and warmup resumes. Don't let that happen implicitly:
    gets 401; nothing runs, nothing is written (`runCronJob` rejects before
    recording a run). Healthchecks keeps alerting, as it has since the outage.
 2. Check the app (After, below) without any job running.
-3. **(approval: resume jobs)** Either
+3. **(approval: resume jobs)** Only once someone is confirmed to read the
+   support address and handle [removal requests](#removal-requests): old
+   unsubscribe links can't remove anyone by themselves. Either
    - the Vault fingerprint matched the known candidate: put that value in
      `CRON_SECRET` and `systemctl restart polimatiq`. No production write; or
    - it didn't: set Vault to the fresh value in the SQL editor,
@@ -154,9 +201,7 @@ Cutover:
 1. Build the release; `ln -sfn` it to `/srv/polimatiq/current`.
 2. `systemctl enable --now polimatiq`; `curl -fsS http://127.0.0.1:3000/api/health`
    on the server returns `database: ok`.
-3. Rename `/etc/caddy/production.caddy.pending` to `production.caddy`, add
-   `import production.caddy` to the Caddyfile, `caddy validate`, `systemctl reload caddy`.
-4. **(approval: DNS at GoDaddy)** Change only these records; leave MX, SPF,
+3. **(approval: DNS at GoDaddy)** Change only these records; leave MX, SPF,
    DMARC, DKIM, Brevo and other TXT records and the nameservers alone:
 
    | Record | From | To |
@@ -165,14 +210,22 @@ Cutover:
    | `www.polimatiq.com` CNAME | `…vercel-dns-017.com` | delete, then A `187.52.120.186` |
    | `polimatiq.com` AAAA (optional) | none | `2a02:4780:5e:e9a1::1` |
 
-5. Caddy obtains the certificates on the first HTTPS request (seconds).
+4. Wait until the authoritative nameservers and public resolvers (`dig +short
+   polimatiq.com @ns23.domaincontrol.com`, `@8.8.8.8`, `@1.1.1.1`, and the same
+   for `www`) all answer `187.52.120.186`.
+5. Only then rename `/etc/caddy/production.caddy.pending` to `production.caddy`,
+   add `import production.caddy` to the Caddyfile, `caddy validate`,
+   `systemctl reload caddy`. Caddy obtains the certificates over HTTP-01
+   within seconds. Importing it before DNS points here makes every ACME
+   challenge fail against the old host, and repeated failures run into Let's
+   Encrypt's failed-validation rate limit.
 
 After (all read-only unless noted):
 - [ ] `https://polimatiq.com` certificate valid; `www` redirects to the apex.
 - [ ] `/api/health` 200 with `database: ok`.
 - [ ] Sign in as an existing user; dashboard, campaigns and leads show existing data.
 - [ ] A mailbox's "Test connection" succeeds (proves decryption plus SMTP/IMAP egress).
-- [ ] An old unsubscribe link opens the confirmation page (don't confirm it).
+- [ ] An old unsubscribe link shows "Link no longer valid" with the support address (the old secret is lost; see Removal requests).
 - [ ] An old tracked link redirects to its destination (needs `CLICK_TRACKING_LEGACY_BEFORE` if the secret is new).
 - [ ] Billing page shows plans; INR disclosure from an Indian network. No test charge.
 - [ ] Cron routes return 401 to a wrong secret. After the approved resume: `job_runs` rows and Healthchecks pings.

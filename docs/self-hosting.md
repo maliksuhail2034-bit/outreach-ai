@@ -85,10 +85,12 @@ reloads it when it changes, so updating the database needs no restart.
 DB-IP publishes a new Lite release each month as
 `https://download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz`.
 The updater below downloads it, checks it, and only then swaps it in; on any
-failure the current file is left untouched.
+failure the current file is left untouched. Save it as
+`/usr/local/sbin/update-dbip-country` (root:root, 0755). The shebang must be
+the file's first line: a comment above it makes systemd fail with
+`203/EXEC` ("Exec format error").
 
 ```bash
-# /usr/local/sbin/update-dbip-country  (root:root, 0755)
 #!/usr/bin/env bash
 set -euo pipefail
 DEST=/var/lib/dbip/dbip-country-lite.mmdb

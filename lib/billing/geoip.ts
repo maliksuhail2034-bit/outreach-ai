@@ -3,24 +3,32 @@ import { isIP } from "node:net";
 import { Reader, type CountryResponse } from "mmdb-lib";
 
 // Country lookup for self-hosted deployments, where there is no Vercel edge
-// to tell us the visitor's country. Reads a local MaxMind GeoLite2-Country
-// database (.mmdb); see docs/self-hosting.md for installing and updating it.
+// to tell us the visitor's country. Reads a local country database in the
+// MaxMind DB format (.mmdb) — DB-IP IP to Country Lite in production; see
+// docs/self-hosting.md for installing and updating it.
 // Any failure (no path configured, file missing or corrupt, address not in
 // the database) is a null country, which lib/billing/region.ts treats as
 // international.
 
 export const GEOIP_DB_PATH_ENV = "GEOIP_COUNTRY_DB_PATH";
 
-// The database is replaced on disk by its updater (geoipupdate writes a new
-// file and renames it into place), so the loaded copy is re-checked against
+// Whether visitor countries come from the local database (as opposed to
+// Vercel's header). Pages showing a region-dependent result use this to
+// carry the data provider's attribution (components/billing/geoip-attribution.tsx).
+export function usesLocalGeoip(): boolean {
+  return process.env.VERCEL !== "1" && Boolean(process.env[GEOIP_DB_PATH_ENV]);
+}
+
+// The database is replaced on disk by its updater (which writes a new file
+// and renames it into place), so the loaded copy is re-checked against
 // the file's mtime at most this often instead of requiring a restart. A
 // failed re-check is retried on the next one.
 const RECHECK_INTERVAL_MS = 60 * 60 * 1000;
 
-// MaxMind's GeoLite EULA requires replacing old data within 30 days of a new
-// release, and GeoLite2-Country is rebuilt twice a week — a database older
-// than this means its updater has stopped.
-export const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+// DB-IP publishes a new Lite release monthly, so a healthy database can be
+// about 33 days old just before the next update. Older than this means its
+// updater has stopped.
+export const STALE_AFTER_MS = 45 * 24 * 60 * 60 * 1000;
 const STALE_WARNING_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 interface LoadedDatabase {

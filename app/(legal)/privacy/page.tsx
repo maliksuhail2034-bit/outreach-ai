@@ -68,8 +68,8 @@ const sections: LegalSection[] = [
         <p>
           <strong>Technical data:</strong> information your browser sends, such as IP address and approximate
           country (used, for example, to decide which payment currency applies to you), plus security, rate-limit
-          and service logs. Your country is looked up from your IP address in a database stored on our own servers;
-          your IP address is not sent to a third party for this. That database is{" "}
+          and service logs. Your country is looked up from your IP address in a database stored on the server that
+          runs the Service, which is hosted by Hostinger; your IP address is not sent to a third party for this. That database is{" "}
           <a href="https://db-ip.com">IP Geolocation by DB-IP</a>, licensed under{" "}
           <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
         </p>
@@ -160,7 +160,8 @@ const sections: LegalSection[] = [
         <p>
           We keep customer account data and customer content for as long as your account is active and as needed
           to provide the Service. Some operational logs are deleted automatically on a schedule, for example
-          rate-limit records after 7 days and background job records after 90 days.
+          rate-limit records after 7 days and background job records after 90 days. Logs kept on the server that
+          runs the Service, such as application and error logs, are deleted automatically after 7 days.
         </p>
         <p>
           Unsubscribe and bounce suppression records are kept so that suppressed addresses stay blocked, including

@@ -158,6 +158,9 @@ describe("send worker — lead status changed between claim and send", () => {
 
     await runSendWorker(supabase, 1, 1);
 
+    // Keyed by the campaign owner and the lead's stored address — the same
+    // (user_id, email) the claim-time check in claimable_due_sends() uses.
+    expect(db.getSuppression).toHaveBeenCalledWith(supabase, "user-1", "lead@example.test");
     expect(db.claimSendAttempt).not.toHaveBeenCalled();
     expect(db.confirmSendAttemptEligible).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();

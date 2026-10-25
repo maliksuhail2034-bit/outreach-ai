@@ -1,5 +1,7 @@
 -- Regression tests for claim_due_sends()
--- (supabase/migrations/20260925100000_claim_due_sends_per_mailbox_capacity.sql).
+-- (supabase/migrations/20260925100000_claim_due_sends_per_mailbox_capacity.sql,
+-- plus the suppression check restored by
+-- 20261025100000_claimable_due_sends_suppression.sql — scenario s11).
 -- Run against the LOCAL stack only: `supabase test db`.
 --
 -- Concurrency can't be tested from one session, so claims run through two
@@ -105,6 +107,16 @@ begin
   insert into public.email_events (campaign_id, lead_id, mailbox_id, event_type, created_at)
   values (claim_test.id(p_campaign), v_lead, claim_test.id(p_mailbox), 'sent', p_at);
 end $$;
+
+-- Suppresses a fixture campaign_lead's address for p_user, which need not be
+-- the lead's own owner (that's how a cross-account suppression is set up).
+create function claim_test.suppress(p_campaign_lead text, p_user text, p_reason text) returns void
+language sql as $$
+  insert into public.suppressions (user_id, email, reason)
+  select claim_test.id(p_user), l.email, p_reason
+  from public.campaign_leads cl join public.leads l on l.id = cl.lead_id
+  where cl.id = claim_test.id(p_campaign_lead)
+$$;
 
 create procedure claim_test.use_scenario(p_scenario text)
 language sql as $$
@@ -258,6 +270,34 @@ begin
   perform claim_test.add_lead('s10_paused_campaign', 's10_c_paused', 's10_mb_paused_c', interval '-1 hour');
   perform claim_test.add_lead('s10_no_mailbox', 's10_c', 's10_mb_null', interval '-1 hour');
   update public.campaign_leads set mailbox_id = null where id = claim_test.id('s10_no_mailbox');
+
+  -- s11: suppression. One org_a campaign, one mailbox per case:
+  --   s11_mb1 its only lead unsubscribed by org_a        -> nothing claimed
+  --   s11_mb2 its only lead bounced for org_a            -> nothing claimed
+  --   s11_mb3 an earlier lead manually suppressed by org_a, then a later
+  --           unsuppressed lead                          -> the later one
+  --   s11_mb4 a lead whose address only org_b suppressed -> claimed
+  --   s11_mb5 an unsuppressed lead                       -> claimed
+  perform claim_test.add_campaign('s11_c', 's11', 'org_a', 100);
+  for i in 1..5 loop
+    perform claim_test.add_mailbox('s11_mb' || i, 's11', 'org_a', 100, 100);
+  end loop;
+  perform claim_test.add_lead('s11_unsubscribed', 's11_c', 's11_mb1', interval '-1 hour');
+  perform claim_test.add_lead('s11_bounced', 's11_c', 's11_mb2', interval '-1 hour');
+  perform claim_test.add_lead('s11_manual', 's11_c', 's11_mb3', interval '-2 hours');
+  perform claim_test.add_lead('s11_after_manual', 's11_c', 's11_mb3', interval '-1 hour');
+  perform claim_test.add_lead('s11_other_account', 's11_c', 's11_mb4', interval '-1 hour');
+  perform claim_test.add_lead('s11_ok', 's11_c', 's11_mb5', interval '-1 hour');
+  perform claim_test.suppress('s11_unsubscribed', 'org_a', 'unsubscribed');
+  perform claim_test.suppress('s11_bounced', 'org_a', 'bounced');
+  perform claim_test.suppress('s11_manual', 'org_a', 'manual');
+  perform claim_test.suppress('s11_other_account', 'org_b', 'unsubscribed');
+
+  -- s12: a campaign whose only due lead is suppressed (dispatch check).
+  perform claim_test.add_campaign('s12_c', 's12', 'org_a', 100);
+  perform claim_test.add_mailbox('s12_mb', 's12', 'org_a', 100, 100);
+  perform claim_test.add_lead('s12_suppressed', 's12_c', 's12_mb', interval '-1 hour');
+  perform claim_test.suppress('s12_suppressed', 'org_a', 'unsubscribed');
 end
 $fixtures$;
 
@@ -269,7 +309,7 @@ create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
 set search_path = public, extensions;
 
-select plan(34);
+select plan(40);
 
 do $$
 begin
@@ -434,6 +474,31 @@ do $$ begin perform dblink_exec('ctl', 'call claim_test.use_scenario(''s10'')');
 select is((select array_agg(id) from dblink('b', 'select * from claim_test.claim(25)') t(id uuid)),
   array[claim_test.id('s10_ok')],
   's10: not-yet-due, non-active lead, inactive mailbox, paused campaign and null mailbox are all still excluded');
+
+-- s11: suppression ------------------------------------------------------------
+do $$ begin perform dblink_exec('ctl', 'call claim_test.use_scenario(''s11'')'); end $$;
+create temp table s11_claim as
+  select id from dblink('b', 'select * from claim_test.claim(25)') t(id uuid);
+select set_eq('select id from s11_claim',
+  $$select claim_test.id(n) from unnest(array['s11_after_manual','s11_other_account','s11_ok']) n$$,
+  's11: unsubscribed, bounced and manual suppressions by the owner are never claimed; everything else is');
+select is((select id from s11_claim where id = claim_test.id('s11_after_manual')), claim_test.id('s11_after_manual'),
+  's11: a suppressed lead does not hold its mailbox: the next due lead on it is claimed');
+select is((select id from s11_claim where id = claim_test.id('s11_other_account')), claim_test.id('s11_other_account'),
+  's11: another account''s suppression of the same address does not block this owner''s send');
+select is((select count(*)::int from public.campaign_leads
+    where id in (claim_test.id('s11_unsubscribed'), claim_test.id('s11_bounced'), claim_test.id('s11_manual'))
+      and (locked_until is not null or status <> 'active')), 0,
+  's11: suppressed leads are left untouched: no lease, status unchanged');
+
+-- s12: dispatch sees nothing to do when only suppressed leads are due ----------
+do $$ begin perform dblink_exec('ctl', 'call claim_test.use_scenario(''s12'')'); end $$;
+select is((select count(*)::int from dblink('b', 'select id from public.claimable_due_sends()') t(id uuid)), 0,
+  's12: claimable_due_sends() (the cron dispatch check) is empty when the only due lead is suppressed');
+do $$ begin perform dblink_exec('ctl', 'delete from public.suppressions where user_id = claim_test.id(''org_a'')'); end $$;
+select is((select array_agg(id) from dblink('b', 'select id from public.claimable_due_sends()') t(id uuid)),
+  array[claim_test.id('s12_suppressed')],
+  's12: the same lead is claimable again once the suppression is removed (the clause is what excluded it)');
 
 -- ---------------------------------------------------------------------------
 select * from finish();

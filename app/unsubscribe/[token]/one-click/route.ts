@@ -29,7 +29,11 @@ function plainText(body: string, status: number): NextResponse {
 export async function POST(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const verified = verifyUnsubscribeToken(token);
-  if (!verified) return plainText("This unsubscribe link is invalid.", 400);
+  if (!verified) {
+    // Format only, never the token — see app/unsubscribe/[token]/page.tsx.
+    console.warn("[unsubscribe] one-click link could not be verified", { format: token.startsWith("v2.") ? "v2" : "legacy-or-unknown" });
+    return plainText("This unsubscribe link is invalid.", 400);
+  }
 
   let formData: FormData;
   try {

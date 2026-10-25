@@ -279,6 +279,36 @@ export function verifyClickTrackingToken(token: string): ClickTrackingContext | 
   }
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_UNVERIFIED_TOKEN_LENGTH = 8192;
+
+// Reads a click token's payload WITHOUT checking its signature. Only for
+// lib/email/legacy-click-token.ts, which re-establishes every field from
+// trusted database rows before using any of them — never redirect to, or
+// record anything from, this result on its own. Shape checks only: five
+// UUIDs and a safe http(s) destination, otherwise null.
+export function decodeUnverifiedClickTrackingPayload(token: string): ClickTrackingContext | null {
+  if (token.length > MAX_UNVERIFIED_TOKEN_LENGTH) return null;
+  const separatorIndex = token.indexOf(SEPARATOR);
+  if (separatorIndex <= 0) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(token.slice(0, separatorIndex), "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 6 || !parsed.every((value) => typeof value === "string")) {
+    return null;
+  }
+
+  const [campaignId, campaignLeadId, leadId, mailboxId, sequenceStepId, destinationUrl] = parsed as string[];
+  if (![campaignId, campaignLeadId, leadId, mailboxId, sequenceStepId].every((id) => UUID_PATTERN.test(id))) return null;
+  if (!isSafeHttpUrl(destinationUrl)) return null;
+
+  return { campaignId, campaignLeadId, leadId, mailboxId, sequenceStepId, destinationUrl };
+}
+
 // Builds the full absolute click-tracking redirect URL for one link inside
 // one outbound send — the one thing lib/email/send-worker.ts needs from
 // this module. Same NEXT_PUBLIC_APP_URL requirement as buildOpenTrackingUrl.

@@ -10,6 +10,11 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: (...args: unknown[]) => createAdminClient(...args),
 }));
 
+const resolveLegacyClickToken = vi.fn();
+vi.mock("@/lib/email/legacy-click-token", () => ({
+  resolveLegacyClickToken: (...args: unknown[]) => resolveLegacyClickToken(...args),
+}));
+
 import { GET } from "./route";
 import { signClickTrackingToken, type ClickTrackingContext } from "@/lib/email/tracking-token";
 
@@ -35,6 +40,7 @@ describe("GET /api/track/click/[token]", () => {
     vi.stubEnv("CLICK_TRACKING_TOKEN_SECRET", "test-click-secret-do-not-use-in-prod");
     recordEmailEvent.mockReset().mockResolvedValue({});
     createAdminClient.mockReset().mockReturnValue({ __fakeAdminClient: true });
+    resolveLegacyClickToken.mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -123,5 +129,39 @@ describe("GET /api/track/click/[token]", () => {
     expect(consoleError).toHaveBeenCalled();
 
     consoleError.mockRestore();
+  });
+
+  it("never consults the legacy fallback for a validly signed token", async () => {
+    const token = signClickTrackingToken(CONTEXT);
+    await GET(request(token), makeParams(token));
+
+    expect(resolveLegacyClickToken).not.toHaveBeenCalled();
+  });
+
+  it("redirects a legacy link the fallback vouches for, and marks the event as legacy", async () => {
+    resolveLegacyClickToken.mockResolvedValue({ ...CONTEXT, mailboxId: null });
+    const response = await GET(request("legacy.token"), makeParams("legacy.token"));
+
+    expect(resolveLegacyClickToken).toHaveBeenCalledWith("legacy.token");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe(CONTEXT.destinationUrl);
+    expect(recordEmailEvent).toHaveBeenCalledWith(
+      { __fakeAdminClient: true },
+      {
+        campaign_id: CONTEXT.campaignId,
+        lead_id: CONTEXT.leadId,
+        mailbox_id: null,
+        event_type: "clicked",
+        metadata: { sequenceStepId: CONTEXT.sequenceStepId, destinationUrl: CONTEXT.destinationUrl, legacyToken: true },
+      },
+    );
+  });
+
+  it("rejects a legacy link the fallback doesn't vouch for, with the same static response", async () => {
+    const response = await GET(request("legacy.token"), makeParams("legacy.token"));
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Location")).toBeNull();
+    expect(recordEmailEvent).not.toHaveBeenCalled();
   });
 });

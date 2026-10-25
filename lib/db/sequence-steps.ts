@@ -20,6 +20,19 @@ export async function getSequenceStep(supabase: Client, id: string) {
   return unwrap<Tables<"sequence_steps">>(result);
 }
 
+// Admin-context read for the legacy click-link fallback
+// (lib/email/legacy-click-token.ts): the step's content plus the campaign
+// that owns it. Null when the step doesn't exist.
+export async function findSequenceStepWithCampaign(supabase: Client, id: string) {
+  const { data, error } = await supabase
+    .from("sequence_steps")
+    .select("id, subject, body, sequences!inner(campaign_id)")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function createSequenceStep(supabase: Client, values: TablesInsert<"sequence_steps">) {
   const result = await supabase.from("sequence_steps").insert(values).select("*").single();
   return unwrap<Tables<"sequence_steps">>(result);

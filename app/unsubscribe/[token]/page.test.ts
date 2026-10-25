@@ -1,4 +1,5 @@
 import { createHmac } from "crypto";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The confirmation page is what a GET to an unsubscribe link renders —
@@ -64,8 +65,51 @@ describe("GET /unsubscribe/[token] — display only", () => {
   });
 
   it("renders 'no longer valid' for an invalid token, writing nothing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     await render("not-a-token");
 
     expectNothingWritten();
+  });
+});
+
+describe("GET /unsubscribe/[token] — links that can no longer be verified", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("tells the recipient how to request removal by email, and that nothing changed yet", async () => {
+    const html = renderToStaticMarkup(await render("not-a-token"));
+
+    expect(html).toContain("Link no longer valid");
+    expect(html).toContain("nothing has been changed yet");
+    expect(html).toContain('href="mailto:support@polimatiq.com?subject=Unsubscribe%20request"');
+    expect(html).not.toContain("already been used");
+  });
+
+  it("shows the same fallback for a link issued under a previous secret, writing nothing", async () => {
+    vi.stubEnv("UNSUBSCRIBE_TOKEN_SECRET", "the-previous-deployment-secret");
+    const oldLink = signUnsubscribeToken(RECIPIENT);
+    vi.stubEnv("UNSUBSCRIBE_TOKEN_SECRET", SECRET);
+
+    const html = renderToStaticMarkup(await render(oldLink));
+
+    expect(html).toContain("support@polimatiq.com");
+    expect(html).not.toContain(RECIPIENT.email);
+    expectNothingWritten();
+  });
+
+  it("logs only the token format, never the token", async () => {
+    const token = signUnsubscribeToken(RECIPIENT).slice(0, -6) + "AAAAAA";
+    await render(token);
+
+    expect(console.warn).toHaveBeenCalledWith("[unsubscribe] link could not be verified", { format: "v2" });
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain(token);
+  });
+
+  it("doesn't show the fallback for a valid link", async () => {
+    const html = renderToStaticMarkup(await render(signUnsubscribeToken(RECIPIENT)));
+
+    expect(html).not.toContain("Link no longer valid");
+    expect(console.warn).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCampaignLead, getLeadById } from "@/lib/db";
 import { verifyUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { UnsubscribeConfirm } from "@/components/unsubscribe/unsubscribe-confirm";
+import { BUSINESS_DETAILS } from "@/components/legal/business-details";
 
 // Public, unauthenticated route (outside app/(app)/, so app/(app)/layout.tsx's
 // auth redirect never applies here — this page is reached by a recipient
@@ -29,10 +30,26 @@ export default async function UnsubscribePage({ params }: { params: Promise<{ to
   }
 
   if (!email) {
+    // Format only, never the token: a burst of these after a deployment means
+    // links from already-sent emails stopped verifying (e.g. a changed
+    // UNSUBSCRIBE_TOKEN_SECRET), and those recipients need the manual route.
+    console.warn("[unsubscribe] link could not be verified", { format: token.startsWith("v2.") ? "v2" : "legacy-or-unknown" });
+    const supportEmail = BUSINESS_DETAILS.supportEmail;
     return (
       <Centered>
         <h1 className="text-2xl font-semibold">Link no longer valid</h1>
-        <p className="text-muted-foreground">This unsubscribe link is invalid or has already been used.</p>
+        <p className="text-muted-foreground">We couldn&apos;t verify this unsubscribe link, so nothing has been changed yet.</p>
+        {supportEmail ? (
+          <p className="text-muted-foreground">
+            To stop receiving these emails, write to{" "}
+            <a className="underline underline-offset-4" href={`mailto:${supportEmail}?subject=Unsubscribe%20request`}>
+              {supportEmail}
+            </a>{" "}
+            from the address you want removed, or forward us the email you received, and we will remove that address.
+          </p>
+        ) : (
+          <p className="text-muted-foreground">To stop receiving these emails, reply to the email you received and ask to be removed.</p>
+        )}
       </Centered>
     );
   }

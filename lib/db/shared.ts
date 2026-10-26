@@ -15,6 +15,44 @@ export function unwrap<T>(result: { data: T | null; error: PostgrestError | null
   return result.data;
 }
 
+// PostgREST returns at most `max_rows` rows per request (1000 — see
+// supabase/config.toml, the same default as a hosted project) and silently
+// truncates anything larger, whatever `.limit()` asks for. A read that needs
+// every matching row — a dedup set, a bulk enrollment — pages through with
+// `.range()` instead. `fetchPage` must apply a total order (a unique
+// tiebreaker such as `id`) so rows can't shift between pages.
+export const POSTGREST_PAGE_SIZE = 1000;
+
+export async function selectAllPages<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: PostgrestError | null }>,
+  limit = Number.POSITIVE_INFINITY,
+): Promise<T[]> {
+  const rows: T[] = [];
+  while (rows.length < limit) {
+    const from = rows.length;
+    const to = Math.min(from + POSTGREST_PAGE_SIZE, limit) - 1;
+    const { data, error } = await fetchPage(from, to);
+    if (error) throw error;
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < to - from + 1) break;
+  }
+  return rows;
+}
+
+// Splits a list for `.in()` filters: every value goes into the request URL,
+// so an unbounded list (thousands of emails or ids) makes the URL too long
+// for the API gateway to accept.
+export const EMAIL_LOOKUP_CHUNK = 100;
+
+export function chunkValues<T>(values: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let start = 0; start < values.length; start += size) {
+    chunks.push(values.slice(start, start + size));
+  }
+  return chunks;
+}
+
 // A count query ({ count: "exact", head: true }) is an HTTP HEAD request,
 // whose response never has a body — so postgrest-js reports every failed
 // one, whatever the cause, as a bare { message: "" } with no code, and a

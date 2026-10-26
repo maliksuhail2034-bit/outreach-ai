@@ -1,10 +1,11 @@
 "use server";
 
 import Papa from "papaparse";
+import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createLeadsBatch, getUserOrganization } from "@/lib/db";
+import { createLeadsBatch, getUserOrganization, listExistingLeadEmails } from "@/lib/db";
 import type { TablesInsert } from "@/types/database.types";
 import { leadCsvRowSchema } from "@/lib/validations/leads";
 import { getRemainingLeadQuota } from "@/lib/billing/limits";
@@ -87,6 +88,9 @@ export async function importLeadsAction(
 
   const listIdRaw = formData.get("listId");
   const listId = typeof listIdRaw === "string" && listIdRaw ? listIdRaw : null;
+  if (listId !== null && !z.uuid().safeParse(listId).success) {
+    return { ...empty, error: "Choose a valid list." };
+  }
 
   const user = await requireUser();
   const supabase = await createClient();
@@ -111,16 +115,33 @@ export async function importLeadsAction(
     return { ...empty, error: `That file has too many rows (max ${MAX_ROWS}). Split it and try again.` };
   }
 
+  // A list deleted since the dialog opened would otherwise fail every insert
+  // on leads_check_list_owner — each chunk then retried row by row — and
+  // report every row as "Couldn't save this row".
+  if (listId !== null) {
+    const { data: list, error: listError } = await supabase
+      .from("lead_lists")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("id", listId)
+      .maybeSingle();
+    if (listError) throw listError;
+    if (!list) return { ...empty, error: "That list no longer exists. Choose another list and try again." };
+  }
+
+  const parsedRows = rows.map((rawRow) => leadCsvRowSchema.safeParse(normalizeRow(rawRow)));
+
   // Fetched once up front so dedup is a Set lookup per row instead of a
   // query per row — this is what makes correctness (no duplicate leads)
   // cheap to guarantee across the whole batch, including duplicates that
-  // only appear within the CSV itself.
-  const { data: existingRows, error: existingError } = await supabase
-    .from("leads")
-    .select("email")
-    .eq("user_id", user.id);
-  if (existingError) throw existingError;
-  const knownEmails = new Set(existingRows.map((row) => row.email.toLowerCase()));
+  // only appear within the CSV itself. Only this CSV's own emails are looked
+  // up: reading the user's whole lead table was capped at PostgREST's
+  // max_rows, so past 1,000 leads existing emails were missed.
+  const knownEmails = await listExistingLeadEmails(
+    supabase,
+    user.id,
+    parsedRows.flatMap((parsed) => (parsed.success ? [parsed.data.email.toLowerCase()] : [])),
+  );
   let remainingQuota = await getRemainingLeadQuota(supabase, user.id, user.email);
 
   let skippedDuplicates = 0;
@@ -138,9 +159,8 @@ export async function importLeadsAction(
   const candidates: TablesInsert<"leads">[] = [];
   const rowNumbers: number[] = [];
 
-  for (const [index, rawRow] of rows.entries()) {
+  for (const [index, parsed] of parsedRows.entries()) {
     const rowNumber = index + 2; // +1 for 0-index, +1 for the header row
-    const parsed = leadCsvRowSchema.safeParse(normalizeRow(rawRow));
 
     if (!parsed.success) {
       failed += 1;

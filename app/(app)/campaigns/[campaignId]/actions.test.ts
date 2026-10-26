@@ -17,17 +17,19 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/db", () => ({
   getCampaign: vi.fn(),
   getCampaignLead: vi.fn(),
+  getCampaignLeadByCampaignAndLead: vi.fn(),
   getLead: vi.fn(),
   updateCampaignLead: vi.fn(),
+  updateCampaignLeadsByIds: vi.fn(),
   getUserOrganization: vi.fn(),
   // Batch 8: enrollLeadAction/enrollLeadListAction's dependencies.
   getSuppressedEmails: vi.fn(),
   listCampaignMailboxes: vi.fn(),
-  listCampaignLeads: vi.fn(),
+  countCampaignLeads: vi.fn(),
   listCampaignLeadsWithTimezones: vi.fn(),
   addLeadToCampaign: vi.fn(),
   addLeadsToCampaign: vi.fn(),
-  listLeads: vi.fn(),
+  listAllLeads: vi.fn(),
   listSequences: vi.fn(),
   listSequenceSteps: vi.fn(),
   // Batch 8: launchCampaignAction's dependencies, and the mailbox pool
@@ -59,17 +61,18 @@ import {
   addCampaignMailbox,
   addLeadsToCampaign,
   addLeadToCampaign,
+  countCampaignLeads,
   getCampaign,
   getCampaignLead,
+  getCampaignLeadByCampaignAndLead,
   getLead,
   getLeadSegment,
   getSuppressedEmails,
   getUserOrganization,
-  listCampaignLeads,
+  listAllLeads,
   listCampaignLeadsWithTimezones,
   listCampaignMailboxes,
   listDomains,
-  listLeads,
   listLeadsMatchingRules,
   listMailboxes,
   listSequences,
@@ -78,6 +81,7 @@ import {
   requestSendNow,
   updateCampaign,
   updateCampaignLead,
+  updateCampaignLeadsByIds,
 } from "@/lib/db";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import {
@@ -97,17 +101,19 @@ import type { Tables } from "@/types/database.types";
 const mockRequireUser = vi.mocked(requireUser);
 const mockGetCampaign = vi.mocked(getCampaign);
 const mockGetCampaignLead = vi.mocked(getCampaignLead);
+const mockGetCampaignLeadByCampaignAndLead = vi.mocked(getCampaignLeadByCampaignAndLead);
 const mockUpdateCampaignLead = vi.mocked(updateCampaignLead);
+const mockUpdateCampaignLeadsByIds = vi.mocked(updateCampaignLeadsByIds);
 const mockGetUserOrganization = vi.mocked(getUserOrganization);
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
 const mockGetSuppressedEmails = vi.mocked(getSuppressedEmails);
 const mockListCampaignMailboxes = vi.mocked(listCampaignMailboxes);
-const mockListCampaignLeads = vi.mocked(listCampaignLeads);
+const mockCountCampaignLeads = vi.mocked(countCampaignLeads);
 const mockListCampaignLeadsWithTimezones = vi.mocked(listCampaignLeadsWithTimezones);
 const mockGetLead = vi.mocked(getLead);
 const mockAddLeadToCampaign = vi.mocked(addLeadToCampaign);
 const mockAddLeadsToCampaign = vi.mocked(addLeadsToCampaign);
-const mockListLeads = vi.mocked(listLeads);
+const mockListAllLeads = vi.mocked(listAllLeads);
 const mockListSequences = vi.mocked(listSequences);
 const mockListSequenceSteps = vi.mocked(listSequenceSteps);
 const mockListMailboxes = vi.mocked(listMailboxes);
@@ -118,7 +124,19 @@ const mockRemoveCampaignMailbox = vi.mocked(removeCampaignMailbox);
 const mockRevalidatePath = vi.mocked(revalidatePath);
 const mockRequestSendNow = vi.mocked(requestSendNow);
 const mockGetLeadSegment = vi.mocked(getLeadSegment);
-const mockListLeadsMatchingRules = vi.mocked(listLeadsMatchingRules);
+const mockListAllLeadsMatchingRules = vi.mocked(listLeadsMatchingRules);
+
+// Every campaign_leads write an action made, as [id, values] — single-row
+// updates (updateCampaignLead) and grouped bulk ones (updateCampaignLeadsByIds)
+// alike.
+function campaignLeadWrites(): [string, Record<string, unknown>][] {
+  return [
+    ...mockUpdateCampaignLead.mock.calls.map(([, id, values]) => [id, values as Record<string, unknown>] as [string, Record<string, unknown>]),
+    ...mockUpdateCampaignLeadsByIds.mock.calls.flatMap(([, , ids, values]) =>
+      ids.map((id) => [id, values as Record<string, unknown>] as [string, Record<string, unknown>]),
+    ),
+  ];
+}
 
 // Expected failures come back as a value (see lib/action-result.ts) rather
 // than a thrown error, whose message Next.js redacts in production builds.
@@ -204,18 +222,20 @@ beforeEach(() => {
   mockCheckRateLimit.mockResolvedValue(undefined);
   mockGetCampaign.mockResolvedValue(makeCampaign() as never);
   mockGetCampaignLead.mockResolvedValue(makeCampaignLead() as never);
+  mockGetCampaignLeadByCampaignAndLead.mockResolvedValue(null);
   mockUpdateCampaignLead.mockResolvedValue(makeCampaignLead() as never);
   // Batch 8 defaults: no suppression, no pool, no existing leads, no
   // sequence — enrollLeadAction/enrollLeadListAction's tests below override
   // only what each scenario needs.
   mockGetSuppressedEmails.mockResolvedValue(new Map());
   mockListCampaignMailboxes.mockResolvedValue([]);
-  mockListCampaignLeads.mockResolvedValue([]);
+  mockCountCampaignLeads.mockResolvedValue(0);
+  mockUpdateCampaignLeadsByIds.mockResolvedValue(undefined);
   mockListCampaignLeadsWithTimezones.mockResolvedValue([]);
   mockGetLead.mockResolvedValue({ id: "lead-1", email: "lead-1@example.com", timezone: null } as never);
   mockAddLeadToCampaign.mockResolvedValue(makeCampaignLead() as never);
-  mockAddLeadsToCampaign.mockResolvedValue({ inserted: 0, skipped: 0, rows: [] });
-  mockListLeads.mockResolvedValue([]);
+  mockAddLeadsToCampaign.mockResolvedValue({ inserted: 0, skipped: 0, rows: [], unscheduled: [] });
+  mockListAllLeads.mockResolvedValue([]);
   mockListSequences.mockResolvedValue([]);
   mockListSequenceSteps.mockResolvedValue([]);
   // launchCampaignAction/addCampaignMailboxAction/removeCampaignMailboxAction
@@ -437,7 +457,7 @@ describe("enrollLeadAction", () => {
       { id: "cm-1", campaign_id: "campaign-1", mailbox_id: "mailbox-1", created_at: "2026-01-01T00:00:00Z" },
       { id: "cm-2", campaign_id: "campaign-1", mailbox_id: "mailbox-2", created_at: "2026-01-01T00:00:00Z" },
     ] as never);
-    mockListCampaignLeads.mockResolvedValue([makeCampaignLead({ id: "existing-1" })] as never);
+    mockCountCampaignLeads.mockResolvedValue(1);
 
     await enrollLeadAction("campaign-1", "lead-1", undefined, true);
 
@@ -465,7 +485,7 @@ describe("enrollLeadAction", () => {
 
     await enrollLeadAction("campaign-1", "lead-1", undefined, true);
 
-    expect(mockListCampaignLeads).not.toHaveBeenCalled();
+    expect(mockCountCampaignLeads).not.toHaveBeenCalled();
   });
 });
 
@@ -500,7 +520,7 @@ describe("enrollLeadListAction", () => {
   }
 
   it("passes a resolver that always returns the explicit override, ignoring the pool", async () => {
-    mockListLeads.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b")]);
+    mockListAllLeads.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b")]);
 
     await enrollLeadListAction("campaign-1", "list-1", "mailbox-explicit", true);
 
@@ -511,7 +531,7 @@ describe("enrollLeadListAction", () => {
   });
 
   it("passes a resolver that round-robins across the pool when there's no override", async () => {
-    mockListLeads.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b"), makeLead("lead-c")]);
+    mockListAllLeads.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b"), makeLead("lead-c")]);
     mockListCampaignMailboxes.mockResolvedValue([
       { id: "cm-1", campaign_id: "campaign-1", mailbox_id: "mailbox-1", created_at: "2026-01-01T00:00:00Z" },
       { id: "cm-2", campaign_id: "campaign-1", mailbox_id: "mailbox-2", created_at: "2026-01-01T00:00:00Z" },
@@ -527,7 +547,7 @@ describe("enrollLeadListAction", () => {
 
   it("passes a resolver that falls back to campaign.default_mailbox_id when the pool is empty", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ default_mailbox_id: "mailbox-default" }) as never);
-    mockListLeads.mockResolvedValue([makeLead("lead-a")]);
+    mockListAllLeads.mockResolvedValue([makeLead("lead-a")]);
     mockListCampaignMailboxes.mockResolvedValue([]);
 
     await enrollLeadListAction("campaign-1", "list-1", undefined, true);
@@ -587,8 +607,8 @@ describe("enrollLeadSegmentAction", () => {
 
   beforeEach(() => {
     mockGetLeadSegment.mockResolvedValue(makeSegment() as never);
-    mockListLeadsMatchingRules.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b")] as never);
-    mockAddLeadsToCampaign.mockResolvedValue({ inserted: 2, skipped: 0, rows: [] });
+    mockListAllLeadsMatchingRules.mockResolvedValue([makeLead("lead-a"), makeLead("lead-b")] as never);
+    mockAddLeadsToCampaign.mockResolvedValue({ inserted: 2, skipped: 0, rows: [], unscheduled: [] });
   });
 
   it("enrolls the leads matching the segment right now, scoped to the caller, capped at 10,000", async () => {
@@ -596,7 +616,7 @@ describe("enrollLeadSegmentAction", () => {
 
     expect(mockGetCampaign).toHaveBeenCalledWith(expect.anything(), "user-1", "campaign-1");
     expect(mockGetLeadSegment).toHaveBeenCalledWith(expect.anything(), "user-1", "seg-1");
-    expect(mockListLeadsMatchingRules).toHaveBeenCalledWith(expect.anything(), "user-1", RULES, { limit: 10000 });
+    expect(mockListAllLeadsMatchingRules).toHaveBeenCalledWith(expect.anything(), "user-1", RULES, { limit: 10000 });
     expect(mockAddLeadsToCampaign).toHaveBeenCalledWith(
       expect.anything(),
       "campaign-1",
@@ -609,7 +629,7 @@ describe("enrollLeadSegmentAction", () => {
 
   it("is a snapshot: each enrollment takes only the then-current matches, and nothing links the campaign to the segment", async () => {
     await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
-    mockListLeadsMatchingRules.mockResolvedValue([makeLead("lead-c")] as never);
+    mockListAllLeadsMatchingRules.mockResolvedValue([makeLead("lead-c")] as never);
     await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true);
 
     expect(mockAddLeadsToCampaign.mock.calls[0][2]).toEqual(["lead-a", "lead-b"]);
@@ -648,7 +668,7 @@ describe("enrollLeadSegmentAction", () => {
     mockGetLeadSegment.mockRejectedValue(new Error("Expected a row, received none."));
 
     expect(await enrollLeadSegmentAction("campaign-1", "seg-other", undefined, true)).toEqual(failure(/something went wrong/i));
-    expect(mockListLeadsMatchingRules).not.toHaveBeenCalled();
+    expect(mockListAllLeadsMatchingRules).not.toHaveBeenCalled();
     expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
   });
 
@@ -658,7 +678,7 @@ describe("enrollLeadSegmentAction", () => {
     );
 
     expect(await enrollLeadSegmentAction("campaign-1", "seg-1", undefined, true)).toEqual(failure(/no longer valid/i));
-    expect(mockListLeadsMatchingRules).not.toHaveBeenCalled();
+    expect(mockListAllLeadsMatchingRules).not.toHaveBeenCalled();
     expect(mockAddLeadsToCampaign).not.toHaveBeenCalled();
   });
 
@@ -673,11 +693,11 @@ describe("enrollLeadSegmentAction", () => {
   });
 
   it("keeps list enrollment's own wording and cap after sharing the enrollment path", async () => {
-    mockListLeads.mockResolvedValue([makeLead("lead-a")]);
+    mockListAllLeads.mockResolvedValue([makeLead("lead-a")]);
     mockGetSuppressedEmails.mockResolvedValue(new Map([["lead-a@example.com", "bounced"]]) as never);
 
     expect(await enrollLeadListAction("campaign-1", "list-1")).toEqual(failure("1 lead in this list is suppressed (bounced/unsubscribed). Confirm to enroll anyway."));
-    expect(mockListLeads).toHaveBeenCalledWith(expect.anything(), "user-1", { listId: "list-1", limit: 10000 });
+    expect(mockListAllLeads).toHaveBeenCalledWith(expect.anything(), "user-1", { listId: "list-1", limit: 10000 });
   });
 });
 
@@ -691,10 +711,14 @@ describe("launchCampaignAction", () => {
   // action: the mailbox_id backfill, and scheduleOnEnrollment's own
   // current_step_id/next_send_at/status write. Isolate just the backfill
   // writes for assertions below.
+  // Launch writes in grouped bulk updates (applyCampaignLeadWrites), so
+  // the per-lead writes are read back from those calls, sorted by lead id —
+  // grouping doesn't preserve the original lead order.
   function mailboxBackfillCalls() {
-    return mockUpdateCampaignLead.mock.calls
-      .filter(([, , values]) => values !== null && typeof values === "object" && "mailbox_id" in values)
-      .map(([, id, values]) => [id, (values as { mailbox_id: string | null }).mailbox_id]);
+    return campaignLeadWrites()
+      .filter(([, values]) => "mailbox_id" in values)
+      .map(([id, values]) => [id, (values as { mailbox_id: string | null }).mailbox_id])
+      .sort(([a], [b]) => String(a).localeCompare(String(b)));
   }
 
   it("backfills leads with no mailbox round-robin across the pool when default_mailbox_id is null (pool-only campaign)", async () => {
@@ -766,6 +790,7 @@ describe("launchCampaignAction", () => {
 
     expect(mockUpdateCampaign).not.toHaveBeenCalled();
     expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockUpdateCampaignLeadsByIds).not.toHaveBeenCalled();
   });
 });
 
@@ -826,10 +851,8 @@ describe("per-lead timezone scheduling", () => {
   const TOKYO_SEND = "2026-09-01T00:00:00.000Z";
 
   function scheduledAt(campaignLeadId: string) {
-    const call = mockUpdateCampaignLead.mock.calls.find(
-      ([, id, values]) => id === campaignLeadId && typeof values === "object" && values !== null && "next_send_at" in values,
-    );
-    return (call?.[2] as { next_send_at?: string | null } | undefined)?.next_send_at;
+    const write = campaignLeadWrites().find(([id, values]) => id === campaignLeadId && "next_send_at" in values);
+    return (write?.[1] as { next_send_at?: string | null } | undefined)?.next_send_at;
   }
 
   function useOneStepSequence() {
@@ -866,7 +889,7 @@ describe("per-lead timezone scheduling", () => {
   it("enrollLeadListAction schedules each lead in its own timezone", async () => {
     mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
     useOneStepSequence();
-    mockListLeads.mockResolvedValue([
+    mockListAllLeads.mockResolvedValue([
       { id: "lead-utc", email: "utc@example.com", timezone: null },
       { id: "lead-ny", email: "ny@example.com", timezone: "America/New_York" },
       { id: "lead-tokyo", email: "tokyo@example.com", timezone: "Asia/Tokyo" },
@@ -874,7 +897,7 @@ describe("per-lead timezone scheduling", () => {
     mockAddLeadsToCampaign.mockResolvedValue({
       inserted: 3,
       skipped: 0,
-      rows: [pendingLead("cl-utc", "lead-utc"), pendingLead("cl-ny", "lead-ny"), pendingLead("cl-tokyo", "lead-tokyo")],
+      rows: [pendingLead("cl-utc", "lead-utc"), pendingLead("cl-ny", "lead-ny"), pendingLead("cl-tokyo", "lead-tokyo")], unscheduled: [],
     });
 
     await enrollLeadListAction("campaign-1", "list-1", undefined, true);
@@ -882,6 +905,125 @@ describe("per-lead timezone scheduling", () => {
     expect(scheduledAt("cl-utc")).toBe(CAMPAIGN_TZ_SEND);
     expect(scheduledAt("cl-ny")).toBe(NEW_YORK_SEND);
     expect(scheduledAt("cl-tokyo")).toBe(TOKYO_SEND);
+  });
+
+  // Regression: an enrollment that inserted its leads and then failed before
+  // scheduling left them 'pending' in an active campaign, and a retry
+  // skipped them as already enrolled, so they were never sent.
+  it("enrollLeadListAction retry schedules leads a failed attempt left unscheduled", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
+    useOneStepSequence();
+    mockListAllLeads.mockResolvedValue([
+      { id: "lead-1", email: "1@example.com", timezone: null },
+      { id: "lead-2", email: "2@example.com", timezone: null },
+    ] as never);
+    mockAddLeadsToCampaign.mockResolvedValue({
+      inserted: 0,
+      skipped: 2,
+      rows: [],
+      unscheduled: [
+        { id: "cl-1", lead_id: "lead-1", status: "pending", enrolled_at: "2026-09-01T00:00:00.000Z" },
+        { id: "cl-2", lead_id: "lead-2", status: "pending", enrolled_at: "2026-09-01T00:00:00.000Z" },
+      ],
+    });
+
+    const result = await enrollLeadListAction("campaign-1", "list-1", undefined, true);
+
+    expect(result).toMatchObject({ ok: true, data: { inserted: 0, skipped: 2 } });
+    expect(mockUpdateCampaignLeadsByIds).toHaveBeenCalledWith(
+      expect.anything(),
+      "campaign-1",
+      ["cl-1", "cl-2"],
+      expect.objectContaining({ next_send_at: CAMPAIGN_TZ_SEND, status: "active" }),
+      { onlyStatus: "pending" },
+    );
+  });
+
+  // Regression: the paged lead read can return a lead twice when newer leads
+  // are inserted between pages; the duplicate failed the whole enrollment.
+  it("enrollLeadListAction passes each lead once, and counts suppressions once", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
+    useOneStepSequence();
+    const dup = { id: "lead-1", email: "1@example.com", timezone: null };
+    mockListAllLeads.mockResolvedValue([dup, { id: "lead-2", email: "2@example.com", timezone: null }, dup] as never);
+    mockGetSuppressedEmails.mockResolvedValueOnce(new Map([["1@example.com", "bounced"]]));
+
+    expect(await enrollLeadListAction("campaign-1", "list-1")).toEqual(
+      failure("1 lead in this list is suppressed (bounced/unsubscribed). Confirm to enroll anyway."),
+    );
+
+    await enrollLeadListAction("campaign-1", "list-1", undefined, true);
+    expect(mockAddLeadsToCampaign).toHaveBeenLastCalledWith(expect.anything(), "campaign-1", ["lead-1", "lead-2"], expect.any(Function));
+  });
+
+  describe("enrollLeadAction retry", () => {
+    beforeEach(() => {
+      mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
+      useOneStepSequence();
+    });
+
+    it("schedules an existing 'pending' enrollment instead of inserting it again", async () => {
+      mockGetCampaignLeadByCampaignAndLead.mockResolvedValue(pendingLead("cl-stranded") as never);
+
+      expect(await enrollLeadAction("campaign-1", "lead-1", undefined, true)).toMatchObject({ ok: true });
+
+      expect(mockAddLeadToCampaign).not.toHaveBeenCalled();
+      expect(scheduledAt("cl-stranded")).toBe(CAMPAIGN_TZ_SEND);
+      // Conditional on still being 'pending', so a concurrent retry that
+      // already scheduled (or the worker that already sent) it is not reset.
+      expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+      expect(mockUpdateCampaignLeadsByIds).toHaveBeenCalledWith(
+        expect.anything(),
+        "campaign-1",
+        ["cl-stranded"],
+        expect.objectContaining({ next_send_at: CAMPAIGN_TZ_SEND }),
+        { onlyStatus: "pending" },
+      );
+    });
+
+    it("still inserts (and lets the unique key refuse) when the existing enrollment was already scheduled", async () => {
+      mockGetCampaignLeadByCampaignAndLead.mockResolvedValue(makeCampaignLead({ id: "cl-active", status: "active" }) as never);
+      mockAddLeadToCampaign.mockRejectedValueOnce({ code: "23505", message: "duplicate key" });
+
+      expect(await enrollLeadAction("campaign-1", "lead-1", undefined, true)).toMatchObject({ ok: false });
+      expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    });
+  });
+
+  // A 10,000-lead list used to mean 10,000 sequential UPDATEs inside one
+  // Server Function; leads sharing a schedule are now one grouped write.
+  it("enrollLeadListAction writes leads that share a schedule in one grouped update", async () => {
+    mockGetCampaign.mockResolvedValue(makeCampaign({ sending_window: WINDOW, default_mailbox_id: "mailbox-1" }) as never);
+    useOneStepSequence();
+    mockListAllLeads.mockResolvedValue([
+      { id: "lead-1", email: "1@example.com", timezone: null },
+      { id: "lead-2", email: "2@example.com", timezone: null },
+      { id: "lead-ny", email: "ny@example.com", timezone: "America/New_York" },
+    ] as never);
+    mockAddLeadsToCampaign.mockResolvedValue({
+      inserted: 3,
+      skipped: 0,
+      rows: [pendingLead("cl-1", "lead-1"), pendingLead("cl-2", "lead-2"), pendingLead("cl-ny", "lead-ny")], unscheduled: [],
+    });
+
+    await enrollLeadListAction("campaign-1", "list-1", undefined, true);
+
+    expect(mockUpdateCampaignLead).not.toHaveBeenCalled();
+    expect(mockUpdateCampaignLeadsByIds).toHaveBeenCalledTimes(2);
+    expect(mockUpdateCampaignLeadsByIds).toHaveBeenCalledWith(
+      expect.anything(),
+      "campaign-1",
+      ["cl-1", "cl-2"],
+      expect.objectContaining({ next_send_at: CAMPAIGN_TZ_SEND, status: "active" }),
+      { onlyStatus: "pending" },
+    );
+    expect(mockUpdateCampaignLeadsByIds).toHaveBeenCalledWith(
+      expect.anything(),
+      "campaign-1",
+      ["cl-ny"],
+      expect.objectContaining({ next_send_at: NEW_YORK_SEND }),
+      { onlyStatus: "pending" },
+    );
   });
 
   it("launchCampaignAction schedules every pending lead in its own timezone", async () => {

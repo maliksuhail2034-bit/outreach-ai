@@ -83,6 +83,26 @@ describe("createLeadAction — plan limit", () => {
   it("returns ok when the lead is created", async () => {
     expect(await createLeadAction({ email: "jane@acme.com" })).toEqual({ ok: true, data: undefined });
   });
+
+  it("returns a duplicate-email message instead of throwing on the unique constraint", async () => {
+    mockCreateLead.mockRejectedValueOnce({ code: "23505", message: "duplicate key value violates unique constraint" });
+
+    expect(await createLeadAction({ email: "jane@acme.com" })).toEqual({
+      ok: false,
+      error: "A lead with this email already exists.",
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("still throws any other database error", async () => {
+    mockCreateLead.mockRejectedValueOnce({ code: "08006", message: "connection failure" });
+    await expect(createLeadAction({ email: "jane@acme.com" })).rejects.toMatchObject({ code: "08006" });
+  });
+
+  it("rejects a list id that isn't a uuid before touching the database", async () => {
+    await expect(createLeadAction({ email: "jane@acme.com", listId: "not-a-uuid" })).rejects.toThrow();
+    expect(mockCreateLead).not.toHaveBeenCalled();
+  });
 });
 
 describe("setLeadsTimezoneAction (bulk)", () => {

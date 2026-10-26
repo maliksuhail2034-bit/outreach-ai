@@ -24,7 +24,9 @@ export const leadSchema = z.object({
   // Optional so a create submission can omit it and let the DB default
   // ('new') apply — see supabase/migrations/20260729100000_leads_status.sql.
   status: z.enum(LEAD_STATUSES).optional(),
-  listId: z.string().trim().optional().or(z.literal("")),
+  // A list's uuid, or "" for no list — anything else would reach the
+  // database as a uuid cast error instead of a validation message.
+  listId: z.uuid({ message: "Choose a valid list." }).optional().or(z.literal("")),
   timezone: leadTimezoneField.optional(),
 });
 export type LeadInput = z.infer<typeof leadSchema>;

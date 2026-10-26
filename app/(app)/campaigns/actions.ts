@@ -75,19 +75,25 @@ async function rescheduleQueuedCampaignLeads(supabase: Client, campaignId: strin
   const activeLeads = await listCampaignLeadsWithTimezones(supabase, campaignId, { status: "active" });
   const queued = activeLeads.filter((lead) => lead.next_send_at !== null);
 
-  await Promise.all(
-    queued.map(async (lead) => {
-      const current = new Date(lead.next_send_at!);
-      const recomputed = recomputeNextSendAt(current, resolveLeadSendingWindow(newWindow, lead.leadTimezone));
-      // Skip the write when nothing actually changes (recomputeNextSendAt is
-      // a no-op for a time that's already valid under the new window) —
-      // avoids touching every queued row's updated_at on an edit that only
-      // changed the campaign name, for example.
-      if (recomputed.getTime() === current.getTime()) return;
-      await updateCampaignLead(supabase, lead.id, { next_send_at: recomputed.toISOString() });
-    }),
-  );
+  // In batches, so a campaign with thousands of queued leads doesn't open
+  // thousands of concurrent requests at once.
+  for (let start = 0; start < queued.length; start += RESCHEDULE_CONCURRENCY) {
+    await Promise.all(
+      queued.slice(start, start + RESCHEDULE_CONCURRENCY).map(async (lead) => {
+        const current = new Date(lead.next_send_at!);
+        const recomputed = recomputeNextSendAt(current, resolveLeadSendingWindow(newWindow, lead.leadTimezone));
+        // Skip the write when nothing actually changes (recomputeNextSendAt is
+        // a no-op for a time that's already valid under the new window) —
+        // avoids touching every queued row's updated_at on an edit that only
+        // changed the campaign name, for example.
+        if (recomputed.getTime() === current.getTime()) return;
+        await updateCampaignLead(supabase, lead.id, { next_send_at: recomputed.toISOString() });
+      }),
+    );
+  }
 }
+
+const RESCHEDULE_CONCURRENCY = 25;
 
 export async function updateCampaignAction(id: string, input: CampaignInput): Promise<ActionResult> {
   const parsed = campaignSchema.parse(input);

@@ -223,7 +223,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
                 {detailsFormFailed ? (
                   <ThrowIfFailed error={leadListsResult.error} />
                 ) : (
-                  <LeadForm mode="edit" lead={lead} leadLists={leadLists} onSuccess={() => {}} />
+                  <LeadForm mode="edit" lead={lead} leadLists={leadLists} />
                 )}
               </WidgetErrorBoundary>
             </CardContent>

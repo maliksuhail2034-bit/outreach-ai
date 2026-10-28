@@ -3,6 +3,61 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-10-26 — PostgREST Row-Limit, Enrollment Recovery & Campaign Page Fixes (Uncommitted)
+
+Working-tree changes on `fix-bugs`, not yet committed. No migration and no
+new environment variables. Root cause for most items: PostgREST returns at
+most `max_rows` (1,000) rows per request and silently drops the rest, so
+"read everything" paths broke past 1,000 rows.
+
+- **Paging helpers** (`lib/db/shared.ts`): `selectAllPages()` reads in
+  1,000-row `.range()` pages with an `id` tiebreaker; `chunkValues()` keeps
+  `.in()` filters short enough for the request URL.
+- **Campaign launch** (`launchCampaignAction`): every pending enrollment is
+  now scheduled — `listCampaignLeadsWithTimezones` pages. Previously only
+  1,000 were scheduled and the rest stayed `pending` for good.
+- **List and segment enrollment**: new `listAllLeads()` and a paged
+  `listLeadsMatchingRules()` enroll every lead up to the existing 10,000
+  cap (previously the newest 1,000).
+- **Enrollment dedup** (`addLeadsToCampaign`): reads every existing
+  enrollment in pages, and de-duplicates the requested lead ids, so a lead
+  returned twice by a paged read no longer fails the whole insert.
+- **Campaign detail page "URI too long" crash**: `listLeadsAvailableForCampaign`
+  now uses a PostgREST anti-join (`campaign_leads!left()` + `is.null`)
+  instead of sending every enrolled lead id in a `not.in` filter. The page
+  previously failed once a campaign had roughly 200+ enrolled leads.
+- **Enrollment retry recovery**: an enrollment that inserted leads and then
+  failed before scheduling left them `pending` forever. A retry (bulk or
+  single-lead) now schedules those leads. Every scheduling write is
+  conditional on `status = 'pending'` (`updateCampaignLeadsByIds(…,
+  { onlyStatus })`), so a retry or concurrent request can never reschedule
+  a lead that is already scheduled or sent.
+- **Grouped scheduling writes**: bulk enrollment and launch wrote one UPDATE
+  per lead (up to 10,000 sequential requests in one Server Function); leads
+  sharing a schedule are now written together, 200 ids per UPDATE.
+- **Suppression check**: `getSuppressedEmails` looks up 100 emails per
+  request instead of putting a whole list in one URL.
+- **CSV import**: duplicate detection looks up only the file's own emails
+  (`listExistingLeadEmails`), fixing missed duplicates for accounts with
+  1,000+ leads; the target list must be a valid list the user owns.
+- **Smaller fixes**: single-lead enrollment uses a count query
+  (`countCampaignLeads`); adding a lead with an existing email returns "A lead
+  with this email already exists."; the lead form's list must be a valid id
+  or empty; sending-window edits reschedule 25 leads at a time.
+- **IMAP tests**: `imap.test.ts` mocks `dns/promises` (as
+  `mail-host-guard.test.ts` does). The tests were doing a real DNS lookup
+  added by `faa3751`, which timed out; test-only change.
+- **Known limitations, not addressed here**: the campaign page still reads
+  at most 1,000 enrolled leads and 1,000 events (incomplete counts and
+  table, blank names in accounts with 1,000+ leads); leads enrolled while a
+  campaign is paused are not scheduled on resume; lists over 10,000 leads
+  are capped without a message. A user-deletion migration (trigger conflict
+  during cascade) is proposed separately and not included.
+- **Verification**: `npm run typecheck`, `npm run lint`, `npm run build`
+  pass; `vitest` 2,327 / 2,327; pgTAP 507 / 507 on a disposable local
+  Supabase stack; integration checks against a local database. Not yet run
+  against production.
+
 ## 2026-09-06 — Polimatiq Rebrand & Marketing Landing Page (Commit: d447f2b)
 
 - **Public marketing site**: the root route (`app/page.tsx`) now renders a

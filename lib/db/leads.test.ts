@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "./shared";
-import { createLeadsBatch, deleteLead, listLeadsAvailableForCampaign, listLeadsPage, setLeadsTimezone } from "./leads";
+import {
+  createLeadsBatch,
+  deleteLead,
+  listAllLeads,
+  listExistingLeadEmails,
+  listLeadsAvailableForCampaign,
+  listLeadsPage,
+  setLeadsTimezone,
+} from "./leads";
 
 // Same fake-Client pattern as lib/db/suppressions.test.ts.
 function createMockClient(result: { data?: unknown; error?: unknown }) {
@@ -13,10 +21,11 @@ function createMockClient(result: { data?: unknown; error?: unknown }) {
     order: vi.fn(),
     in: vi.fn(),
     limit: vi.fn(),
+    range: vi.fn(),
     single: vi.fn(),
     then: (resolve: (value: typeof result) => void) => resolve(result),
   };
-  for (const method of ["select", "delete", "insert", "update", "eq", "order", "in", "limit", "single"] as const) {
+  for (const method of ["select", "delete", "insert", "update", "eq", "order", "in", "limit", "range", "single"] as const) {
     chainable[method].mockReturnValue(chainable);
   }
 
@@ -59,59 +68,61 @@ describe("deleteLead", () => {
 // filter into SQL instead of diffing a full account-wide lead fetch
 // against every campaign_leads row in JS.
 describe("listLeadsAvailableForCampaign", () => {
-  function createClient(
-    enrolledResult: { data?: unknown; error?: unknown },
-    leadsResult: { data?: unknown; error?: unknown },
-  ) {
-    const campaignLeadsChain = {
-      select: vi.fn(),
-      eq: vi.fn(),
-      then: (resolve: (value: typeof enrolledResult) => void) => resolve(enrolledResult),
-    };
-    for (const method of ["select", "eq"] as const) {
-      campaignLeadsChain[method].mockReturnValue(campaignLeadsChain);
+  function createClient(pages: { data?: unknown; error?: unknown }[]) {
+    const calls: [string, ...unknown[]][] = [];
+    const chain: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "is", "order", "range", "not", "in"]) {
+      chain[method] = (...args: unknown[]) => {
+        calls.push([method, ...args]);
+        return chain;
+      };
     }
-
-    const leadsChain = {
-      select: vi.fn(),
-      eq: vi.fn(),
-      order: vi.fn(),
-      limit: vi.fn(),
-      not: vi.fn(),
-      then: (resolve: (value: typeof leadsResult) => void) => resolve(leadsResult),
-    };
-    for (const method of ["select", "eq", "order", "limit", "not"] as const) {
-      leadsChain[method].mockReturnValue(leadsChain);
-    }
-
-    const from = vi.fn((table: string) => (table === "campaign_leads" ? campaignLeadsChain : leadsChain));
-    const client = { from } as unknown as Client;
-    return { client, campaignLeadsChain, leadsChain };
+    chain.then = (resolve: (value: unknown) => void) => resolve(pages.shift() ?? { data: [], error: null });
+    const from = vi.fn((table: string) => {
+      calls.push(["from", table]);
+      return chain;
+    });
+    return { client: { from } as unknown as Client, calls };
   }
 
-  it("excludes already-enrolled lead ids via a not-in filter", async () => {
-    const { client, leadsChain } = createClient(
-      { data: [{ lead_id: "lead-1" }, { lead_id: "lead-2" }], error: null },
-      { data: [{ id: "lead-3" }], error: null },
-    );
+  // Regression: the enrolled ids used to be sent back in a not.in.(...)
+  // filter, so the URL grew with the enrollment and the gateway rejected it
+  // ("URI too long") past ~200 enrolled leads, failing the campaign page.
+  it("never reads enrolled ids or puts them in the request: one anti-join on leads", async () => {
+    const { client, calls } = createClient([{ data: [{ id: "lead-3", email: "c@x.com" }], error: null }]);
 
     const result = await listLeadsAvailableForCampaign(client, "user-1", "campaign-1");
 
-    expect(leadsChain.not).toHaveBeenCalledWith("id", "in", "(lead-1,lead-2)");
-    expect(leadsChain.eq).toHaveBeenCalledWith("user_id", "user-1");
-    expect(result).toEqual([{ id: "lead-3" }]);
+    expect(calls.filter(([m]) => m === "from")).toEqual([["from", "leads"]]);
+    expect(calls.some(([m]) => m === "not" || m === "in")).toBe(false);
+    expect(calls).toContainEqual(["select", "*, enrolled:campaign_leads!left()"]);
+    expect(calls).toContainEqual(["eq", "user_id", "user-1"]);
+    expect(calls).toContainEqual(["eq", "enrolled.campaign_id", "campaign-1"]);
+    expect(calls).toContainEqual(["is", "enrolled", null]);
+    expect(result).toEqual([{ id: "lead-3", email: "c@x.com" }]);
   });
 
-  it("skips the not-in filter when no leads are enrolled yet", async () => {
-    const { client, leadsChain } = createClient({ data: [], error: null }, { data: [], error: null });
+  it("pages up to the caller's limit with a stable order", async () => {
+    const page = (n: number, offset: number) => Array.from({ length: n }, (_, i) => ({ id: `lead-${offset + i}` }));
+    const { client, calls } = createClient([
+      { data: page(1000, 0), error: null },
+      { data: page(1000, 1000), error: null },
+      { data: page(10, 2000), error: null },
+    ]);
 
-    await listLeadsAvailableForCampaign(client, "user-1", "campaign-1");
+    const result = await listLeadsAvailableForCampaign(client, "user-1", "campaign-1", { limit: 10000 });
 
-    expect(leadsChain.not).not.toHaveBeenCalled();
+    expect(result).toHaveLength(2010);
+    expect(calls).toContainEqual(["order", "id", { ascending: false }]);
+    expect(calls.filter(([m]) => m === "range")).toEqual([
+      ["range", 0, 999],
+      ["range", 1000, 1999],
+      ["range", 2000, 2999],
+    ]);
   });
 
-  it("throws when resolving enrolled leads errors", async () => {
-    const { client } = createClient({ data: null, error: new Error("boom") }, { data: [], error: null });
+  it("throws when the read errors", async () => {
+    const { client } = createClient([{ data: null, error: new Error("boom") }]);
     await expect(listLeadsAvailableForCampaign(client, "user-1", "campaign-1")).rejects.toThrow("boom");
   });
 });
@@ -375,5 +386,59 @@ describe("setLeadsTimezone", () => {
   it("throws when the update errors", async () => {
     const { client } = createMockClient({ error: new Error("connection lost") });
     await expect(setLeadsTimezone(client, "user-1", ["lead-1"], null)).rejects.toThrow("connection lost");
+  });
+});
+
+// Bulk list enrollment reads through listAllLeads: one request is capped at
+// PostgREST's max_rows (1000), which enrolled only a list's newest 1,000.
+describe("listAllLeads", () => {
+  it("pages through every lead of the list up to the limit, with an id tiebreaker", async () => {
+    const pages = [Array.from({ length: 1000 }, (_, i) => ({ id: `lead-${i}` })), [{ id: "lead-1000" }]];
+    const { client, chainable } = createMockClient({});
+    chainable.then = (resolve) => resolve({ data: pages.shift(), error: null });
+
+    const leads = await listAllLeads(client, "user-1", { listId: "list-1", limit: 10000 });
+
+    expect(leads).toHaveLength(1001);
+    expect(chainable.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(chainable.eq).toHaveBeenCalledWith("list_id", "list-1");
+    expect(chainable.order).toHaveBeenCalledWith("id", { ascending: false });
+    expect(chainable.range.mock.calls).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ]);
+  });
+
+  it("never reads past the limit", async () => {
+    const { client, chainable } = createMockClient({ data: Array.from({ length: 1000 }, (_, i) => ({ id: `lead-${i}` })), error: null });
+
+    const leads = await listAllLeads(client, "user-1", { limit: 1000 });
+
+    expect(leads).toHaveLength(1000);
+    expect(chainable.range.mock.calls).toEqual([[0, 999]]);
+  });
+});
+
+describe("listExistingLeadEmails", () => {
+  it("looks up only the given emails, deduplicated and in chunks of 100", async () => {
+    const { client, chainable } = createMockClient({ data: [{ email: "e1@example.com" }], error: null });
+    const emails = [...Array.from({ length: 150 }, (_, i) => `e${i}@example.com`), "e1@example.com"];
+
+    const existing = await listExistingLeadEmails(client, "user-1", emails);
+
+    expect(chainable.in.mock.calls.map(([, values]) => (values as string[]).length)).toEqual([100, 50]);
+    expect(chainable.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(existing).toEqual(new Set(["e1@example.com"]));
+  });
+
+  it("makes no request for an empty list", async () => {
+    const { client } = createMockClient({ data: [], error: null });
+    await expect(listExistingLeadEmails(client, "user-1", [])).resolves.toEqual(new Set());
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("throws when a lookup errors", async () => {
+    const { client } = createMockClient({ data: null, error: new Error("boom") });
+    await expect(listExistingLeadEmails(client, "user-1", ["a@example.com"])).rejects.toThrow("boom");
   });
 });

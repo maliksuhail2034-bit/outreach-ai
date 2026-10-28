@@ -21,7 +21,7 @@ type Call = [method: string, ...args: unknown[]];
 function createRecordingClient(result: { data?: unknown; error?: unknown; count?: number | null } = {}) {
   const calls: Call[] = [];
   const chain: Record<string, unknown> = {};
-  for (const method of ["select", "insert", "update", "delete", "eq", "neq", "in", "ilike", "lt", "gte", "order", "limit", "single"]) {
+  for (const method of ["select", "insert", "update", "delete", "eq", "neq", "in", "ilike", "lt", "gte", "order", "limit", "range", "single"]) {
     chain[method] = (...args: unknown[]) => {
       calls.push([method, ...args]);
       return chain;
@@ -154,8 +154,35 @@ describe("matching leads", () => {
     await expect(listLeadsMatchingRules(client, "user-1", rules, { limit: 10000 })).resolves.toEqual([{ id: "lead-1" }]);
     expect(calls).toContainEqual(["eq", "user_id", "user-1"]);
     expect(calls).toContainEqual(["order", "created_at", { ascending: false }]);
-    expect(calls).toContainEqual(["limit", 10000]);
+    expect(calls).toContainEqual(["order", "id", { ascending: false }]);
+    expect(calls).toContainEqual(["range", 0, 999]);
     expect(calls).toContainEqual(["eq", "status", "new"]);
+  });
+
+  // PostgREST caps one response at max_rows (1000), so a single request
+  // would silently drop every match past the newest 1,000.
+  it("pages past PostgREST's 1,000-row cap up to the caller's limit", async () => {
+    const page = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `lead-${i}` }));
+    const responses = [page(1000), page(1000), page(500)];
+    const calls: Call[] = [];
+    const chain: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "order", "range"]) {
+      chain[method] = (...args: unknown[]) => {
+        calls.push([method, ...args]);
+        return chain;
+      };
+    }
+    chain.then = (resolve: (value: unknown) => void) => resolve({ data: responses.shift(), error: null });
+    const client = { from: vi.fn(() => chain) } as unknown as Client;
+
+    const leads = await listLeadsMatchingRules(client, "user-1", rules, { limit: 10000 });
+
+    expect(leads).toHaveLength(2500);
+    expect(calls.filter(([method]) => method === "range")).toEqual([
+      ["range", 0, 999],
+      ["range", 1000, 1999],
+      ["range", 2000, 2999],
+    ]);
   });
 
   it("throws on a database error", async () => {

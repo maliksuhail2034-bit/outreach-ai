@@ -84,19 +84,29 @@ export async function createLeadAction(input: LeadInput): Promise<ActionResult> 
     throw error;
   }
 
-  await createLead(supabase, {
-    user_id: user.id,
-    list_id: parsed.listId ? parsed.listId : null,
-    first_name: parsed.firstName ? parsed.firstName : null,
-    last_name: parsed.lastName ? parsed.lastName : null,
-    email: parsed.email.trim().toLowerCase(),
-    company: parsed.company ? parsed.company : null,
-    title: parsed.title ? parsed.title : null,
-    ...(parsed.status ? { status: parsed.status } : {}),
-    // Only written when sent, so a caller that doesn't manage the timezone
-    // never clears it; "" means "use the campaign timezone" (null).
-    ...(parsed.timezone !== undefined ? { timezone: parsed.timezone || null } : {}),
-  });
+  try {
+    await createLead(supabase, {
+      user_id: user.id,
+      list_id: parsed.listId ? parsed.listId : null,
+      first_name: parsed.firstName ? parsed.firstName : null,
+      last_name: parsed.lastName ? parsed.lastName : null,
+      email: parsed.email.trim().toLowerCase(),
+      company: parsed.company ? parsed.company : null,
+      title: parsed.title ? parsed.title : null,
+      ...(parsed.status ? { status: parsed.status } : {}),
+      // Only written when sent, so a caller that doesn't manage the timezone
+      // never clears it; "" means "use the campaign timezone" (null).
+      ...(parsed.timezone !== undefined ? { timezone: parsed.timezone || null } : {}),
+    });
+  } catch (error) {
+    // leads_user_email_key: adding an email the user already has is an
+    // expected outcome, not a crash — thrown, it reached the form as a
+    // generic "Couldn't add the lead".
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+      return { ok: false, error: "A lead with this email already exists." };
+    }
+    throw error;
+  }
 
   revalidatePath("/leads");
   revalidatePath("/dashboard");

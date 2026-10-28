@@ -170,6 +170,19 @@ describe("getSuppressedEmails", () => {
     expect(client.from).not.toHaveBeenCalled();
   });
 
+  // Every email goes into the request URL, so a whole 10,000-lead list in
+  // one .in() filter is too long for the API gateway.
+  it("looks emails up in chunks of 100 and merges the results", async () => {
+    const { client, chainable } = createMockClient({ data: [{ email: "e0@example.com", reason: "bounced" }], error: null });
+    const emails = Array.from({ length: 250 }, (_, i) => `e${i}@example.com`);
+
+    const result = await getSuppressedEmails(client, "user-1", emails);
+
+    expect(chainable.in).toHaveBeenCalledTimes(3);
+    expect(chainable.in.mock.calls.map(([, values]) => (values as string[]).length)).toEqual([100, 100, 50]);
+    expect(result.get("e0@example.com")).toBe("bounced");
+  });
+
   it("throws when the query errors", async () => {
     const { client } = createMockClient({ data: null, error: new Error("connection lost") });
     await expect(getSuppressedEmails(client, "user-1", ["a@example.com"])).rejects.toThrow("connection lost");

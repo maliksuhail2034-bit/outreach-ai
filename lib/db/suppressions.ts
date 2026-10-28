@@ -1,5 +1,6 @@
 import type { TablesInsert } from "@/types/database.types";
 import type { Client } from "./shared";
+import { chunkValues, EMAIL_LOOKUP_CHUNK } from "./shared";
 
 // suppressions is owned directly by user_id (no derived-ownership chain —
 // see supabase/migrations/20260730100010_suppressions.sql). Bounce rows are
@@ -30,22 +31,28 @@ export async function getSuppression(supabase: Client, userId: string, email: st
 
 // Batched form of getSuppression for gating re-enrollment of a lead or an
 // entire lead list (see enrollLeadAction/enrollLeadListAction) — one query
-// instead of one getSuppression call per lead.
+// per EMAIL_LOOKUP_CHUNK emails instead of one getSuppression call per lead.
+// Chunked because every email goes into the request URL: a single `.in()`
+// over a 10,000-lead list is far longer than the API gateway accepts.
 export async function getSuppressedEmails(
   supabase: Client,
   userId: string,
   emails: string[],
 ): Promise<Map<string, string>> {
-  if (emails.length === 0) return new Map();
+  const suppressed = new Map<string, string>();
 
-  const { data, error } = await supabase
-    .from("suppressions")
-    .select("email, reason")
-    .eq("user_id", userId)
-    .in("email", emails);
-  if (error) throw error;
+  for (const emailChunk of chunkValues(emails, EMAIL_LOOKUP_CHUNK)) {
+    const { data, error } = await supabase
+      .from("suppressions")
+      .select("email, reason")
+      .eq("user_id", userId)
+      .in("email", emailChunk);
+    if (error) throw error;
 
-  return new Map((data ?? []).map((row) => [row.email, row.reason]));
+    for (const row of data ?? []) suppressed.set(row.email, row.reason);
+  }
+
+  return suppressed;
 }
 
 // Suppressing the same address twice (e.g. a duplicate unsubscribe click)

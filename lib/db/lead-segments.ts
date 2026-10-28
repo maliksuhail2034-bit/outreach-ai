@@ -1,7 +1,7 @@
 import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types";
 import type { LeadSegmentRule } from "@/lib/validations/lead-segments";
 import type { Client } from "./shared";
-import { unwrap } from "./shared";
+import { selectAllPages, unwrap } from "./shared";
 
 export async function listLeadSegments(supabase: Client, userId: string) {
   const { data, error } = await supabase
@@ -113,15 +113,25 @@ export async function countLeadsMatchingRules(supabase: Client, userId: string, 
 }
 
 // The snapshot a segment enrollment uses: the leads matching right now,
-// newest first, capped the same way list enrollment is (listLeads' limit).
+// newest first, capped the same way list enrollment is (listAllLeads'
+// limit). Paged like listAllLeads: one request is capped at PostgREST's
+// max_rows, which would silently enroll only the newest 1,000 matches.
 export async function listLeadsMatchingRules(
   supabase: Client,
   userId: string,
   rules: readonly LeadSegmentRule[],
   options: { limit: number },
 ) {
-  const query = leadsQuery(supabase).eq("user_id", userId).order("created_at", { ascending: false }).limit(options.limit);
-  const { data, error } = await applySegmentRules(query, rules);
-  if (error) throw error;
-  return data;
+  return selectAllPages(
+    (from, to) =>
+      applySegmentRules(
+        leadsQuery(supabase)
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+        rules,
+      ),
+    options.limit,
+  );
 }

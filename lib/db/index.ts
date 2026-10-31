@@ -2,6 +2,7 @@ export * from "./shared";
 export * from "./billing";
 export * from "./billing-v2";
 export * from "./profiles";
+export * from "./sessions";
 export * from "./settings";
 export * from "./domains";
 export * from "./deliverability";

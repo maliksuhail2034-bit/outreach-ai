@@ -3,6 +3,65 @@
 All notable changes to this project are documented in this file, derived from
 the git commit history. Dates reflect the commit date.
 
+## 2026-10-31 — Signup, Email Verification, Password UX & Active Sessions
+
+On `fix-bugs`. **One new migration** (`20261031100000_user_sessions.sql`) and
+manual Supabase Dashboard steps for production (below). No new environment
+variables.
+
+- **Email verification required**: local `supabase/config.toml` now sets
+  `enable_confirmations = true` (it was off, so signups were confirmed
+  instantly and no email was sent). The confirmation link lands on a new
+  `/auth/verified` page (template and `emailRedirectTo` use
+  `next=/auth/verified`), which tries to close itself and otherwise asks the
+  user to close the tab.
+- **Signup tab continues by itself**: the "Check your email" screen polls the
+  shared session cookie and moves to `/dashboard` once the link is clicked in
+  another tab — only for a session belonging to the email that just signed up.
+- **Stale session fix**: `signUp` signs out any session the browser already
+  holds before creating the account. Previously a person who signed up a
+  second account stayed signed in as the first one.
+- **Password rules**: 8+ characters with lowercase, uppercase, a number and a
+  special character, defined once (`PASSWORD_RULES` in
+  `lib/validations/auth.ts`) and mirrored by Supabase's own policy
+  (`minimum_password_length = 8`,
+  `password_requirements = "lower_upper_letters_digits_symbols"`). The server
+  error lists every missing rule at once.
+- **Signup / reset-password forms**: rebuilt on react-hook-form with live
+  validation (errors appear on leaving a field and clear the moment it is
+  valid; fields are never wiped on a failed submit), a Weak / Moderate /
+  Strong meter with a rule checklist, a live "Passwords match / don't match"
+  indicator, and a show-password eye button (`components/ui/password-input.tsx`,
+  also on login).
+- **Name validation**: `fullNameSchema` allows letters in any script with
+  single spaces, hyphens or apostrophes; shared by signup and Settings →
+  Profile.
+- **Name carried over from signup**: Settings and the dashboard greeting fall
+  back to the signup name (auth user metadata) until a profile is saved.
+  "Complete your profile" still requires saving Settings.
+- **Active sessions** (Settings → Sessions): lists every signed-in device
+  (browser/OS, last active, signed in), with per-device "Log out" and "Log out
+  of all devices". Backed by `list_my_sessions()` / `revoke_my_session()`,
+  security definer functions scoped to `auth.uid()`; a revoked device is
+  rejected (`session_not_found`) on its next request. New pgTAP file
+  `user_sessions.test.sql`.
+- **Session device labels**: the Supabase server clients
+  (`lib/supabase/server.ts`, `proxy.ts`) forward the browser's User-Agent;
+  previously every session was recorded as `node`. IP addresses are not
+  forwarded (would change Supabase's per-IP auth rate limiting).
+- **Reset password**: "Log out of all other devices" checkbox, on by default.
+- **Production steps (manual, Supabase Dashboard)**: Authentication → Sign In
+  / Providers → Email: enable "Confirm email"; set password minimum 8 and
+  "Lowercase, uppercase letters, digits and symbols"; Authentication → Emails
+  → Templates → "Confirm signup": link to
+  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/auth/verified`.
+  Apply the migration with a dry-run first; confirm the migration role can
+  delete from `auth.sessions` on the hosted project.
+- **Verification**: `npm run typecheck`, `npm run lint`, `npm run build`
+  pass; `vitest` 2,360 / 2,360; pgTAP 517 / 517 on the local Supabase stack;
+  session revoke checked end to end against local Supabase Auth. Not run
+  against production.
+
 ## 2026-10-26 — PostgREST Row-Limit, Enrollment Recovery & Campaign Page Fixes (Uncommitted)
 
 Working-tree changes on `fix-bugs`, not yet committed. No migration and no

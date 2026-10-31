@@ -1,21 +1,54 @@
 "use client";
 
-import { useActionState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { MailCheckIcon } from "lucide-react";
-import { signUp, type AuthActionState } from "@/lib/actions/auth";
+import { signUp } from "@/lib/actions/auth";
+import { signUpSchema, type SignUpInput } from "@/lib/validations/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FadeIn } from "@/components/motion/fade-in";
-
-const initialState: AuthActionState = undefined;
+import { PasswordMatch, PasswordStrength } from "@/components/auth/password-strength";
+import { AwaitEmailConfirmation } from "@/components/auth/await-email-confirmation";
 
 export default function SignupPage() {
-  const [state, action, pending] = useActionState(signUp, initialState);
+  const [isPending, startTransition] = useTransition();
+  const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  // onTouched: a field is checked once the user leaves it, then re-checked on
+  // every keystroke, so an error disappears the moment the input is valid.
+  const form = useForm<SignUpInput>({
+    resolver: zodResolver(signUpSchema),
+    mode: "onTouched",
+    defaultValues: { fullName: "", email: "", password: "", confirmPassword: "" },
+  });
+  const password = useWatch({ control: form.control, name: "password" });
+  const confirmPassword = useWatch({ control: form.control, name: "confirmPassword" });
 
-  if (state?.success) {
+  function onSubmit(values: SignUpInput) {
+    setFormError(null);
+    startTransition(async () => {
+      const formData = new FormData();
+      for (const [key, value] of Object.entries(values)) formData.set(key, value);
+      const result = await signUp(undefined, formData);
+
+      if (result?.success) {
+        setSubmittedEmail(values.email);
+        return;
+      }
+      for (const [field, messages] of Object.entries(result?.fieldErrors ?? {})) {
+        if (messages?.[0]) form.setError(field as keyof SignUpInput, { message: messages[0] });
+      }
+      if (result?.error) setFormError(result.error);
+    });
+  }
+
+  if (submittedEmail) {
     return (
       <FadeIn>
         <Card className="border-none shadow-none sm:border sm:shadow-sm">
@@ -25,11 +58,13 @@ export default function SignupPage() {
             </div>
             <CardTitle className="text-2xl">Check your email</CardTitle>
             <CardDescription>
-              We sent a confirmation link to your inbox. Click it to activate your account.
+              We sent a confirmation link to <span className="font-medium text-foreground">{submittedEmail}</span>.
+              Keep this tab open — once you click the link, you&apos;ll be signed in here automatically.
             </CardDescription>
           </CardHeader>
-          <CardContent className="text-center">
-            <Link href="/login" className="text-sm font-medium text-foreground hover:underline">
+          <CardContent className="space-y-4 text-center">
+            <AwaitEmailConfirmation email={submittedEmail} />
+            <Link href="/login" className="block text-sm font-medium text-foreground hover:underline">
               Back to sign in
             </Link>
           </CardContent>
@@ -46,53 +81,78 @@ export default function SignupPage() {
           <CardDescription>Start your cold email outreach with Polimatiq.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form action={action} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="fullName">Full name</Label>
-              <Input id="fullName" name="fullName" autoComplete="name" placeholder="Jane Cooper" required />
-              {state?.fieldErrors?.fullName && (
-                <p className="text-sm text-destructive">{state.fieldErrors.fullName[0]}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
+              <FormField
+                control={form.control}
+                name="fullName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Full name</FormLabel>
+                    <FormControl>
+                      <Input autoComplete="name" placeholder="Jane Cooper" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
                 name="email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@company.com"
-                required
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input type="email" autoComplete="email" placeholder="you@company.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-              {state?.fieldErrors?.email && (
-                <p className="text-sm text-destructive">{state.fieldErrors.email[0]}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" name="password" type="password" autoComplete="new-password" required />
-              {state?.fieldErrors?.password && (
-                <p className="text-sm text-destructive">{state.fieldErrors.password[0]}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm password</Label>
-              <Input
-                id="confirmPassword"
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Password</FormLabel>
+                    <FormControl>
+                      <PasswordInput
+                        autoComplete="new-password"
+                        {...field}
+                        onChange={(event) => {
+                          field.onChange(event);
+                          // The match check lives on confirmPassword, so re-run it
+                          // when the password it's compared against changes.
+                          if (form.getFieldState("confirmPassword").isTouched) void form.trigger("confirmPassword");
+                        }}
+                      />
+                    </FormControl>
+                    <PasswordStrength password={password} />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
                 name="confirmPassword"
-                type="password"
-                autoComplete="new-password"
-                required
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Confirm password</FormLabel>
+                    <FormControl>
+                      <PasswordInput autoComplete="new-password" {...field} />
+                    </FormControl>
+                    <PasswordMatch password={password} confirmPassword={confirmPassword} />
+                    {/* Once something is typed, PasswordMatch reports the mismatch live. */}
+                    {!confirmPassword && <FormMessage />}
+                  </FormItem>
+                )}
               />
-              {state?.fieldErrors?.confirmPassword && (
-                <p className="text-sm text-destructive">{state.fieldErrors.confirmPassword[0]}</p>
-              )}
-            </div>
-            {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
-            <Button type="submit" className="w-full" disabled={pending}>
-              {pending ? "Creating account…" : "Create account"}
-            </Button>
-          </form>
+              {formError && <p className="text-sm text-destructive">{formError}</p>}
+              <Button type="submit" className="w-full" disabled={isPending}>
+                {isPending ? "Creating account…" : "Create account"}
+              </Button>
+            </form>
+          </Form>
           <p className="mt-4 text-center text-xs text-muted-foreground">
             By creating an account, you agree to our{" "}
             <Link href="/terms" className="font-medium text-foreground hover:underline">

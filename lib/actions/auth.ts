@@ -69,12 +69,16 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
   }
 
   const supabase = await createClient();
+  // A new, unconfirmed account has no session of its own, so drop whatever
+  // session this browser already holds — otherwise the person carries on
+  // signed in as the previous account.
+  await supabase.auth.signOut({ scope: "local" });
   const { error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
       data: { full_name: parsed.data.fullName },
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm?next=/dashboard`,
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm?next=/auth/verified`,
     },
   });
 
@@ -134,6 +138,7 @@ export async function resetPassword(
   const parsed = resetPasswordSchema.safeParse({
     password: formData.get("password"),
     confirmPassword: formData.get("confirmPassword"),
+    signOutOthers: formData.get("signOutOthers") === "true",
   });
 
   if (!parsed.success) {
@@ -164,6 +169,15 @@ export async function resetPassword(
 
   if (error) {
     return { error: error.message };
+  }
+
+  // Someone resetting a password may be locking out whoever learned the old
+  // one, so ending every other session is offered (and checked by default).
+  if (parsed.data.signOutOthers) {
+    const { error: signOutError } = await supabase.auth.signOut({ scope: "others" });
+    if (signOutError) {
+      return { error: "Your password was updated, but other devices couldn't be logged out. Try again from Settings → Sessions." };
+    }
   }
 
   redirect("/dashboard");

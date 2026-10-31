@@ -39,8 +39,8 @@ function form(values: Record<string, string>) {
 const VALID_SIGNUP = {
   fullName: "Ada Lovelace",
   email: "ada@example.com",
-  password: "Str0ngPassword",
-  confirmPassword: "Str0ngPassword",
+  password: "Str0ngPassword!",
+  confirmPassword: "Str0ngPassword!",
 };
 
 beforeEach(() => {
@@ -56,18 +56,31 @@ describe("signUp", () => {
     await expect(signUp(undefined, form(VALID_SIGNUP))).resolves.toEqual({ success: true });
     expect(supabaseAuth.signUp).toHaveBeenCalledWith({
       email: "ada@example.com",
-      password: "Str0ngPassword",
+      password: "Str0ngPassword!",
       options: {
         data: { full_name: "Ada Lovelace" },
-        emailRedirectTo: "https://polimatiq.test/auth/confirm?next=/dashboard",
+        emailRedirectTo: "https://polimatiq.test/auth/confirm?next=/auth/verified",
       },
     });
+  });
+
+  it("signs out any session this browser already holds before creating the account", async () => {
+    supabaseAuth.signUp.mockResolvedValue({ error: null });
+
+    await signUp(undefined, form(VALID_SIGNUP));
+
+    expect(supabaseAuth.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(supabaseAuth.signOut.mock.invocationCallOrder[0]).toBeLessThan(
+      supabaseAuth.signUp.mock.invocationCallOrder[0],
+    );
   });
 
   it("rejects weak or mismatched passwords before calling Supabase", async () => {
     const result = await signUp(undefined, form({ ...VALID_SIGNUP, password: "short", confirmPassword: "other" }));
 
-    expect(result?.fieldErrors?.password).toBeDefined();
+    expect(result?.fieldErrors?.password).toEqual([
+      "Password needs: at least 8 characters, an uppercase letter, a number, a special character (e.g. ! @ # $).",
+    ]);
     expect(result?.fieldErrors?.confirmPassword).toEqual(["Passwords do not match."]);
     expect(supabaseAuth.signUp).not.toHaveBeenCalled();
   });
@@ -129,7 +142,7 @@ describe("forgotPassword", () => {
 });
 
 describe("resetPassword", () => {
-  const VALID = { password: "N3wPassword", confirmPassword: "N3wPassword" };
+  const VALID = { password: "N3wPassword!", confirmPassword: "N3wPassword!" };
 
   it("refuses without the session a recovery link establishes", async () => {
     supabaseAuth.getUser.mockResolvedValue({ data: { user: null } });
@@ -145,7 +158,29 @@ describe("resetPassword", () => {
     supabaseAuth.updateUser.mockResolvedValue({ error: null });
 
     await expect(resetPassword(undefined, form(VALID))).rejects.toThrow("NEXT_REDIRECT:/dashboard");
-    expect(supabaseAuth.updateUser).toHaveBeenCalledWith({ password: "N3wPassword" });
+    expect(supabaseAuth.updateUser).toHaveBeenCalledWith({ password: "N3wPassword!" });
+    expect(supabaseAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it("logs out every other device when asked to", async () => {
+    supabaseAuth.getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    supabaseAuth.updateUser.mockResolvedValue({ error: null });
+    supabaseAuth.signOut.mockResolvedValue({ error: null });
+
+    await expect(resetPassword(undefined, form({ ...VALID, signOutOthers: "true" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/dashboard",
+    );
+    expect(supabaseAuth.signOut).toHaveBeenCalledWith({ scope: "others" });
+  });
+
+  it("says so when the password changed but other devices couldn't be logged out", async () => {
+    supabaseAuth.getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    supabaseAuth.updateUser.mockResolvedValue({ error: null });
+    supabaseAuth.signOut.mockResolvedValue({ error: new Error("network") });
+
+    await expect(resetPassword(undefined, form({ ...VALID, signOutOthers: "true" }))).resolves.toEqual({
+      error: "Your password was updated, but other devices couldn't be logged out. Try again from Settings → Sessions.",
+    });
   });
 });
 

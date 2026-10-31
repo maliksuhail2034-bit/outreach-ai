@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { signIn, type AuthActionState } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -54,7 +55,7 @@ export default function LoginPage({
                   Forgot password?
                 </Link>
               </div>
-              <Input id="password" name="password" type="password" autoComplete="current-password" required />
+              <PasswordInput id="password" name="password" autoComplete="current-password" required />
               {state?.fieldErrors?.password && (
                 <p className="text-sm text-destructive">{state.fieldErrors.password[0]}</p>
               )}

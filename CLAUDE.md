@@ -270,7 +270,7 @@ never hand-edit schema directly against a live project.
   the mailer's default link at all, even for a byte-identical allow-list
   entry. The actual fix is the email template itself linking directly to
   `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=
-  /dashboard` (swap `type=recovery&next=/reset-password` for the
+  /auth/verified` (swap `type=recovery&next=/reset-password` for the
   reset-password template), bypassing `{{ .ConfirmationURL }}` entirely.
   - **Local**: already fixed — `supabase/config.toml`'s
     `[auth.email.template.confirmation]`/`[auth.email.template.recovery]`

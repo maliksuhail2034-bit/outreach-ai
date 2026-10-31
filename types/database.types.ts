@@ -2285,6 +2285,16 @@ export type Database = {
         Args: { p_organization_id: string }
         Returns: boolean
       }
+      list_my_sessions: {
+        Args: never
+        Returns: {
+          created_at: string
+          id: string
+          is_current: boolean
+          last_active_at: string
+          user_agent: string
+        }[]
+      }
       mailboxes_due_for_reply_sync: {
         Args: never
         Returns: {
@@ -2336,6 +2346,10 @@ export type Database = {
       }
       request_send_now: {
         Args: { p_campaign_lead_id: string }
+        Returns: boolean
+      }
+      revoke_my_session: {
+        Args: { p_session_id: string }
         Returns: boolean
       }
     }

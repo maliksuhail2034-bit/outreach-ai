@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { fullNameSchema } from "./auth";
 
 export const profileSchema = z.object({
-  fullName: z.string().trim().min(1, { message: "Enter your name." }).max(120),
+  fullName: fullNameSchema,
   avatarUrl: z
     .string()
     .trim()

@@ -9,7 +9,7 @@ import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 //
 // This requires the corresponding Supabase project's email templates to
 // point here instead of the default Supabase-hosted confirmation URL:
-//   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/dashboard
+//   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/auth/verified
 // (type=recovery&next=/reset-password for the "Reset Password" template.)
 // Locally this is already wired up — see supabase/config.toml's
 // [auth.email.template.confirmation]/[auth.email.template.recovery] and

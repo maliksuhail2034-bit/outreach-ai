@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { BadgeCheckIcon, KeyRoundIcon, ShieldCheckIcon, WebhookIcon } from "lucide-react";
+import { BadgeCheckIcon, KeyRoundIcon, MonitorSmartphoneIcon, ShieldCheckIcon, WebhookIcon } from "lucide-react";
 
 import { getUser, getCachedProfile } from "@/lib/supabase/auth";
+import { getFullName } from "@/lib/user";
 import { createClient } from "@/lib/supabase/server";
 import { getSettings } from "@/lib/db";
 import { FadeIn } from "@/components/motion/fade-in";
@@ -34,7 +35,7 @@ export default async function SettingsPage() {
         <ProfileForm
           email={user.email ?? ""}
           defaultValues={{
-            fullName: profile?.full_name ?? "",
+            fullName: getFullName(user, profile),
             avatarUrl: profile?.avatar_url ?? "",
             timezone: profile?.timezone ?? "UTC",
           }}
@@ -123,6 +124,25 @@ export default async function SettingsPage() {
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/settings/verification">View</Link>
+            </Button>
+          </CardHeader>
+        </Card>
+      </FadeIn>
+
+      <FadeIn delay={0.35}>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <MonitorSmartphoneIcon className="size-4" />
+              </span>
+              <div>
+                <CardTitle>Sessions</CardTitle>
+                <CardDescription>See where you&apos;re signed in and log out of other devices.</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/settings/sessions">View</Link>
             </Button>
           </CardHeader>
         </Card>

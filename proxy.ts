@@ -15,11 +15,15 @@ import type { Database } from "@/types/database.types";
 // close to the data (RLS, Server Function checks), not in Proxy.
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  const userAgent = request.headers.get("user-agent");
 
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // A token refresh re-records the session's user agent; keep it the
+      // browser's, not "node" (see lib/supabase/server.ts).
+      global: { headers: userAgent ? { "User-Agent": userAgent } : {} },
       cookies: {
         getAll() {
           return request.cookies.getAll();

@@ -25,10 +25,14 @@ export default function LoginPage({
   // password. The password field is cleared deliberately on failure only.
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // The password that was actually sent, so a failed attempt only clears
+  // the field if the user hasn't started typing a new one while it ran.
+  const [submittedPassword, setSubmittedPassword] = useState<string | null>(null);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
+    setSubmittedPassword(password);
     startTransition(() => action(formData));
   }
 
@@ -37,7 +41,7 @@ export default function LoginPage({
   const [handledState, setHandledState] = useState(state);
   if (state !== handledState) {
     setHandledState(state);
-    if (state?.error) setPassword("");
+    if (state?.error && password === submittedPassword) setPassword("");
   }
 
   useEffect(() => {

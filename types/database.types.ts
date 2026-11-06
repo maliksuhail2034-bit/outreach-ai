@@ -2090,6 +2090,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      analytics_campaign_event_counts: {
+        Args: { p_since: string; p_until: string }
+        Returns: {
+          campaign_id: string
+          event_count: number
+          event_type: string
+          unique_leads: number
+        }[]
+      }
+      analytics_daily_event_counts: {
+        Args: { p_since: string; p_timezone?: string; p_until: string }
+        Returns: {
+          day: string
+          event_count: number
+          event_type: string
+        }[]
+      }
       attach_billing_checkout_subscription: {
         Args: {
           p_checkout_id: string

@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { ensureProfileFromSignup } from "@/lib/db";
+import { getSignupProfileSeed } from "@/lib/user";
 
 // Handles every email-link flow (signup confirmation, password recovery,
 // invites) via Supabase's token_hash + type OTP verification.
@@ -27,8 +29,20 @@ export async function GET(request: NextRequest) {
 
   if (tokenHash && type) {
     const supabase = await createClient();
-    const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
+    const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
     if (!error) {
+      // First confirmation: carry the name/timezone entered at sign-up into
+      // the profile so Settings and the app shell show it straight away.
+      // Best-effort — a failure here must never block a valid sign-in; the
+      // dashboard retries the same insert-only seed (see its page.tsx).
+      const confirmedUser = data?.user;
+      if (confirmedUser) {
+        try {
+          await ensureProfileFromSignup(supabase, confirmedUser.id, getSignupProfileSeed(confirmedUser));
+        } catch (seedError) {
+          console.error("[auth/confirm] profile seed failed", seedError instanceof Error ? seedError.message : seedError);
+        }
+      }
       redirect(next);
     }
   }

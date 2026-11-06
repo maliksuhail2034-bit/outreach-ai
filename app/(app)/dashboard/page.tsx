@@ -15,6 +15,7 @@ import {
   countLeads,
   countMailboxes,
   countSendAttemptsByStatus,
+  ensureProfileFromSignup,
   getCampaignLeadActivitySummary,
   getSettings,
   listCampaigns,
@@ -22,7 +23,7 @@ import {
   type CampaignLeadActivitySummary,
 } from "@/lib/db";
 import { anyFailed, firstError, optionalRead } from "@/lib/db/resilient-read";
-import { getDisplayName } from "@/lib/user";
+import { getDisplayName, getSignupProfileSeed } from "@/lib/user";
 import { getGreeting } from "@/lib/greeting";
 import { FadeIn } from "@/components/motion/fade-in";
 import { DashboardHero } from "@/components/dashboard/dashboard-hero";
@@ -70,7 +71,14 @@ export default async function DashboardPage() {
   // the summary fan-out begins the moment campaigns resolves and runs
   // concurrently with whichever of the other 9 reads are still in flight,
   // instead of always waiting for the slowest of the 9 first.
-  const profilePromise = optionalRead(() => getCachedProfile(user.id), null);
+  // Users who confirmed before sign-up details were carried into the
+  // profile (or whose seed at /auth/confirm failed) get it here, once:
+  // insert-only, so it never touches a profile that already exists.
+  const profilePromise = optionalRead(
+    async () =>
+      (await getCachedProfile(user.id)) ?? ensureProfileFromSignup(supabase, user.id, getSignupProfileSeed(user)),
+    null,
+  );
   const settingsPromise = optionalRead(() => getSettings(supabase, user.id), null);
   const leadCountPromise = optionalRead(() => countLeads(supabase, user.id), 0);
   const campaignsPromise = optionalRead(() => listCampaigns(supabase, user.id), []);

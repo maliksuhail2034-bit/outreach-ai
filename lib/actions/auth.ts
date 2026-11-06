@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -10,6 +11,14 @@ import {
 } from "@/lib/validations/auth";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import { getClientIp } from "@/lib/rate-limit/get-client-ip";
+import { TIMEZONES } from "@/lib/timezones";
+
+// Rate-limit identity for a per-account limit: a one-way hash, so the
+// rate_limit_events table never stores who tried to sign in (GDPR data
+// minimisation) while still counting attempts against the same account.
+function accountRateLimitIdentity(email: string): string {
+  return createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
+}
 
 // Server Functions are reachable directly via POST, not just through this
 // app's forms — every one of these re-validates input itself rather than
@@ -33,7 +42,11 @@ export async function signIn(_prevState: AuthActionState, formData: FormData): P
   }
 
   try {
+    // Dual-keyed like forgot-password: per-IP stops one source hammering
+    // many accounts, per-account stops a botnet rotating IPs against one
+    // account (credential stuffing / targeted brute force, OWASP A07).
     await checkRateLimit("auth:sign_in", await getClientIp());
+    await checkRateLimit("auth:sign_in_account", accountRateLimitIdentity(parsed.data.email));
   } catch (error) {
     if (error instanceof RateLimitError) return { error: error.message };
     throw error;
@@ -55,6 +68,7 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
     email: formData.get("email"),
     password: formData.get("password"),
     confirmPassword: formData.get("confirmPassword"),
+    timezone: formData.get("timezone") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -73,7 +87,14 @@ export async function signUp(_prevState: AuthActionState, formData: FormData): P
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
-      data: { full_name: parsed.data.fullName },
+      // Seeds the profile on first confirmation (app/auth/confirm/route.ts),
+      // so the name typed here is what Settings shows — never asked twice.
+      data: {
+        full_name: parsed.data.fullName,
+        ...(parsed.data.timezone && (TIMEZONES as readonly string[]).includes(parsed.data.timezone)
+          ? { timezone: parsed.data.timezone }
+          : {}),
+      },
       emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm?next=/dashboard`,
     },
   });

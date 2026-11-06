@@ -106,6 +106,52 @@ describe("signIn", () => {
       error: "Invalid login credentials",
     });
   });
+
+  it("is rate limited per IP and per account, keyed on a hash rather than the raw email", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+
+    await expect(signIn(undefined, form({ email: "Ada@Example.com ", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(mockCheckRateLimit).toHaveBeenCalledWith("auth:sign_in", "203.0.113.7");
+    const accountKeys = mockCheckRateLimit.mock.calls
+      .filter(([scope]) => scope === "auth:sign_in_account")
+      .map(([, identity]) => identity);
+    expect(accountKeys).toHaveLength(2);
+    expect(accountKeys[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(accountKeys[0]).toBe(accountKeys[1]); // case/whitespace-insensitive
+    expect(accountKeys[0]).not.toContain("ada");
+  });
+
+  it("stops before calling Supabase when the per-account limit is hit", async () => {
+    mockCheckRateLimit.mockImplementation(async (scope) => {
+      if (scope === "auth:sign_in_account") throw new RateLimitError(600);
+    });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).resolves.toEqual({
+      error: new RateLimitError(600).message,
+    });
+    expect(supabaseAuth.signInWithPassword).not.toHaveBeenCalled();
+  });
+});
+
+describe("signUp profile seed", () => {
+  it("stores the browser timezone in user metadata only when it's one the profile picker offers", async () => {
+    supabaseAuth.signUp.mockResolvedValue({ error: null });
+
+    await signUp(undefined, form({ ...VALID_SIGNUP, timezone: "Europe/Berlin" }));
+    expect(supabaseAuth.signUp.mock.calls[0][0].options.data).toEqual({ full_name: "Ada Lovelace", timezone: "Europe/Berlin" });
+
+    await signUp(undefined, form({ ...VALID_SIGNUP, timezone: "Mars/Olympus_Mons" }));
+    expect(supabaseAuth.signUp.mock.calls[1][0].options.data).toEqual({ full_name: "Ada Lovelace" });
+  });
+
+  it("reports every unmet password rule, not just the first", async () => {
+    const result = await signUp(undefined, form({ ...VALID_SIGNUP, password: "short", confirmPassword: "short" }));
+    expect(result?.fieldErrors?.password).toEqual(
+      expect.arrayContaining(["Must be at least 8 characters.", "Include an uppercase letter.", "Include a number."]),
+    );
+  });
 });
 
 describe("forgotPassword", () => {

@@ -43,7 +43,13 @@ import { errorMessage } from "@/lib/monitoring/error-message";
 
 const DEFAULT_UNSUBSCRIBE_FOOTER_TEXT = "Don't want to receive these emails?";
 
-const DEFAULT_CLAIM_LIMIT = 25;
+// One lead per mailbox per batch (claim_due_sends()), so this is effectively
+// "how many mailboxes can send per one-minute tick". At the old value of 25
+// the whole platform topped out at 25 emails a minute no matter how many
+// customers or mailboxes it had. Tunable per deployment via
+// SEND_WORKER_CLAIM_LIMIT / SEND_WORKER_CONCURRENCY (see resolveWorkerTuning).
+const DEFAULT_CLAIM_LIMIT = 100;
+const MAX_CLAIM_LIMIT = 500;
 
 // Scalability Track, Phase D (item 12): the Phase B orchestration
 // (processClaimedLeads below) is unchanged by this cutover — only this
@@ -55,7 +61,50 @@ const DEFAULT_CLAIM_LIMIT = 25;
 // for the same mailbox are still never processed concurrently regardless of
 // this value: that invariant is structural (inFlightMailboxIds below), not
 // a function of the concurrency number.
-const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_CONCURRENCY = 10;
+const MAX_CONCURRENCY = 50;
+
+// Reads optional overrides from the environment, clamped to safe bounds; an
+// unset or invalid value falls back to the default instead of failing the
+// run. Kept out of runSendWorker itself so tests and callers stay explicit.
+export function resolveWorkerTuning(env: Record<string, string | undefined> = process.env): {
+  limit: number;
+  concurrency: number;
+} {
+  const parse = (raw: string | undefined, fallback: number, max: number) => {
+    const value = Number.parseInt(raw ?? "", 10);
+    return Number.isFinite(value) && value >= 1 ? Math.min(value, max) : fallback;
+  };
+  return {
+    limit: parse(env.SEND_WORKER_CLAIM_LIMIT, DEFAULT_CLAIM_LIMIT, MAX_CLAIM_LIMIT),
+    concurrency: parse(env.SEND_WORKER_CONCURRENCY, DEFAULT_CONCURRENCY, MAX_CONCURRENCY),
+  };
+}
+
+// Per-invocation memo for reads that many claimed leads share: a campaign,
+// its sequence steps and its owner's settings are the same for every lead
+// of that campaign in a batch. Safe to reuse within one run because the
+// facts that can change underneath it (campaign paused, lead replied) are
+// re-checked atomically right before the provider call by
+// confirmSendAttemptEligible(), not by these copies.
+export interface SendRunCache {
+  memo<T>(key: string, load: () => Promise<T>): Promise<T>;
+}
+
+export function createSendRunCache(): SendRunCache {
+  const entries = new Map<string, Promise<unknown>>();
+  return {
+    memo<T>(key: string, load: () => Promise<T>): Promise<T> {
+      const existing = entries.get(key);
+      if (existing) return existing as Promise<T>;
+      const pending = Promise.resolve(load());
+      entries.set(key, pending);
+      // A failed read isn't cached — the next lead retries it.
+      pending.catch(() => entries.delete(key));
+      return pending;
+    },
+  };
+}
 
 // Wall-clock budget for one runSendWorker() invocation, checked only between
 // claimed leads — never mid-send. A batch of DEFAULT_CLAIM_LIMIT slow/timing
@@ -101,8 +150,11 @@ export async function runSendWorker(
 
   const claimed = await claimDueSends(supabase, limit);
   const summary: SendWorkerSummary = { claimed: claimed.length, sent: 0, failed: 0, needsReview: 0, skipped: 0 };
+  const runCache = createSendRunCache();
 
-  await processClaimedLeads(supabase, claimed, concurrency, startedAt, summary, processCampaignLead);
+  await processClaimedLeads(supabase, claimed, concurrency, startedAt, summary, (client, campaignLead) =>
+    processCampaignLead(client, campaignLead, runCache),
+  );
 
   await reportDegradedSendRun(summary);
 
@@ -550,6 +602,7 @@ async function stopErroredMailbox(
 async function processCampaignLead(
   supabase: Client,
   campaignLead: Tables<"campaign_leads">,
+  runCache: SendRunCache = createSendRunCache(),
 ): Promise<ProcessOutcome> {
   // Defensive only — claim_due_sends() already filters for both of these;
   // this just keeps the function total instead of throwing on a malformed
@@ -565,15 +618,16 @@ async function processCampaignLead(
     return flagged ? "needsReview" : "skipped";
   }
 
-  const [campaign, lead, mailbox, sequences] = await Promise.all([
-    getCampaignById(supabase, campaignLead.campaign_id),
+  const campaignId = campaignLead.campaign_id;
+  const [campaign, lead, mailbox, steps] = await Promise.all([
+    runCache.memo(`campaign:${campaignId}`, () => getCampaignById(supabase, campaignId)),
     getLeadById(supabase, campaignLead.lead_id),
     getMailboxCredentials(supabase, campaignLead.mailbox_id),
-    listSequences(supabase, campaignLead.campaign_id),
+    runCache.memo(`steps:${campaignId}`, async () => {
+      const sequences = await listSequences(supabase, campaignId);
+      return sequences[0] ? listSequenceSteps(supabase, sequences[0].id) : [];
+    }),
   ]);
-
-  const sequence = sequences[0];
-  const steps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
   const targetStep = steps.find((step) => step.id === campaignLead.current_step_id);
 
   if (!targetStep) {
@@ -685,7 +739,7 @@ async function processCampaignLead(
   // plain-text body: {{unsubscribe_link}} resolves to the raw URL there,
   // while the HTML body has it (and every other character) entity-escaped,
   // so a literal `&`-containing URL would never match against `html`.
-  const settings = await getSettings(supabase, campaign.user_id);
+  const settings = await runCache.memo(`settings:${campaign.user_id}`, () => getSettings(supabase, campaign.user_id));
   // Shared by both open and click tracking below — default true, same
   // fallback the Settings page itself uses (see app/(app)/settings/page.tsx).
   const trackingEnabled = settings?.tracking_enabled ?? true;

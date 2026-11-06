@@ -222,6 +222,8 @@ environment, plus:
 |---|---|
 | `GEOIP_COUNTRY_DB_PATH` | Absolute path to the `.mmdb` file, e.g. `/var/lib/dbip/dbip-country-lite.mmdb`. If unset, the app logs `[geoip] GEOIP_COUNTRY_DB_PATH is not set` once and bills everyone in USD. |
 | `VERCEL` | **Must not be set** |
+| `SEND_WORKER_CLAIM_LIMIT` | Optional. Max leads the send worker claims per one-minute tick (at most one per mailbox). Default 100, capped at 500. |
+| `SEND_WORKER_CONCURRENCY` | Optional. How many different mailboxes send in parallel within a tick. Default 10, capped at 50. Raise it together with the claim limit as the number of connected mailboxes grows. |
 
 **Permissions:**
 - The file stays **root-owned, mode 600**, inside a root-only directory.

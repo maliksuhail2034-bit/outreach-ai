@@ -7,6 +7,7 @@ import { MicrosoftOAuthError, refreshMicrosoftAccessToken } from "@/lib/email/mi
 import { OUTLOOK_SMTP_HOST, OUTLOOK_SMTP_PORT } from "@/lib/email/microsoft-constants";
 import { normalizeMessageId } from "@/lib/email/message-id";
 import { assertPublicMailHost, MailHostNotAllowedError } from "@/lib/email/mail-host-guard";
+import { invalidateCachedAccessToken } from "@/lib/email/access-token-cache";
 import type { Tables } from "@/types/database.types";
 import { EmailSendError, type EmailProvider, type OutboundEmailMessage, type SendResult } from "../provider";
 
@@ -16,8 +17,14 @@ import { EmailSendError, type EmailProvider, type OutboundEmailMessage, type Sen
 // read path, since MailboxSafe omits encrypted_smtp_password entirely.
 type Mailbox = Tables<"mailboxes">;
 
-function formatAddress(address: { name?: string; email: string }): string {
-  return address.name ? `"${address.name}" <${address.email}>` : address.email;
+// An address object, not a pre-formatted `"Name" <email>` string: nodemailer
+// then quotes and RFC 2047-encodes the display name itself. Building the
+// string by hand broke the header for any name containing a double quote or
+// backslash (a lead named `Jane "JJ" Doe`), and a CR/LF in a name could have
+// injected extra headers.
+function formatAddress(address: { name?: string; email: string }): { name: string; address: string } {
+  const name = (address.name ?? "").replace(/[\r\n]+/g, " ").trim();
+  return { name, address: address.email };
 }
 
 // A "bounced" classification permanently suppresses the address across every
@@ -173,6 +180,18 @@ export function classifySmtpError(error: unknown): EmailSendError {
 // stored OAuth refresh token into a short-lived access token instead, fresh
 // for every send (never cached), the same "resolve credentials on every
 // use" pattern the password path already follows.
+function invalidateOAuthToken(mailbox: Mailbox): void {
+  try {
+    if (mailbox.email_provider === "gmail" && mailbox.encrypted_google_refresh_token) {
+      invalidateCachedAccessToken("google", decryptSmtpPassword(mailbox.encrypted_google_refresh_token));
+    } else if (mailbox.email_provider === "outlook" && mailbox.encrypted_microsoft_refresh_token) {
+      invalidateCachedAccessToken("microsoft", decryptSmtpPassword(mailbox.encrypted_microsoft_refresh_token));
+    }
+  } catch {
+    // Cache hygiene only — never let it mask the real send error.
+  }
+}
+
 async function resolveSmtpConnection(mailbox: Mailbox) {
   if (mailbox.email_provider === "gmail") {
     if (!mailbox.encrypted_google_refresh_token) {
@@ -296,6 +315,9 @@ export class SmtpEmailProvider implements EmailProvider {
 
       return { providerMessageId: normalizeMessageId(info.messageId) ?? info.messageId };
     } catch (error) {
+      // A cached OAuth access token can be revoked before it expires; drop
+      // it on an AUTH rejection so the retry fetches a fresh one.
+      if ((error as { command?: string })?.command?.startsWith("AUTH")) invalidateOAuthToken(this.mailbox);
       throw classifySmtpError(error);
     }
   }

@@ -1,4 +1,5 @@
 import { GMAIL_OAUTH_SCOPES } from "./google-constants";
+import { getCachedAccessToken } from "./access-token-cache";
 
 // Plain fetch against Google's OAuth endpoints — no vendor SDK, matching
 // this codebase's existing convention for every external HTTP integration
@@ -147,24 +148,24 @@ export async function exchangeCodeForTokens(code: string): Promise<GoogleTokens>
   return { accessToken: body.access_token, refreshToken: body.refresh_token, expiresIn: body.expires_in ?? 3600 };
 }
 
-// Exchanges a stored refresh token for a fresh short-lived access token.
-// Called fresh on every send/reply-sync (see lib/email/providers/smtp.ts /
-// lib/email/reply-providers/imap.ts) rather than caching an access token —
-// the same "decrypt/resolve credentials on every use" pattern this app
-// already follows for SMTP/IMAP passwords.
+// Exchanges a stored refresh token for a short-lived access token, reused
+// from lib/email/access-token-cache.ts until shortly before it expires so
+// each send/IMAP poll doesn't cost an extra token-endpoint round trip.
 export async function refreshGoogleAccessToken(refreshToken: string): Promise<string> {
-  const { clientId, clientSecret } = getClientCredentials();
-  const body = await postToTokenEndpoint({
-    refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: "refresh_token",
-  });
+  return getCachedAccessToken("google", refreshToken, async () => {
+    const { clientId, clientSecret } = getClientCredentials();
+    const body = await postToTokenEndpoint({
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+    });
 
-  if (!body.access_token) {
-    throw new GoogleOAuthError("Google did not return an access token for this refresh.", "failed");
-  }
-  return body.access_token;
+    if (!body.access_token) {
+      throw new GoogleOAuthError("Google did not return an access token for this refresh.", "failed");
+    }
+    return { accessToken: body.access_token, expiresInSeconds: body.expires_in ?? 3600 };
+  });
 }
 
 interface GoogleUserInfoResponseBody {

@@ -14,7 +14,9 @@ import { STATE_COOKIE_NAME } from "../start/route";
 // it starts under the same sending limits any new mailbox does.
 const DEFAULT_DAILY_LIMIT = 50;
 const DEFAULT_HOURLY_LIMIT = 10;
-const DEFAULT_COOLDOWN_MINUTES = 0;
+// 5 minutes, randomised up to 7.5 by claimable_due_sends(), so sends never
+// go out on a fixed machine-like cadence.
+const DEFAULT_COOLDOWN_MINUTES = 5;
 
 function redirectWithError(request: NextRequest, message: string) {
   const url = new URL("/mailboxes", request.url);

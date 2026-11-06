@@ -18,7 +18,7 @@ import {
 import { ActionError, unwrapActionResult } from "@/lib/action-result";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormDescription, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -85,7 +85,7 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
             smtpPassword: "",
             dailyLimit: 50,
             hourlyLimit: 10,
-            cooldownMinutes: 0,
+            cooldownMinutes: 5,
             warmupEnabled: false,
             domainId: "",
             imapEnabled: false,
@@ -369,6 +369,10 @@ export function MailboxForm({ mode, mailbox, domains, onSuccess }: MailboxFormPr
                     onChange={(e) => field.onChange(e.target.valueAsNumber)}
                   />
                 </FormControl>
+                <FormDescription>
+                  Minimum gap between two emails. Each gap is randomised up to 50% longer so sending never looks
+                  automated. 0 disables it.
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

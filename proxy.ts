@@ -13,7 +13,22 @@ import type { Database } from "@/types/database.types";
 // upkeep only, not the authorization boundary. See the Next.js Proxy docs:
 // optimistic checks here are fine, but real authorization must happen
 // close to the data (RLS, Server Function checks), not in Proxy.
+// Supabase SSR stores the session as `sb-<project-ref>-auth-token` (split
+// into `.0`, `.1`… chunks when large).
+function hasSupabaseSession(request: NextRequest): boolean {
+  return request.cookies.getAll().some(({ name }) => name.startsWith("sb-") && /-auth-token(\.\d+)?$/.test(name));
+}
+
 export async function proxy(request: NextRequest) {
+  // Anonymous visitors (marketing, legal, login/signup pages) have no
+  // session to refresh, so skip the round trip to Supabase Auth entirely.
+  // That call used to run on every public page view, adding latency and an
+  // Auth API request per visitor — the most traffic-sensitive path the app
+  // has.
+  if (!hasSupabaseSession(request)) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient<Database>(

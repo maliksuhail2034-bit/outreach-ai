@@ -1867,10 +1867,13 @@ export type Database = {
           in_reply_to: string | null
           message_type: string
           organization_id: string
+          placement: string | null
+          placement_checked_at: string | null
           provider_message_id: string
           replied_at: string | null
           reply_decision: string
           reply_due_at: string | null
+          rescued_at: string | null
           sent_at: string
           status: string
           subject: string
@@ -1884,10 +1887,13 @@ export type Database = {
           in_reply_to?: string | null
           message_type: string
           organization_id: string
+          placement?: string | null
+          placement_checked_at?: string | null
           provider_message_id: string
           replied_at?: string | null
           reply_decision?: string
           reply_due_at?: string | null
+          rescued_at?: string | null
           sent_at?: string
           status?: string
           subject: string
@@ -1901,10 +1907,13 @@ export type Database = {
           in_reply_to?: string | null
           message_type?: string
           organization_id?: string
+          placement?: string | null
+          placement_checked_at?: string | null
           provider_message_id?: string
           replied_at?: string | null
           reply_decision?: string
           reply_due_at?: string | null
+          rescued_at?: string | null
           sent_at?: string
           status?: string
           subject?: string
@@ -2029,9 +2038,11 @@ export type Database = {
           emails_received: number
           emails_sent: number
           id: string
+          inbox_count: number
           organization_id: string
           positive_interactions: number
           reply_rate: number | null
+          spam_count: number
           spam_rate: number | null
           stat_date: string
           updated_at: string
@@ -2044,9 +2055,11 @@ export type Database = {
           emails_received?: number
           emails_sent?: number
           id?: string
+          inbox_count?: number
           organization_id: string
           positive_interactions?: number
           reply_rate?: number | null
+          spam_count?: number
           spam_rate?: number | null
           stat_date: string
           updated_at?: string
@@ -2059,9 +2072,11 @@ export type Database = {
           emails_received?: number
           emails_sent?: number
           id?: string
+          inbox_count?: number
           organization_id?: string
           positive_interactions?: number
           reply_rate?: number | null
+          spam_count?: number
           spam_rate?: number | null
           stat_date?: string
           updated_at?: string

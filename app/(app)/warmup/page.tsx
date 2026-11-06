@@ -1,6 +1,7 @@
 import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getUserOrganization, listMailboxes, listWarmupProfiles } from "@/lib/db";
+import { getUserOrganization, listMailboxes, listRecentWarmupStats, listWarmupProfiles } from "@/lib/db";
+import { summarizeWarmupStats, warmupSummarySinceDate } from "@/lib/warmup/stats";
 import type { Tables } from "@/types/database.types";
 import { FadeIn } from "@/components/motion/fade-in";
 import { WarmupDashboard } from "@/components/warmup/warmup-dashboard";
@@ -14,10 +15,13 @@ export default async function WarmupPage() {
   const supabase = await createClient();
   const organization = await getUserOrganization(supabase, user);
 
-  const [mailboxes, profiles] = await Promise.all([
+  const sinceDate = warmupSummarySinceDate();
+  const [mailboxes, profiles, recentStats] = await Promise.all([
     listMailboxes(supabase, user.id),
     listWarmupProfiles(supabase, organization.id),
+    listRecentWarmupStats(supabase, organization.id, sinceDate),
   ]);
+  const summaryByProfile = summarizeWarmupStats(recentStats);
 
   // Plain object, not a Map — this crosses the Server -> Client Component
   // boundary as a prop, which only supports serializable values.
@@ -38,7 +42,7 @@ export default async function WarmupPage() {
       </FadeIn>
 
       <FadeIn delay={0.05}>
-        <WarmupDashboard mailboxes={mailboxes} profileByMailbox={profileByMailbox} />
+        <WarmupDashboard mailboxes={mailboxes} profileByMailbox={profileByMailbox} summaryByProfile={summaryByProfile} />
       </FadeIn>
     </div>
   );

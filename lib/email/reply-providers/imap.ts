@@ -20,7 +20,7 @@ type Mailbox = Tables<"mailboxes">;
 // otherwise block reply-worker.ts's sequential per-mailbox loop for minutes
 // with no upper bound, the same problem SMTP had before E4
 // (lib/email/providers/smtp.ts's SMTP_TIMEOUTS). Mirrors those values here.
-const IMAP_TIMEOUTS = {
+export const IMAP_TIMEOUTS = {
   connectionTimeout: 10_000,
   greetingTimeout: 10_000,
   socketTimeout: 20_000,
@@ -38,7 +38,7 @@ const PARSER_OPTIONS: SimpleParserOptions & { keepDeliveryStatus: boolean } = { 
 // mirroring smtp.ts's friendlySmtpTimeoutMessage.
 const IMAP_TIMEOUT_CODES = new Set(["CONNECT_TIMEOUT", "GREETING_TIMEOUT", "ETIMEOUT", "UPGRADE_TIMEOUT"]);
 
-function friendlyImapTimeoutMessage(error: unknown): string | null {
+export function friendlyImapTimeoutMessage(error: unknown): string | null {
   const err = error as { code?: string };
   if (err?.code && IMAP_TIMEOUT_CODES.has(err.code)) {
     return "Couldn't reach the mail server in time. Check the host and port, then try again.";
@@ -86,7 +86,7 @@ function normalizeAddressList(raw: AddressObject | AddressObject[] | undefined):
 // treats any thrown error as "skip this mailbox for this run"
 // (lib/email/reply-worker.ts), so a refresh failure here needs no special
 // classification, unlike the send path.
-async function resolveImapConnection(mailbox: Mailbox) {
+export async function resolveImapConnection(mailbox: Mailbox) {
   if (mailbox.reply_provider === "gmail") {
     if (!mailbox.encrypted_google_refresh_token) {
       throw new Error("This mailbox's Google connection is missing — reconnect it in Settings.");

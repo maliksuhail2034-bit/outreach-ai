@@ -1,7 +1,8 @@
 import { randomBytes } from "crypto";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { getUser } from "@/lib/supabase/auth";
 import { buildMicrosoftAuthUrl } from "@/lib/email/microsoft-oauth";
+import { appUrl } from "@/lib/app-url";
 
 // Route Handler, not a Server Function — this needs to redirect the
 // top-level browser to Microsoft's own domain. Mirrors
@@ -13,10 +14,10 @@ const STATE_COOKIE_MAX_AGE_SECONDS = 600; // 10 minutes — just long enough for
 // app/(app)/layout.tsx already gates the /mailboxes page this link starts
 // from, but Route Handlers are reachable directly, so this re-checks
 // independently. A signed-out visitor is sent to sign in, not shown a 500.
-export async function GET(request: NextRequest) {
+export async function GET() {
   const user = await getUser();
   if (!user) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(appUrl("/login"));
   }
 
   // A random, unguessable value stored in a cookie only this browser can
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
   try {
     authUrl = buildMicrosoftAuthUrl(state);
   } catch {
-    const url = new URL("/mailboxes", request.url);
+    const url = appUrl("/mailboxes");
     url.searchParams.set("error", "Microsoft 365 connection isn't set up yet. Try again later.");
     return NextResponse.redirect(url);
   }

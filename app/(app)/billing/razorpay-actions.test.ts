@@ -132,7 +132,7 @@ beforeEach(() => {
   mockGetUserOrganization.mockResolvedValue(ORGANIZATION as never);
   // Allowed by default — tests exercising the rate-limit block override this
   // with a rejected promise instead.
-  mockCheckRateLimit.mockResolvedValue(undefined);
+  mockCheckRateLimit.mockResolvedValue(true);
   // A fresh claim unless a test sets up an existing open checkout.
   mockClaim.mockResolvedValue({ outcome: "claimed", ...CLAIM });
   mockAttach.mockResolvedValue(true);
@@ -530,6 +530,7 @@ describe("createRazorpaySubscriptionAction — concurrent checkout guard", () =>
   it("refuses a second checkout started inside the window, without creating another subscription", async () => {
     mockCheckRateLimit.mockImplementation(async (scope) => {
       if (scope === "billing:checkout_start") throw new RateLimitError(90);
+      return true;
     });
     const create = mockCreate(() => Promise.resolve({ id: "sub_second" }));
 
@@ -550,6 +551,7 @@ describe("createRazorpaySubscriptionAction — concurrent checkout guard", () =>
   it("passes through a non-rate-limit failure of the guard (which fails closed) rather than masking it", async () => {
     mockCheckRateLimit.mockImplementation(async (scope) => {
       if (scope === "billing:checkout_start") throw new Error("db down");
+      return true;
     });
     const create = mockCreate(() => Promise.resolve({ id: "sub_x" }));
 

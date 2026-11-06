@@ -27,7 +27,9 @@ export class RateLimitError extends Error {
 // provider-agnostic (lib/rate-limit/provider.ts's RateLimiter interface):
 // if a future distributed limiter replaces PostgresRateLimiter, no call
 // site here changes, only get-provider.ts's factory does.
-export async function checkRateLimit(scope: RateLimitScope, identity: string): Promise<void> {
+// Returns true when the attempt was recorded (and so may later be released),
+// false when the check itself failed and this scope fails open.
+export async function checkRateLimit(scope: RateLimitScope, identity: string): Promise<boolean> {
   const config = RATE_LIMIT_CONFIG[scope];
 
   let result;
@@ -41,10 +43,29 @@ export async function checkRateLimit(scope: RateLimitScope, identity: string): P
     if (config.failClosed) {
       throw new RateLimitError(config.windowSeconds);
     }
-    return;
+    return false;
   }
 
   if (!result.allowed) {
     throw new RateLimitError(result.retryAfterSeconds);
+  }
+  return true;
+}
+
+// Refunds the attempt a successful checkRateLimit() call recorded, for
+// actions whose limit should only count failures — a sign-in that succeeds
+// shouldn't use up the failed-attempt allowance of everyone behind the same
+// office NAT. The attempt is still reserved atomically up front (so a burst
+// of parallel requests can't get past the limit before any of them
+// finishes); it's only released afterwards, once it's known to have
+// succeeded.
+//
+// Best-effort and never throws: if the refund fails, the attempt simply
+// keeps counting, which is the stricter outcome, not a weaker one.
+export async function releaseRateLimitAttempt(scope: RateLimitScope, identity: string): Promise<void> {
+  try {
+    await getRateLimiter().release(scope, identity);
+  } catch (error) {
+    console.error("[rate-limit] release failed", scope, error);
   }
 }

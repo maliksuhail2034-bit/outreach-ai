@@ -23,12 +23,14 @@ vi.mock("@/lib/rate-limit/get-client-ip", () => ({
 vi.mock("@/lib/rate-limit/check-rate-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit/check-rate-limit")>()),
   checkRateLimit: vi.fn(),
+  releaseRateLimitAttempt: vi.fn(),
 }));
 
-import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
+import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "@/lib/rate-limit/check-rate-limit";
 import { forgotPassword, resetPassword, signIn, signOut, signUp } from "./auth";
 
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
+const mockRelease = vi.mocked(releaseRateLimitAttempt);
 
 function form(values: Record<string, string>) {
   const data = new FormData();
@@ -45,7 +47,7 @@ const VALID_SIGNUP = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockCheckRateLimit.mockResolvedValue(undefined);
+  mockCheckRateLimit.mockResolvedValue(true);
   vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://polimatiq.test");
 });
 
@@ -126,12 +128,44 @@ describe("signIn", () => {
   it("stops before calling Supabase when the per-account limit is hit", async () => {
     mockCheckRateLimit.mockImplementation(async (scope) => {
       if (scope === "auth:sign_in_account") throw new RateLimitError(600);
+      return true;
     });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).resolves.toEqual({
       error: new RateLimitError(600).message,
     });
     expect(supabaseAuth.signInWithPassword).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("refunds both reserved attempts after a successful sign-in, so only failures count", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+
+    const accountKey = mockCheckRateLimit.mock.calls.find(([scope]) => scope === "auth:sign_in_account")?.[1];
+    expect(mockRelease).toHaveBeenCalledTimes(2);
+    expect(mockRelease).toHaveBeenCalledWith("auth:sign_in", "203.0.113.7");
+    expect(mockRelease).toHaveBeenCalledWith("auth:sign_in_account", accountKey);
+  });
+
+  it.each([
+    ["a wrong password for a real account", "Invalid login credentials"],
+    ["an account that doesn't exist", "Invalid login credentials"],
+  ])("keeps counting %s — identical response, nothing refunded", async (_label, message) => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({ error: { message } });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "wrong" }))).resolves.toEqual({ error: message });
+    expect(mockCheckRateLimit).toHaveBeenCalledTimes(2);
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("refunds nothing it didn't record (a limiter that failed open)", async () => {
+    mockCheckRateLimit.mockResolvedValue(false);
+    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockRelease).not.toHaveBeenCalled();
   });
 });
 

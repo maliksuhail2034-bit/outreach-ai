@@ -9,7 +9,7 @@ import {
   signInSchema,
   signUpSchema,
 } from "@/lib/validations/auth";
-import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
+import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "@/lib/rate-limit/check-rate-limit";
 import { getClientIp } from "@/lib/rate-limit/get-client-ip";
 import { TIMEZONES } from "@/lib/timezones";
 
@@ -41,12 +41,16 @@ export async function signIn(_prevState: AuthActionState, formData: FormData): P
     return { fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
+  const ip = await getClientIp();
+  const accountKey = accountRateLimitIdentity(parsed.data.email);
+  let recordedIp = false;
+  let recordedAccount = false;
   try {
     // Dual-keyed like forgot-password: per-IP stops one source hammering
     // many accounts, per-account stops a botnet rotating IPs against one
     // account (credential stuffing / targeted brute force, OWASP A07).
-    await checkRateLimit("auth:sign_in", await getClientIp());
-    await checkRateLimit("auth:sign_in_account", accountRateLimitIdentity(parsed.data.email));
+    recordedIp = await checkRateLimit("auth:sign_in", ip);
+    recordedAccount = await checkRateLimit("auth:sign_in_account", accountKey);
   } catch (error) {
     if (error instanceof RateLimitError) return { error: error.message };
     throw error;
@@ -56,8 +60,18 @@ export async function signIn(_prevState: AuthActionState, formData: FormData): P
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
+    // Counted: every failure uses up the allowance the same way, whether or
+    // not the account exists, so the limit itself reveals nothing.
     return { error: error.message };
   }
+
+  // Only failed attempts count toward the limits — refund the two this
+  // successful sign-in reserved. Revealing nothing: the caller already
+  // knows the password was right.
+  await Promise.all([
+    recordedIp ? releaseRateLimitAttempt("auth:sign_in", ip) : undefined,
+    recordedAccount ? releaseRateLimitAttempt("auth:sign_in_account", accountKey) : undefined,
+  ]);
 
   redirect("/dashboard");
 }

@@ -8,6 +8,7 @@ import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { exchangeCodeForTokens, getGoogleUserInfo, GoogleOAuthError } from "@/lib/email/google-oauth";
 import { GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, GMAIL_SMTP_HOST, GMAIL_SMTP_PORT } from "@/lib/email/google-constants";
 import { STATE_COOKIE_NAME } from "../start/route";
+import { appUrl } from "@/lib/app-url";
 
 // Defaults a brand-new Gmail mailbox gets, matching mailbox-form.tsx's own
 // create-mode defaults exactly — a Gmail connection isn't a special tier,
@@ -18,8 +19,8 @@ const DEFAULT_HOURLY_LIMIT = 10;
 // go out on a fixed machine-like cadence.
 const DEFAULT_COOLDOWN_MINUTES = 5;
 
-function redirectWithError(request: NextRequest, message: string) {
-  const url = new URL("/mailboxes", request.url);
+function redirectWithError(message: string) {
+  const url = appUrl("/mailboxes");
   url.searchParams.set("error", message);
   const response = NextResponse.redirect(url);
   response.cookies.delete(STATE_COOKIE_NAME);
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
 
   const googleError = searchParams.get("error");
   if (googleError) {
-    return redirectWithError(request, "Google sign-in was cancelled or denied.");
+    return redirectWithError("Google sign-in was cancelled or denied.");
   }
 
   const code = searchParams.get("code");
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
   const stateCookie = request.cookies.get(STATE_COOKIE_NAME)?.value;
 
   if (!code || !isValidState(stateCookie, state)) {
-    return redirectWithError(request, "This connection request is invalid or expired. Try connecting again.");
+    return redirectWithError("This connection request is invalid or expired. Try connecting again.");
   }
 
   // Re-checked independently of the /mailboxes page's own auth guard —
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
   if (!user) {
     // The session ended during the round trip to the provider — send the
     // user to sign in again instead of failing with a 500.
-    const url = new URL("/login", request.url);
+    const url = appUrl("/login");
     url.searchParams.set("error", "Your session expired. Sign in and connect the mailbox again.");
     const response = NextResponse.redirect(url);
     response.cookies.delete(STATE_COOKIE_NAME);
@@ -132,13 +133,13 @@ export async function GET(request: NextRequest) {
     // in full here, server-side only, and replaced with a generic message
     // before it can reach the redirect URL.
     if (error instanceof GoogleOAuthError || error instanceof PlanLimitError) {
-      return redirectWithError(request, error.message);
+      return redirectWithError(error.message);
     }
     console.error("[oauth/google/callback] unexpected error", error);
-    return redirectWithError(request, "Couldn't connect this Gmail account. Try again.");
+    return redirectWithError("Couldn't connect this Gmail account. Try again.");
   }
 
-  const response = NextResponse.redirect(new URL("/mailboxes?connected=gmail", request.url));
+  const response = NextResponse.redirect(appUrl("/mailboxes?connected=gmail"));
   response.cookies.delete(STATE_COOKIE_NAME);
   return response;
 }

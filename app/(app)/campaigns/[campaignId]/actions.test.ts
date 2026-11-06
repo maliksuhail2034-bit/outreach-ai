@@ -201,7 +201,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
   mockRequireUser.mockResolvedValue(USER as never);
   mockGetUserOrganization.mockResolvedValue(ORGANIZATION as never);
-  mockCheckRateLimit.mockResolvedValue(undefined);
+  mockCheckRateLimit.mockResolvedValue(true);
   mockGetCampaign.mockResolvedValue(makeCampaign() as never);
   mockGetCampaignLead.mockResolvedValue(makeCampaignLead() as never);
   mockUpdateCampaignLead.mockResolvedValue(makeCampaignLead() as never);

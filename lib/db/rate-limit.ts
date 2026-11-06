@@ -32,3 +32,27 @@ export async function recordRateLimitAttempt(
 
   return { allowed: row.allowed, retryAfterSeconds: row.retry_after_seconds };
 }
+
+// Removes the most recent attempt recorded for (scope, identity) — the
+// "refund" a caller issues when the attempt it reserved turned out to be one
+// that shouldn't count, such as a successful sign-in (see
+// lib/rate-limit/check-rate-limit.ts's releaseRateLimitAttempt). Two steps
+// (find the newest id, delete that id) because PostgREST deletes by filter,
+// not by "newest one". Concurrent attempts for the same key are equivalent
+// rows, so which one is removed doesn't matter; only the count does.
+export async function deleteLatestRateLimitAttempt(supabase: Client, scope: string, identity: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("rate_limit_events")
+    .select("id")
+    .eq("scope", scope)
+    .eq("identity", identity)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return false;
+
+  const { error: deleteError } = await supabase.from("rate_limit_events").delete().eq("id", data.id);
+  if (deleteError) throw deleteError;
+  return true;
+}

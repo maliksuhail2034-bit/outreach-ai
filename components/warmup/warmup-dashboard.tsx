@@ -6,7 +6,7 @@ import { FlameIcon, PauseIcon, PlayIcon, PowerIcon, SettingsIcon } from "lucide-
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
-import { daysWarming, forecastNextRamp } from "@/lib/warmup/scheduler";
+import { daysWarming, forecastNextRamp, nextIncreaseStatus } from "@/lib/warmup/scheduler";
 import type { WarmupStage } from "@/lib/warmup/types";
 import type { WarmupPeriodSummary } from "@/lib/warmup/stats";
 import { disableWarmupAction, pauseWarmupAction } from "@/app/(app)/warmup/actions";
@@ -157,6 +157,7 @@ export function WarmupDashboard({
                     lastActivityAt: profile.last_ramp_increase_at ?? profile.started_at,
                   })
                 : { nextVolume: null, nextIncreaseAt: null };
+              const nextIncrease = nextIncreaseStatus(forecast);
               const summary = profile ? summaryByProfile[profile.id] : undefined;
               const warnings = warningsFor(profile, summary, mailbox.imap_enabled);
 
@@ -180,7 +181,11 @@ export function WarmupDashboard({
                         {" per day · Days warming: "}
                         {daysWarming(profile?.started_at ?? null)}
                         {" · Next increase: "}
-                        {forecast.nextIncreaseAt ? new Date(forecast.nextIncreaseAt).toLocaleDateString() : "—"}
+                        {nextIncrease.kind === "scheduled"
+                          ? new Date(nextIncrease.at).toLocaleDateString()
+                          : nextIncrease.kind === "due"
+                            ? "due at the next warmup cycle"
+                            : "—"}
                         {summary && (
                           <>
                             {" · Last 7 days: "}

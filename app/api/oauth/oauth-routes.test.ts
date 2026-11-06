@@ -46,16 +46,17 @@ function request(path: string, cookies: Record<string, string> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", BASE);
 });
 
 describe.each([
   { provider: "google", start: googleStart, providerHost: "accounts.google.com", cookie: GOOGLE_STATE_COOKIE },
   { provider: "microsoft", start: microsoftStart, providerHost: "login.microsoftonline.com", cookie: MICROSOFT_STATE_COOKIE },
-])("/api/oauth/$provider/start", ({ provider, start, providerHost, cookie }) => {
+])("/api/oauth/$provider/start", ({ start, providerHost, cookie }) => {
   it("redirects a signed-out visitor to /login instead of failing", async () => {
     mockGetUser.mockResolvedValue(null);
 
-    const response = await start(request(`/api/oauth/${provider}/start`));
+    const response = await start();
 
     expect(response.status).toBe(307);
     expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
@@ -65,7 +66,7 @@ describe.each([
   it("redirects a signed-in user to the provider with a state cookie", async () => {
     mockGetUser.mockResolvedValue({ id: "user-1", email: "a@example.com" } as User);
 
-    const response = await start(request(`/api/oauth/${provider}/start`));
+    const response = await start();
 
     const location = new URL(response.headers.get("location")!);
     expect(location.host).toBe(providerHost);
@@ -82,7 +83,7 @@ describe("/api/oauth/google/start without Google credentials", () => {
       throw new Error("GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not set");
     });
 
-    const response = await googleStart(request("/api/oauth/google/start"));
+    const response = await googleStart();
 
     const location = new URL(response.headers.get("location")!);
     expect(location.pathname).toBe("/mailboxes");
@@ -98,7 +99,7 @@ describe("/api/oauth/microsoft/start without Microsoft credentials", () => {
       throw new Error("MICROSOFT_OAUTH_CLIENT_ID is not set");
     });
 
-    const response = await microsoftStart(request("/api/oauth/microsoft/start"));
+    const response = await microsoftStart();
 
     const location = new URL(response.headers.get("location")!);
     expect(location.pathname).toBe("/mailboxes");
@@ -134,5 +135,51 @@ describe.each([
     expect(location.pathname).toBe("/mailboxes");
     expect(location.searchParams.get("error")).toBe("This connection request is invalid or expired. Try connecting again.");
     expect(mockGetUser).not.toHaveBeenCalled();
+  });
+});
+
+// Behind Caddy on the VPS, Next.js sees its internal listener
+// (https://localhost:3001) as the request URL. Every redirect must use the
+// configured public origin instead; before this fix they went to localhost.
+describe("redirects behind a reverse proxy", () => {
+  const INTERNAL = "https://localhost:3001";
+  const PUBLIC = "https://app.polimatiq.example";
+
+  function internalRequest(path: string, cookies: Record<string, string> = {}) {
+    const req = new NextRequest(`${INTERNAL}${path}`);
+    for (const [name, value] of Object.entries(cookies)) req.cookies.set(name, value);
+    return req;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", PUBLIC);
+  });
+
+  it.each([
+    ["google start, signed out", () => googleStart()],
+    ["microsoft start, signed out", () => microsoftStart()],
+    ["google callback, provider error", () => googleCallback(internalRequest("/api/oauth/google/callback?error=access_denied"))],
+    ["microsoft callback, provider error", () => microsoftCallback(internalRequest("/api/oauth/microsoft/callback?error=access_denied"))],
+    [
+      "google callback, expired session",
+      () => googleCallback(internalRequest("/api/oauth/google/callback?code=c&state=s", { [GOOGLE_STATE_COOKIE]: "s" })),
+    ],
+    [
+      "microsoft callback, expired session",
+      () => microsoftCallback(internalRequest("/api/oauth/microsoft/callback?code=c&state=s", { [MICROSOFT_STATE_COOKIE]: "s" })),
+    ],
+  ])("%s redirects to the public origin, never the internal host", async (_label, run) => {
+    mockGetUser.mockResolvedValue(null);
+
+    const location = new URL((await run()).headers.get("location")!);
+
+    expect(location.origin).toBe(PUBLIC);
+  });
+
+  it("fails closed instead of redirecting to the request host when NEXT_PUBLIC_APP_URL is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+    mockGetUser.mockResolvedValue(null);
+
+    await expect(googleStart()).rejects.toThrow("NEXT_PUBLIC_APP_URL is not set");
   });
 });

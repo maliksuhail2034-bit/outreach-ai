@@ -92,3 +92,36 @@ describe("SmtpEmailProvider — List-Unsubscribe headers", () => {
     expect(headers.has("list-unsubscribe-post")).toBe(false);
   });
 });
+
+// Display names reach nodemailer as address objects (see formatAddress in
+// smtp.ts), so nodemailer quotes/encodes them; a hand-built `"name" <email>`
+// string broke on an embedded double quote. Pinned against the real
+// nodemailer renderer, so a dependency upgrade can't silently regress it.
+describe("SmtpEmailProvider — display names", () => {
+  it("keeps a name containing double quotes as one display name for the right address", async () => {
+    const headers = await sentHeaders({ ...MESSAGE, to: { name: 'Jane "JJ" Doe', email: "lead@example.test" } });
+
+    const to = headers.get("to")?.[0] ?? "";
+    expect(to).toContain("<lead@example.test>");
+    expect(to.match(/</g)).toHaveLength(1);
+    expect(to).toContain("JJ");
+  });
+
+  it("can't inject a header through a name containing CR/LF", async () => {
+    const headers = await sentHeaders({
+      ...MESSAGE,
+      from: { name: "Sender\r\nBcc: victim@example.test", email: "sender@example.test" },
+    });
+
+    expect(headers.has("bcc")).toBe(false);
+    expect(headers.get("from")?.[0]).toContain("<sender@example.test>");
+  });
+
+  it("encodes a non-ASCII name instead of sending raw 8-bit header bytes", async () => {
+    const headers = await sentHeaders({ ...MESSAGE, from: { name: "Zoë Ångström", email: "sender@example.test" } });
+
+    const from = headers.get("from")?.[0] ?? "";
+    expect(from).toMatch(/=\?UTF-8\?/i);
+    expect(from).toContain("<sender@example.test>");
+  });
+});

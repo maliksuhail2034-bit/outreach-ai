@@ -56,6 +56,7 @@ function expectNothingWritten() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("UNSUBSCRIBE_TOKEN_SECRET", SECRET);
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.test");
   createAdminClient.mockReturnValue(ADMIN_CLIENT);
   db.findCampaignLead.mockResolvedValue(ENROLLMENT);
   db.getCampaignById.mockResolvedValue({ id: "campaign-1", user_id: "user-1" });
@@ -256,5 +257,13 @@ describe("GET /unsubscribe/[token]/one-click — never mutates", () => {
 
     expect(response.status).toBe(303);
     expectNothingWritten();
+  });
+
+  it("redirects to the public origin even when the request arrives on the proxy's internal address", async () => {
+    const token = signUnsubscribeToken(RECIPIENT);
+
+    const response = await GET(new Request(`https://localhost:3001/unsubscribe/${token}/one-click`), params(token));
+
+    expect(response.headers.get("Location")).toBe(`https://app.example.test/unsubscribe/${token}`);
   });
 });

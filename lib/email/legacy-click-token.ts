@@ -3,6 +3,7 @@ import { findCampaignLead, findSequenceStepWithCampaign, getLeadById, getSendAtt
 import { unescapeHtml } from "./merge-tags";
 import { renderEmailContent } from "./render-email";
 import { decodeUnverifiedClickTrackingPayload, type ClickTrackingContext } from "./tracking-token";
+import { resolveLeadContact } from "@/lib/verified-leads/contact";
 
 // Fallback for click links signed with a CLICK_TRACKING_TOKEN_SECRET that is
 // no longer available (the Vercel → VPS migration could not recover it).
@@ -57,10 +58,14 @@ export async function resolveLegacyClickToken(token: string): Promise<LegacyClic
     if (!step || step.sequences.campaign_id !== claimed.campaignId) return null;
 
     const lead = await getLeadById(supabase, claimed.leadId);
+    // Rendered with the address the email was actually sent to (the real one
+    // for a verified-pool lead), so {{email}} links match what was sent.
+    const contact = await resolveLeadContact(supabase, lead);
+    if (!contact) return null;
     const rendered = renderEmailContent(step.subject ?? "", step.body ?? "", {
       first_name: lead.first_name,
       last_name: lead.last_name,
-      email: lead.email,
+      email: contact.email,
       company: lead.company,
       title: lead.title,
       custom_fields: lead.custom_fields as Record<string, unknown> | null,

@@ -473,6 +473,8 @@ describe("enrollLeadListAction", () => {
   function makeLead(id: string, overrides: Partial<Tables<"leads">> = {}): Tables<"leads"> {
     return {
       id,
+      display_email: null,
+      verified_lead_id: null,
       user_id: "user-1",
       email: `${id}@example.com`,
       first_name: null,
@@ -560,6 +562,8 @@ describe("enrollLeadSegmentAction", () => {
   function makeLead(id: string): Tables<"leads"> {
     return {
       id,
+      display_email: null,
+      verified_lead_id: null,
       user_id: "user-1",
       email: `${id}@example.com`,
       first_name: null,

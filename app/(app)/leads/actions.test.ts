@@ -5,6 +5,8 @@ vi.mock("@/lib/supabase/auth", () => ({ requireUser: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn(async () => ({})) }));
 vi.mock("@/lib/db", () => ({
   createLead: vi.fn(),
+  getLead: vi.fn(),
+  getUserOrganization: vi.fn(),
   updateLead: vi.fn(),
   setLeadsTimezone: vi.fn(),
 }));
@@ -17,9 +19,10 @@ vi.mock("@/lib/rate-limit/check-rate-limit", () => ({ checkRateLimit: vi.fn() })
 
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
-import { createLead, setLeadsTimezone, updateLead } from "@/lib/db";
+import { createLead, getLead, getUserOrganization, setLeadsTimezone, updateLead } from "@/lib/db";
+import { verifyLead } from "@/lib/verification/verify";
 import { assertWithinLeadLimit, PlanLimitError } from "@/lib/billing/limits";
-import { createLeadAction, setLeadsTimezoneAction, updateLeadAction } from "./actions";
+import { createLeadAction, setLeadsTimezoneAction, updateLeadAction, verifyLeadAction } from "./actions";
 
 const mockRequireUser = vi.mocked(requireUser);
 const mockCreateLead = vi.mocked(createLead);
@@ -35,6 +38,35 @@ beforeEach(() => {
   mockCreateLead.mockResolvedValue({ id: "lead-1" } as never);
   mockUpdateLead.mockResolvedValue({ id: "lead-1" } as never);
   mockSetLeadsTimezone.mockResolvedValue(undefined);
+  vi.mocked(getLead).mockResolvedValue({ id: "lead-1", email: "jane@acme.com", verified_lead_id: null } as never);
+  vi.mocked(getUserOrganization).mockResolvedValue({ id: "org-1" } as never);
+});
+
+describe("Polimatiq verified-pool leads", () => {
+  const POOL_LEAD = { id: "lead-1", email: "verified+abc@leads.polimatiq.invalid", verified_lead_id: "vl-1" };
+
+  it("never writes the email of a pool lead, whatever the form sends", async () => {
+    vi.mocked(getLead).mockResolvedValue(POOL_LEAD as never);
+
+    await updateLeadAction("lead-1", { email: "someone-else@evil.com", firstName: "Jane" });
+
+    const values = mockUpdateLead.mock.calls[0][3];
+    expect(values).not.toHaveProperty("email");
+    expect(values).toMatchObject({ first_name: "Jane" });
+  });
+
+  it("still writes the email of the customer's own lead", async () => {
+    await updateLeadAction("lead-1", { email: "New@Acme.com" });
+
+    expect(mockUpdateLead.mock.calls[0][3]).toMatchObject({ email: "new@acme.com" });
+  });
+
+  it("refuses to verify a pool lead (no provider call, no credits spent)", async () => {
+    vi.mocked(getLead).mockResolvedValue(POOL_LEAD as never);
+
+    await expect(verifyLeadAction("lead-1")).rejects.toThrow(/already verified/);
+    expect(vi.mocked(verifyLead)).not.toHaveBeenCalled();
+  });
 });
 
 describe("lead create/edit timezone", () => {

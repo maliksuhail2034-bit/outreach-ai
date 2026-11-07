@@ -215,6 +215,23 @@ describe("applyRemovalPlan", () => {
     );
   });
 
+  it("pulls the person from the verified pool for every customer, without touching other pool leads", async () => {
+    const tables = {
+      ...seed(),
+      verified_leads: [
+        { id: "vl-person", email: "person@example.com", status: "active" },
+        { id: "vl-other", email: "someone-else@example.com", status: "active" },
+      ],
+    };
+    const { client } = createFakeDb(tables);
+    const plan = await planRemovalRequest(client, PROJECT, request());
+
+    await applyRemovalPlan(client, plan);
+
+    expect(tables.verified_leads[0]).toMatchObject({ status: "suppressed", suppressed_reason: "removal_request" });
+    expect(tables.verified_leads[1]).toMatchObject({ status: "active" });
+  });
+
   it("is safe to repeat: a second apply writes no duplicate and stops nothing more", async () => {
     const { client, tables } = createFakeDb(seed());
     const plan = await planRemovalRequest(client, PROJECT, request());

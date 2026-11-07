@@ -15,6 +15,7 @@ const {
   getSentEventForOwnerMock,
   listActiveCampaignLeadsForMailboxMock,
   listLeadIdsByEmailMock,
+  listDeliveredLeadIdsByRealEmailMock,
   recordEmailEventMock,
   recordEmailReplyMock,
   releaseMailboxReplySyncLockMock,
@@ -34,6 +35,7 @@ const {
   getLeadByIdMock: vi.fn(),
   listActiveCampaignLeadsForMailboxMock: vi.fn(),
   listLeadIdsByEmailMock: vi.fn(),
+  listDeliveredLeadIdsByRealEmailMock: vi.fn(),
   recordEmailEventMock: vi.fn(),
   recordEmailReplyMock: vi.fn(),
   releaseMailboxReplySyncLockMock: vi.fn(),
@@ -54,6 +56,8 @@ vi.mock("@/lib/db", () => ({
   getSentEventForOwner: getSentEventForOwnerMock,
   listActiveCampaignLeadsForMailbox: listActiveCampaignLeadsForMailboxMock,
   listLeadIdsByEmail: listLeadIdsByEmailMock,
+  listDeliveredLeadIdsByRealEmail: listDeliveredLeadIdsByRealEmailMock,
+  getDeliveredVerifiedLeadEmail: vi.fn(async () => null),
   recordEmailEvent: recordEmailEventMock,
   recordEmailReply: recordEmailReplyMock,
   releaseMailboxReplySyncLock: releaseMailboxReplySyncLockMock,
@@ -142,6 +146,8 @@ function makeEmailEvent(overrides: Partial<Tables<"email_events">> = {}): Tables
 function makeLead(overrides: Partial<Tables<"leads">> = {}): Tables<"leads"> {
   return {
     id: "lead-1",
+    display_email: null,
+    verified_lead_id: null,
     user_id: "user-1",
     list_id: null,
     email: "lead@example.com",
@@ -181,6 +187,7 @@ beforeEach(() => {
   updateCampaignLeadMock.mockResolvedValue(undefined);
   updateLeadMock.mockResolvedValue(undefined);
   getLeadByIdMock.mockResolvedValue(makeLead());
+  listDeliveredLeadIdsByRealEmailMock.mockResolvedValue([]);
   getEmailReplyByEventIdMock.mockResolvedValue(null);
   getLatestJobRunSummaryMock.mockResolvedValue(null);
   // M4: header matching goes through the owner-scoped lookup. The sent

@@ -19,6 +19,8 @@ export type RateLimitScope =
   | "campaign:resolve_send_attempt"
   | "campaign:send_now"
   | "leads:import"
+  | "staff:lead_upload"
+  | "staff:allocation_run"
   | "billing:checkout"
   | "billing:checkout_start"
   | "billing:manage";
@@ -69,6 +71,11 @@ export const RATE_LIMIT_CONFIG: Record<RateLimitScope, ScopeConfig> = {
   // API.
   "campaign:send_now": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
   "leads:import": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
+  // Staff verified-lead uploads (up to 10,000 rows each), per staff member.
+  "staff:lead_upload": { windowSeconds: HOUR, maxAttempts: 30, failClosed: false },
+  // The owner's "run allocation now": the run is idempotent, but each one
+  // walks every organization, so stop accidental repeat clicks.
+  "staff:allocation_run": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
   // Starting a new subscription checkout — shared across both providers
   // (createCheckoutSessionAction/Stripe, createRazorpaySubscriptionAction/
   // Razorpay): each calls out to the provider's own create-session/

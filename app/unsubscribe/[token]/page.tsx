@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCampaignLead, getLeadById } from "@/lib/db";
 import { verifyUnsubscribeToken } from "@/lib/email/unsubscribe-token";
+import { resolveLeadContact } from "@/lib/verified-leads/contact";
 import { UnsubscribeConfirm } from "@/components/unsubscribe/unsubscribe-confirm";
 import { BUSINESS_DETAILS } from "@/components/legal/business-details";
 
@@ -23,7 +24,7 @@ export default async function UnsubscribePage({ params }: { params: Promise<{ to
       const supabase = createAdminClient();
       const campaignLead = await getCampaignLead(supabase, verified.campaignLeadId);
       const lead = await getLeadById(supabase, campaignLead.lead_id);
-      email = lead.email;
+      email = (await resolveLeadContact(supabase, lead))?.email ?? null;
     } catch {
       email = null;
     }

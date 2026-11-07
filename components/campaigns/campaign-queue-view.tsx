@@ -3,6 +3,7 @@ import type { MailboxSafe } from "@/lib/db";
 import type { Tables } from "@/types/database.types";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { leadEmailLabel } from "@/lib/leads/display";
 
 type Lead = Tables<"leads">;
 type SequenceStep = Tables<"sequence_steps">;
@@ -10,7 +11,7 @@ type SequenceStep = Tables<"sequence_steps">;
 function leadDisplay(lead: Lead | undefined) {
   if (!lead) return "Unknown lead";
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
-  return name || lead.email;
+  return name || leadEmailLabel(lead);
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -81,7 +82,7 @@ export function CampaignQueueView({
                     <tr key={send.campaignLeadId}>
                       <td className="max-w-48 truncate py-3 pr-4">
                         <p className="truncate font-medium">{leadDisplay(lead)}</p>
-                        {lead && <p className="truncate text-xs text-muted-foreground">{lead.email}</p>}
+                        {lead && <p className="truncate text-xs text-muted-foreground">{leadEmailLabel(lead)}</p>}
                       </td>
                       <td className="max-w-40 truncate py-3 pr-4 text-muted-foreground">
                         {mailbox ? mailbox.display_name || mailbox.email : "—"}

@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { Database } from "@/types/database.types";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { trustedClientIp } from "@/lib/rate-limit/get-client-ip";
+import { isRequestIpBlocked } from "@/lib/security/ip-blocklist";
 
 // Next.js 16 renamed Middleware to Proxy (same file-convention mechanics,
 // new file name and export name) — see AGENTS.md and CLAUDE.md.
@@ -20,6 +23,15 @@ function hasSupabaseSession(request: NextRequest): boolean {
 }
 
 export async function proxy(request: NextRequest) {
+  // The security team's IP blocklist (lib/security/ip-blocklist.ts), checked
+  // before anything else, signed in or not.
+  if (await isRequestIpBlocked(trustedClientIp(request.headers), createAdminClient)) {
+    return new NextResponse("Access from your network has been blocked. Contact support@polimatiq.com if you think this is a mistake.", {
+      status: 403,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+
   // Anonymous visitors (marketing, legal, login/signup pages) have no
   // session to refresh, so skip the round trip to Supabase Auth entirely.
   // That call used to run on every public page view, adding latency and an

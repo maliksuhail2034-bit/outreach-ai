@@ -217,7 +217,18 @@ export async function getActiveSubscriptionView(
     getSubscription(supabase, organizationId),
     getSubscriptionV2(supabase, organizationId),
   ]);
+  return resolveSubscriptionView(organizationId, legacy, v2, now);
+}
 
+// The pure precedence rules behind getActiveSubscriptionView, for callers
+// that already hold both rows — the staff console resolves every
+// organization's plan from two bulk reads instead of two queries per org.
+export function resolveSubscriptionView(
+  organizationId: string,
+  legacy: Tables<"subscriptions"> | null,
+  v2: Tables<"subscriptions_v2"> | null,
+  now: Date = new Date(),
+): SubscriptionView {
   const legacyCandidate = legacy ? resolveLegacyCandidate(legacy) : null;
   const v2Candidate = v2 ? resolveV2Candidate(v2, now) : null;
 

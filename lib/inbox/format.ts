@@ -1,4 +1,5 @@
 import type { InboxReply } from "@/lib/db/email-replies";
+import { leadEmailLabel } from "@/lib/leads/display";
 
 // Display helpers for the inbox (app/(app)/inbox). Everything here works on
 // plain text only: inbound mail is attacker-controlled, so the inbox never
@@ -17,7 +18,7 @@ export function replySenderName(reply: Pick<InboxReply, "from_name" | "from_emai
 export function replyLeadName(reply: Pick<InboxReply, "lead" | "from_email">): string {
   if (!reply.lead) return reply.from_email;
   const full = [reply.lead.first_name, reply.lead.last_name].filter(Boolean).join(" ").trim();
-  return full || reply.lead.email;
+  return full || leadEmailLabel(reply.lead);
 }
 
 const SNIPPET_LENGTH = 140;

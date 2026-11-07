@@ -100,8 +100,23 @@ export async function planRemovalRequest(
 ): Promise<RemovalPlan> {
   const input = parseRemovalRequestInput(rawInput);
 
-  const { data: leads, error: leadsError } = await supabase.from("leads").select("id, user_id").eq("email", input.email);
+  const { data: ownLeads, error: leadsError } = await supabase.from("leads").select("id, user_id").eq("email", input.email);
   if (leadsError) throw leadsError;
+
+  // Customer copies of a Polimatiq verified-pool lead store a placeholder
+  // address; they're found through the pool row holding the real one.
+  const { data: poolRows, error: poolError } = await supabase.from("verified_leads").select("id").eq("email", input.email);
+  if (poolError) throw poolError;
+  let poolLeads: { id: string; user_id: string }[] = [];
+  if (poolRows.length > 0) {
+    const { data, error } = await supabase
+      .from("leads")
+      .select("id, user_id")
+      .in("verified_lead_id", poolRows.map((row) => row.id));
+    if (error) throw error;
+    poolLeads = data;
+  }
+  const leads = [...ownLeads, ...poolLeads];
 
   const mailboxOwners = new Map<string, string[]>();
   if (input.senderMailboxes.length > 0) {
@@ -185,6 +200,18 @@ export async function applyRemovalPlan(supabase: Client, plan: RemovalPlan): Pro
     if (error && !isUniqueViolation(error)) throw error;
     if (!error) created.add(target.userId);
   }
+
+  // The person objected, so they also leave the Polimatiq verified pool for
+  // everyone — otherwise the next allocation could deliver them to new
+  // customers. The pool's own suppression trigger only reacts to
+  // unsubscribe/bounce suppressions, not to these 'manual' ones, so it's done
+  // here. Covers retired rows too: a suppressed lead can never be reactivated.
+  const { error: poolError } = await supabase
+    .from("verified_leads")
+    .update({ status: "suppressed", suppressed_at: new Date().toISOString(), suppressed_reason: "removal_request" })
+    .eq("email", plan.email)
+    .in("status", ["active", "retired"]);
+  if (poolError) throw poolError;
 
   const stopped = new Map<string, number>();
   for (const target of plan.targets) {

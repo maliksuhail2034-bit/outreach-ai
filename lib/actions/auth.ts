@@ -12,6 +12,7 @@ import {
 import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "@/lib/rate-limit/check-rate-limit";
 import { getClientIp } from "@/lib/rate-limit/get-client-ip";
 import { TIMEZONES } from "@/lib/timezones";
+import { recordSignInEvent } from "@/lib/security/auth-events";
 
 // Rate-limit identity for a per-account limit: a one-way hash, so the
 // rate_limit_events table never stores who tried to sign in (GDPR data
@@ -52,18 +53,24 @@ export async function signIn(_prevState: AuthActionState, formData: FormData): P
     recordedIp = await checkRateLimit("auth:sign_in", ip);
     recordedAccount = await checkRateLimit("auth:sign_in_account", accountKey);
   } catch (error) {
-    if (error instanceof RateLimitError) return { error: error.message };
+    if (error instanceof RateLimitError) {
+      await recordSignInEvent("sign_in_rate_limited", { email: parsed.data.email });
+      return { error: error.message };
+    }
     throw error;
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
     // Counted: every failure uses up the allowance the same way, whether or
     // not the account exists, so the limit itself reveals nothing.
+    await recordSignInEvent("sign_in_failure", { email: parsed.data.email });
     return { error: error.message };
   }
+
+  await recordSignInEvent("sign_in_success", { userId: data.user?.id ?? null });
 
   // Only failed attempts count toward the limits — refund the two this
   // successful sign-in reserved. Revealing nothing: the caller already

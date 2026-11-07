@@ -333,37 +333,41 @@ export type Database = {
           },
         ]
       }
-      billing_customers: {
+      auth_events: {
         Row: {
+          country: string | null
           created_at: string
+          email_hash: string | null
+          event_type: string
           id: string
-          organization_id: string
-          stripe_customer_id: string
+          ip: string | null
           updated_at: string
+          user_agent: string | null
+          user_id: string | null
         }
         Insert: {
+          country?: string | null
           created_at?: string
+          email_hash?: string | null
+          event_type: string
           id?: string
-          organization_id: string
-          stripe_customer_id: string
+          ip?: string | null
           updated_at?: string
+          user_agent?: string | null
+          user_id?: string | null
         }
         Update: {
+          country?: string | null
           created_at?: string
+          email_hash?: string | null
+          event_type?: string
           id?: string
-          organization_id?: string
-          stripe_customer_id?: string
+          ip?: string | null
           updated_at?: string
+          user_agent?: string | null
+          user_id?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "billing_customers_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: true
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       billing_checkouts: {
         Row: {
@@ -413,6 +417,38 @@ export type Database = {
             foreignKeyName: "billing_checkouts_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_customers: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          stripe_customer_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          stripe_customer_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          stripe_customer_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_customers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -915,6 +951,45 @@ export type Database = {
         }
         Relationships: []
       }
+      grc_controls: {
+        Row: {
+          control_key: string
+          created_at: string
+          description: string
+          framework: string
+          id: string
+          notes: string
+          status: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          control_key: string
+          created_at?: string
+          description?: string
+          framework: string
+          id?: string
+          notes?: string
+          status?: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          control_key?: string
+          created_at?: string
+          description?: string
+          framework?: string
+          id?: string
+          notes?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       integrations: {
         Row: {
           config: Json
@@ -961,6 +1036,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      ip_blocklist: {
+        Row: {
+          cidr: unknown
+          created_at: string
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          reason: string
+          updated_at: string
+        }
+        Insert: {
+          cidr: unknown
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          reason: string
+          updated_at?: string
+        }
+        Update: {
+          cidr?: unknown
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          reason?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       job_runs: {
         Row: {
@@ -1059,6 +1164,7 @@ export type Database = {
           country: string | null
           created_at: string
           custom_fields: Json
+          display_email: string | null
           email: string
           first_name: string | null
           id: string
@@ -1076,6 +1182,7 @@ export type Database = {
           verification_risk_score: number | null
           verification_status: string
           verified_at: string | null
+          verified_lead_id: string | null
           website: string | null
         }
         Insert: {
@@ -1084,6 +1191,7 @@ export type Database = {
           country?: string | null
           created_at?: string
           custom_fields?: Json
+          display_email?: string | null
           email: string
           first_name?: string | null
           id?: string
@@ -1101,6 +1209,7 @@ export type Database = {
           verification_risk_score?: number | null
           verification_status?: string
           verified_at?: string | null
+          verified_lead_id?: string | null
           website?: string | null
         }
         Update: {
@@ -1109,6 +1218,7 @@ export type Database = {
           country?: string | null
           created_at?: string
           custom_fields?: Json
+          display_email?: string | null
           email?: string
           first_name?: string | null
           id?: string
@@ -1126,6 +1236,7 @@ export type Database = {
           verification_risk_score?: number | null
           verification_status?: string
           verified_at?: string | null
+          verified_lead_id?: string | null
           website?: string | null
         }
         Relationships: [
@@ -1369,6 +1480,33 @@ export type Database = {
         }
         Relationships: []
       }
+      plan_lead_quotas: {
+        Row: {
+          created_at: string
+          id: string
+          leads_per_month: number
+          plan_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          leads_per_month: number
+          plan_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          leads_per_month?: number
+          plan_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -1581,6 +1719,90 @@ export type Database = {
           timezone?: string
           tracking_enabled?: boolean
           unsubscribe_text?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      staff_audit_log: {
+        Row: {
+          action: string
+          actor_role: string | null
+          actor_user_id: string | null
+          created_at: string
+          hash: string
+          id: string
+          ip: string | null
+          metadata: Json
+          prev_hash: string
+          seq: number
+          target_id: string | null
+          target_type: string | null
+          updated_at: string
+        }
+        Insert: {
+          action: string
+          actor_role?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          hash?: string
+          id?: string
+          ip?: string | null
+          metadata?: Json
+          prev_hash?: string
+          seq?: number
+          target_id?: string | null
+          target_type?: string | null
+          updated_at?: string
+        }
+        Update: {
+          action?: string
+          actor_role?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          hash?: string
+          id?: string
+          ip?: string | null
+          metadata?: Json
+          prev_hash?: string
+          seq?: number
+          target_id?: string | null
+          target_type?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      staff_members: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          display_name: string
+          id: string
+          last_seen_at: string | null
+          role: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          display_name: string
+          id?: string
+          last_seen_at?: string | null
+          role: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          display_name?: string
+          id?: string
+          last_seen_at?: string | null
+          role?: string
+          status?: string
           updated_at?: string
           user_id?: string
         }
@@ -1815,6 +2037,209 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      verified_lead_allocations: {
+        Row: {
+          created_at: string
+          delivered_count: number
+          id: string
+          lead_list_id: string | null
+          organization_id: string
+          period: string
+          plan_id: string
+          quota: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          delivered_count?: number
+          id?: string
+          lead_list_id?: string | null
+          organization_id: string
+          period: string
+          plan_id: string
+          quota: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          delivered_count?: number
+          id?: string
+          lead_list_id?: string | null
+          organization_id?: string
+          period?: string
+          plan_id?: string
+          quota?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      verified_lead_batches: {
+        Row: {
+          created_at: string
+          duplicate_count: number
+          file_name: string
+          id: string
+          inserted_count: number
+          rejected_count: number
+          row_count: number
+          source: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          duplicate_count?: number
+          file_name: string
+          id?: string
+          inserted_count?: number
+          rejected_count?: number
+          row_count?: number
+          source: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          duplicate_count?: number
+          file_name?: string
+          id?: string
+          inserted_count?: number
+          rejected_count?: number
+          row_count?: number
+          source?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
+      verified_lead_deliveries: {
+        Row: {
+          created_at: string
+          delivered_at: string
+          id: string
+          lead_id: string | null
+          organization_id: string
+          period: string
+          updated_at: string
+          user_id: string
+          verified_lead_id: string
+        }
+        Insert: {
+          created_at?: string
+          delivered_at?: string
+          id?: string
+          lead_id?: string | null
+          organization_id: string
+          period: string
+          updated_at?: string
+          user_id: string
+          verified_lead_id: string
+        }
+        Update: {
+          created_at?: string
+          delivered_at?: string
+          id?: string
+          lead_id?: string | null
+          organization_id?: string
+          period?: string
+          updated_at?: string
+          user_id?: string
+          verified_lead_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verified_lead_deliveries_verified_lead_id_fkey"
+            columns: ["verified_lead_id"]
+            isOneToOne: false
+            referencedRelation: "verified_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      verified_leads: {
+        Row: {
+          batch_id: string | null
+          city: string | null
+          company: string | null
+          country: string | null
+          created_at: string
+          created_by: string | null
+          custom_fields: Json
+          email: string
+          first_name: string | null
+          id: string
+          industry: string | null
+          last_delivered_at: string | null
+          last_name: string | null
+          linkedin: string | null
+          phone: string | null
+          source: string
+          status: string
+          suppressed_at: string | null
+          suppressed_reason: string | null
+          times_delivered: number
+          title: string | null
+          updated_at: string
+          verification_result: string
+          verified_at: string
+          website: string | null
+        }
+        Insert: {
+          batch_id?: string | null
+          city?: string | null
+          company?: string | null
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          custom_fields?: Json
+          email: string
+          first_name?: string | null
+          id?: string
+          industry?: string | null
+          last_delivered_at?: string | null
+          last_name?: string | null
+          linkedin?: string | null
+          phone?: string | null
+          source: string
+          status?: string
+          suppressed_at?: string | null
+          suppressed_reason?: string | null
+          times_delivered?: number
+          title?: string | null
+          updated_at?: string
+          verification_result?: string
+          verified_at: string
+          website?: string | null
+        }
+        Update: {
+          batch_id?: string | null
+          city?: string | null
+          company?: string | null
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          custom_fields?: Json
+          email?: string
+          first_name?: string | null
+          id?: string
+          industry?: string | null
+          last_delivered_at?: string | null
+          last_name?: string | null
+          linkedin?: string | null
+          phone?: string | null
+          source?: string
+          status?: string
+          suppressed_at?: string | null
+          suppressed_reason?: string | null
+          times_delivered?: number
+          title?: string | null
+          updated_at?: string
+          verification_result?: string
+          verified_at?: string
+          website?: string | null
+        }
+        Relationships: []
       }
       warmup_events: {
         Row: {
@@ -2105,6 +2530,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      allocate_verified_leads: {
+        Args: {
+          p_max_age_days?: number
+          p_max_shares?: number
+          p_min_gap_days?: number
+          p_organization_id: string
+          p_period: string
+          p_plan_id: string
+          p_quota: number
+          p_user_id: string
+        }
+        Returns: number
+      }
       analytics_campaign_event_counts: {
         Args: { p_since: string; p_until: string }
         Returns: {
@@ -2369,6 +2807,17 @@ export type Database = {
       request_send_now: {
         Args: { p_campaign_lead_id: string }
         Returns: boolean
+      }
+      staff_revoke_user_sessions: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
+      staff_verify_audit_chain: {
+        Args: never
+        Returns: {
+          checked: number
+          first_broken_seq: number | null
+        }[]
       }
     }
     Enums: {

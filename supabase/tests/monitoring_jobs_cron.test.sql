@@ -58,8 +58,9 @@ select is(
   (select row(schedule, command, username, active)::text from cron.job where jobname = 'cron-job-run-details-cleanup'),
   row('17 3 * * *', $$delete from cron.job_run_details where end_time < now() - interval '7 days'$$, 'postgres', true)::text,
   'the run-history cleanup job is unchanged');
-select is((select count(*)::int from cron.job), 9,
-  'nine cron jobs in total: the eight app routes and the run-history cleanup');
+-- 10 since 20261107100000_staff_console.sql added the verified-leads job.
+select is((select count(*)::int from cron.job), 10,
+  'ten cron jobs in total: the nine app routes and the run-history cleanup');
 select ok(not exists (select 1 from cron.job where command ilike '%bearer%' or command ilike '%vault%' or command ilike '%sentinel%'),
   'no cron job command contains a bearer token, a Vault lookup or a secret');
 

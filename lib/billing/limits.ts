@@ -1,7 +1,7 @@
 import type { Client } from "@/lib/db/shared";
 import {
   countCampaigns,
-  countLeads,
+  countOwnLeads,
   countMailboxes,
   getMonthlySentEmailCount,
   getUserOrganization,
@@ -77,7 +77,7 @@ export async function assertWithinLeadLimit(supabase: Client, userId: string, us
   const plan = await getPlanForOrganization(supabase, organizationId);
   if (plan.limits.leads === UNLIMITED) return;
 
-  const count = await countLeads(supabase, userId);
+  const count = await countOwnLeads(supabase, userId);
   if (count >= plan.limits.leads) {
     throw new PlanLimitError(`${planLimitPrefix(plan)} ${plan.limits.leads} leads. Upgrade to add more.`);
   }
@@ -98,7 +98,7 @@ export async function getRemainingLeadQuota(
   const plan = await getPlanForOrganization(supabase, organizationId);
   if (plan.limits.leads === UNLIMITED) return Infinity;
 
-  const count = await countLeads(supabase, userId);
+  const count = await countOwnLeads(supabase, userId);
   return Math.max(0, plan.limits.leads - count);
 }
 

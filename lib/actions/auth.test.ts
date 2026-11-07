@@ -20,6 +20,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/rate-limit/get-client-ip", () => ({
   getClientIp: vi.fn(async () => "203.0.113.7"),
 }));
+vi.mock("@/lib/security/auth-events", () => ({ recordSignInEvent: vi.fn() }));
 vi.mock("@/lib/rate-limit/check-rate-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit/check-rate-limit")>()),
   checkRateLimit: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/lib/rate-limit/check-rate-limit", async (importOriginal) => ({
 }));
 
 import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "@/lib/rate-limit/check-rate-limit";
+import { recordSignInEvent } from "@/lib/security/auth-events";
 import { forgotPassword, resetPassword, signIn, signOut, signUp } from "./auth";
 
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
@@ -93,8 +95,18 @@ describe("signUp", () => {
 });
 
 describe("signIn", () => {
+  it("records each outcome for the security panel: success by user id, failure by the email typed", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValueOnce({ data: { user: { id: "user-1" } }, error: null });
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_success", { userId: "user-1" });
+
+    supabaseAuth.signInWithPassword.mockResolvedValueOnce({ data: { user: null }, error: { message: "Invalid login credentials" } });
+    await signIn(undefined, form({ email: "ada@example.com", password: "wrong" }));
+    expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_failure", { email: "ada@example.com" });
+  });
+
   it("redirects to the dashboard on success", async () => {
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow(
       "NEXT_REDIRECT:/dashboard",
@@ -102,7 +114,7 @@ describe("signIn", () => {
   });
 
   it("returns Supabase's generic credentials error without revealing whether the account exists", async () => {
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: { message: "Invalid login credentials" } });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { message: "Invalid login credentials" } });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "wrong" }))).resolves.toEqual({
       error: "Invalid login credentials",
@@ -110,7 +122,7 @@ describe("signIn", () => {
   });
 
   it("is rate limited per IP and per account, keyed on a hash rather than the raw email", async () => {
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     await expect(signIn(undefined, form({ email: "Ada@Example.com ", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
@@ -139,7 +151,7 @@ describe("signIn", () => {
   });
 
   it("refunds both reserved attempts after a successful sign-in, so only failures count", async () => {
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
 
@@ -162,7 +174,7 @@ describe("signIn", () => {
 
   it("refunds nothing it didn't record (a limiter that failed open)", async () => {
     mockCheckRateLimit.mockResolvedValue(false);
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
     expect(mockRelease).not.toHaveBeenCalled();

@@ -25,3 +25,15 @@ export async function getLatestJobRunSummary(supabase: Client, job: string): Pro
   if (error) throw error;
   return data?.summary ?? null;
 }
+
+// Admin-context read for the staff console: one job's most recent runs.
+export async function listRecentJobRuns(supabase: Client, job: string, limit = 10) {
+  const { data, error } = await supabase
+    .from("job_runs")
+    .select("id, status, summary, error, duration_ms, started_at, created_at")
+    .eq("job", job)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}

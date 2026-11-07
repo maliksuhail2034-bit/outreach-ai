@@ -6,9 +6,10 @@ export type CronJobName =
   | "integrations-digest"
   | "analytics-rollup"
   | "retention-cleanup"
-  | "warmup-cycle";
+  | "warmup-cycle"
+  | "verified-leads";
 
-const HEARTBEAT_ENV_VAR: Record<CronJobName, string> = {
+export const HEARTBEAT_ENV_VAR: Record<CronJobName, string> = {
   "send-emails": "CRON_HEARTBEAT_URL_SEND_EMAILS",
   "sync-replies": "CRON_HEARTBEAT_URL_SYNC_REPLIES",
   "verify-leads": "CRON_HEARTBEAT_URL_VERIFY_LEADS",
@@ -17,6 +18,7 @@ const HEARTBEAT_ENV_VAR: Record<CronJobName, string> = {
   "analytics-rollup": "CRON_HEARTBEAT_URL_ANALYTICS_ROLLUP",
   "retention-cleanup": "CRON_HEARTBEAT_URL_RETENTION_CLEANUP",
   "warmup-cycle": "CRON_HEARTBEAT_URL_WARMUP_CYCLE",
+  "verified-leads": "CRON_HEARTBEAT_URL_VERIFIED_LEADS",
 };
 
 // Bounds how long a ping can hang — a slow/unreachable monitoring provider

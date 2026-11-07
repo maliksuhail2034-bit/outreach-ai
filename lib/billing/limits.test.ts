@@ -46,6 +46,7 @@ function createMockClient(overrides: {
     const chainable = {
       select: vi.fn(),
       eq: vi.fn(),
+      is: vi.fn(),
       in: vi.fn(),
       gte: vi.fn(),
       order: vi.fn(),
@@ -54,7 +55,7 @@ function createMockClient(overrides: {
       maybeSingle: vi.fn(),
       then: (resolve: (value: typeof result) => void) => resolve(result),
     };
-    for (const method of ["select", "eq", "in", "gte", "order", "limit", "single", "maybeSingle"] as const) {
+    for (const method of ["select", "eq", "is", "in", "gte", "order", "limit", "single", "maybeSingle"] as const) {
       chainable[method].mockReturnValue(chainable);
     }
     return chainable;
@@ -142,6 +143,13 @@ describe("assertWithinLeadLimit", () => {
   it("allows adding a lead under the limit", async () => {
     const { client } = createMockClient({ countResult: { count: 199 } });
     await expect(assertWithinLeadLimit(client, "user-1", "user@example.com")).resolves.toBeUndefined();
+  });
+
+  it("counts only the customer's own leads, not verified leads Polimatiq delivered", async () => {
+    const { client, chainablesByTable } = createMockClient({ countResult: { count: 10 } });
+    await assertWithinLeadLimit(client, "user-1", "user@example.com");
+    expect(chainablesByTable.leads.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(chainablesByTable.leads.is).toHaveBeenCalledWith("verified_lead_id", null);
   });
 });
 

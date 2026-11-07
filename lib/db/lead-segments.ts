@@ -67,7 +67,18 @@ function startOfUtcDay(date: string, addDays = 0) {
 // PostgREST as a URL-encoded filter value, never as a hand-assembled filter
 // string — so callers must pass rules from parseSegmentRules(), never raw
 // input. Text rules are case-insensitive; dates are whole UTC days.
-export function applySegmentRules(query: LeadsQuery, rules: readonly LeadSegmentRule[]): LeadsQuery {
+// The filter methods applySegmentRules uses, which every PostgREST builder
+// over leads rows has: the leads table and the crm_leads() RPC alike.
+export interface LeadRowFilters<Self> {
+  eq(column: string, value: string): Self;
+  neq(column: string, value: string): Self;
+  in(column: string, values: readonly string[]): Self;
+  ilike(column: string, pattern: string): Self;
+  lt(column: string, value: string): Self;
+  gte(column: string, value: string): Self;
+}
+
+export function applySegmentRules<Query extends LeadRowFilters<Query>>(query: Query, rules: readonly LeadSegmentRule[]): Query {
   let filtered = query;
   for (const rule of rules) {
     switch (rule.field) {

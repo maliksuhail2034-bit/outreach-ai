@@ -41,12 +41,59 @@ export function resolveLeadMailboxId(
 // same pool mailbox) — a known, accepted limitation for this human-paced,
 // UI-triggered action, not addressed in this batch. See lib/campaigns/readiness.test.ts
 // for this function's coverage.
-export function resolvePoolMailboxId(
-  pool: Pick<Tables<"campaign_mailboxes">, "mailbox_id">[],
-  enrollmentIndex: number,
-): string | null {
+//
+// Weighted by each mailbox's daily send limit when the pool carries it
+// (listCampaignMailboxes embeds it): a 50/day mailbox gets five leads for
+// every one a 10/day mailbox gets, so every mailbox's queue drains at the
+// same pace instead of the small one falling days behind. Without limits
+// (or all equal) this is a plain rotation in pool order.
+export type PoolMailbox = Pick<Tables<"campaign_mailboxes">, "mailbox_id"> & {
+  mailbox?: { daily_limit: number } | null;
+};
+
+// Rotation cycles are bounded so a pool of oddly sized limits (e.g. 997 and
+// 1000, gcd 1) can't build a huge cycle; weights are scaled down to fit.
+const MAX_ROTATION_LENGTH = 1000;
+const rotationCache = new WeakMap<PoolMailbox[], string[]>();
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+// Smooth weighted round-robin: spreads each mailbox's turns evenly through
+// the cycle (A B A A B ..., not A A A B B), so a small batch is balanced too.
+export function buildPoolRotation(pool: PoolMailbox[]): string[] {
+  let weights = pool.map((entry) => Math.max(1, Math.floor(entry.mailbox?.daily_limit ?? 1)));
+  const divisor = weights.reduce(gcd);
+  weights = weights.map((weight) => weight / divisor);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  if (totalWeight > MAX_ROTATION_LENGTH) {
+    weights = weights.map((weight) => Math.max(1, Math.round((weight * MAX_ROTATION_LENGTH) / totalWeight)));
+  }
+  const length = weights.reduce((sum, weight) => sum + weight, 0);
+
+  const current = weights.map(() => 0);
+  const rotation: string[] = [];
+  for (let turn = 0; turn < length; turn++) {
+    let best = 0;
+    for (let index = 0; index < weights.length; index++) {
+      current[index] += weights[index];
+      if (current[index] > current[best]) best = index;
+    }
+    current[best] -= length;
+    rotation.push(pool[best].mailbox_id);
+  }
+  return rotation;
+}
+
+export function resolvePoolMailboxId(pool: PoolMailbox[], enrollmentIndex: number): string | null {
   if (pool.length === 0) return null;
-  return pool[enrollmentIndex % pool.length].mailbox_id;
+  let rotation = rotationCache.get(pool);
+  if (!rotation) {
+    rotation = buildPoolRotation(pool);
+    rotationCache.set(pool, rotation);
+  }
+  return rotation[enrollmentIndex % rotation.length];
 }
 
 export interface CampaignReadinessInput {

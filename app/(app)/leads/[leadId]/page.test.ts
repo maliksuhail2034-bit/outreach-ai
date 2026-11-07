@@ -13,7 +13,11 @@ const db = vi.hoisted(() => ({
   listCampaigns: vi.fn(),
   listEmailEvents: vi.fn(),
   listLeadLists: vi.fn(),
+  listLeadNotes: vi.fn(),
   listMailboxes: vi.fn(),
+  listSendAttemptsForCampaignLeads: vi.fn(),
+  listSequenceSteps: vi.fn(),
+  listSequences: vi.fn(),
 }));
 vi.mock("@/lib/db", () => db);
 vi.mock("@/lib/supabase/auth", () => ({ getUser: async () => ({ id: "user-1" }) }));
@@ -21,6 +25,8 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ __fakeCli
 
 import LeadDetailPage from "./page";
 import { LeadForm } from "@/components/leads/lead-form";
+import { LeadNotes } from "@/components/leads/lead-notes";
+import { LeadStatusSelect } from "@/components/leads/lead-status-select";
 
 const LEAD = {
   id: "lead-1",
@@ -65,6 +71,10 @@ beforeEach(() => {
   db.listEmailEvents.mockResolvedValue([]);
   db.listLeadLists.mockResolvedValue([{ id: "list-1", name: "List 1" }]);
   db.listMailboxes.mockResolvedValue([]);
+  db.listLeadNotes.mockResolvedValue([{ id: "note-1", body: "Wants a demo" }]);
+  db.listSendAttemptsForCampaignLeads.mockResolvedValue([]);
+  db.listSequences.mockResolvedValue([]);
+  db.listSequenceSteps.mockResolvedValue([]);
 });
 
 describe("lead detail page (Server Component)", () => {
@@ -73,6 +83,16 @@ describe("lead detail page (Server Component)", () => {
 
     expect(forms).toHaveLength(1);
     expect(forms[0].props).toMatchObject({ mode: "edit", lead: LEAD, leadLists: [{ id: "list-1", name: "List 1" }] });
+  });
+
+  it("renders the lead's notes and its status picker", async () => {
+    const elements = collectElements(await renderPage());
+
+    expect(elements.find((element) => element.type === LeadNotes)?.props).toMatchObject({
+      leadId: "lead-1",
+      notes: [{ id: "note-1", body: "Wants a demo" }],
+    });
+    expect(elements.find((element) => element.type === LeadStatusSelect)?.props).toEqual({ leadId: "lead-1", status: "new" });
   });
 
   it("passes no function props to any component", async () => {

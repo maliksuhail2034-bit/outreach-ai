@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const recordEmailEvent = vi.fn();
-vi.mock("@/lib/db", () => ({
-  recordEmailEvent: (...args: unknown[]) => recordEmailEvent(...args),
+const recordEngagement = vi.fn();
+vi.mock("@/lib/email/record-engagement", () => ({
+  recordEngagement: (...args: unknown[]) => recordEngagement(...args),
 }));
 
 const createAdminClient = vi.fn();
@@ -27,18 +27,20 @@ const CONTEXT: ClickTrackingContext = {
   destinationUrl: "https://example.com/pricing?utm_source=email",
 };
 
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36";
+
 function makeParams(token: string) {
   return { params: Promise.resolve({ token }) };
 }
 
 function request(token: string): Request {
-  return new Request(`https://app.example.com/api/track/click/${token}`, { redirect: "manual" });
+  return new Request(`https://app.example.com/api/track/click/${token}`, { redirect: "manual", headers: { "user-agent": USER_AGENT } });
 }
 
 describe("GET /api/track/click/[token]", () => {
   beforeEach(() => {
     vi.stubEnv("CLICK_TRACKING_TOKEN_SECRET", "test-click-secret-do-not-use-in-prod");
-    recordEmailEvent.mockReset().mockResolvedValue({});
+    recordEngagement.mockReset().mockResolvedValue({ isBot: false });
     createAdminClient.mockReset().mockReturnValue({ __fakeAdminClient: true });
     resolveLegacyClickToken.mockReset().mockResolvedValue(null);
   });
@@ -55,15 +57,18 @@ describe("GET /api/track/click/[token]", () => {
     expect(response.headers.get("Location")).toBe(CONTEXT.destinationUrl);
 
     expect(createAdminClient).toHaveBeenCalledTimes(1);
-    expect(recordEmailEvent).toHaveBeenCalledWith(
+    expect(recordEngagement).toHaveBeenCalledWith(
       { __fakeAdminClient: true },
+      "clicked",
       {
-        campaign_id: CONTEXT.campaignId,
-        lead_id: CONTEXT.leadId,
-        mailbox_id: CONTEXT.mailboxId,
-        event_type: "clicked",
-        metadata: { sequenceStepId: CONTEXT.sequenceStepId, destinationUrl: CONTEXT.destinationUrl },
+        campaignId: CONTEXT.campaignId,
+        campaignLeadId: CONTEXT.campaignLeadId,
+        leadId: CONTEXT.leadId,
+        mailboxId: CONTEXT.mailboxId,
+        sequenceStepId: CONTEXT.sequenceStepId,
       },
+      USER_AGENT,
+      { destinationUrl: CONTEXT.destinationUrl },
     );
   });
 
@@ -84,7 +89,7 @@ describe("GET /api/track/click/[token]", () => {
 
     expect(response.status).toBe(400);
     expect(response.headers.get("Location")).toBeNull();
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
     expect(createAdminClient).not.toHaveBeenCalled();
   });
 
@@ -93,7 +98,7 @@ describe("GET /api/track/click/[token]", () => {
 
     expect(response.status).toBe(400);
     expect(response.headers.get("Location")).toBeNull();
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
   });
 
   it("does NOT redirect for an empty token", async () => {
@@ -101,7 +106,7 @@ describe("GET /api/track/click/[token]", () => {
 
     expect(response.status).toBe(400);
     expect(response.headers.get("Location")).toBeNull();
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
   });
 
   it("the rejection response never leaks the original destination or internal error detail", async () => {
@@ -118,7 +123,7 @@ describe("GET /api/track/click/[token]", () => {
   });
 
   it("still redirects correctly even if recording the click event throws", async () => {
-    recordEmailEvent.mockRejectedValue(new Error("db exploded"));
+    recordEngagement.mockRejectedValue(new Error("db exploded"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const token = signClickTrackingToken(CONTEXT);
 
@@ -145,15 +150,18 @@ describe("GET /api/track/click/[token]", () => {
     expect(resolveLegacyClickToken).toHaveBeenCalledWith("legacy.token");
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe(CONTEXT.destinationUrl);
-    expect(recordEmailEvent).toHaveBeenCalledWith(
+    expect(recordEngagement).toHaveBeenCalledWith(
       { __fakeAdminClient: true },
+      "clicked",
       {
-        campaign_id: CONTEXT.campaignId,
-        lead_id: CONTEXT.leadId,
-        mailbox_id: null,
-        event_type: "clicked",
-        metadata: { sequenceStepId: CONTEXT.sequenceStepId, destinationUrl: CONTEXT.destinationUrl, legacyToken: true },
+        campaignId: CONTEXT.campaignId,
+        campaignLeadId: CONTEXT.campaignLeadId,
+        leadId: CONTEXT.leadId,
+        mailboxId: null,
+        sequenceStepId: CONTEXT.sequenceStepId,
       },
+      USER_AGENT,
+      { destinationUrl: CONTEXT.destinationUrl, legacyToken: true },
     );
   });
 
@@ -162,6 +170,6 @@ describe("GET /api/track/click/[token]", () => {
 
     expect(response.status).toBe(400);
     expect(response.headers.get("Location")).toBeNull();
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
   });
 });

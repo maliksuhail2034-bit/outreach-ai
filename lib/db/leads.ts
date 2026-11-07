@@ -278,9 +278,42 @@ export async function deleteLead(supabase: Client, userId: string, id: string) {
   if (error) throw error;
 }
 
+// Bulk writes on selected leads go out in chunks: every id is in the request
+// URL, and "all leads matching the filters" can be thousands.
+const BULK_ID_CHUNK = 100;
+
 export async function deleteLeads(supabase: Client, userId: string, ids: string[]) {
-  const { error } = await supabase.from("leads").delete().eq("user_id", userId).in("id", ids);
-  if (error) throw error;
+  for (const chunk of chunkValues(ids, BULK_ID_CHUNK)) {
+    const { error } = await supabase.from("leads").delete().eq("user_id", userId).in("id", chunk);
+    if (error) throw error;
+  }
+}
+
+// The caller's leads among `ids` (others' ids simply don't match).
+export async function listLeadsByIds(supabase: Client, userId: string, ids: string[]) {
+  const rows: Tables<"leads">[] = [];
+  for (const chunk of chunkValues([...new Set(ids)], BULK_ID_CHUNK)) {
+    const { data, error } = await supabase.from("leads").select("*").eq("user_id", userId).in("id", chunk);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+  }
+  return rows;
+}
+
+// Into a list (null: out of any list). The database refuses another user's
+// list (leads_check_list_owner).
+export async function moveLeadsToList(supabase: Client, userId: string, ids: string[], listId: string | null) {
+  for (const chunk of chunkValues(ids, BULK_ID_CHUNK)) {
+    const { error } = await supabase.from("leads").update({ list_id: listId }).eq("user_id", userId).in("id", chunk);
+    if (error) throw error;
+  }
+}
+
+export async function setLeadsStatus(supabase: Client, userId: string, ids: string[], status: string) {
+  for (const chunk of chunkValues(ids, BULK_ID_CHUNK)) {
+    const { error } = await supabase.from("leads").update({ status }).eq("user_id", userId).in("id", chunk);
+    if (error) throw error;
+  }
 }
 
 // Bulk "Set timezone" / "Use campaign timezone" (null) for selected leads.

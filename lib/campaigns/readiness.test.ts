@@ -4,6 +4,7 @@ import {
   checkCampaignReadiness,
   deriveExecutionState,
   resolveLeadMailboxId,
+  buildPoolRotation,
   resolvePoolMailboxId,
 } from "./readiness";
 
@@ -60,6 +61,49 @@ describe("resolvePoolMailboxId", () => {
     expect(resolvePoolMailboxId(pool, 3)).toBe("mailbox-1");
     expect(resolvePoolMailboxId(pool, 4)).toBe("mailbox-2");
     expect(resolvePoolMailboxId(pool, 7)).toBe("mailbox-2");
+  });
+});
+
+describe("weighted pool rotation (by each mailbox's daily limit)", () => {
+  const pool = [
+    { mailbox_id: "big", mailbox: { daily_limit: 50 } },
+    { mailbox_id: "small", mailbox: { daily_limit: 10 } },
+  ];
+
+  it("gives each mailbox leads in proportion to its daily limit", () => {
+    const rotation = buildPoolRotation(pool);
+    expect(rotation).toHaveLength(6);
+    expect(rotation.filter((id) => id === "big")).toHaveLength(5);
+    expect(rotation.filter((id) => id === "small")).toHaveLength(1);
+  });
+
+  it("spreads turns evenly rather than in blocks", () => {
+    const rotation = buildPoolRotation([
+      { mailbox_id: "a", mailbox: { daily_limit: 20 } },
+      { mailbox_id: "b", mailbox: { daily_limit: 20 } },
+      { mailbox_id: "c", mailbox: { daily_limit: 40 } },
+    ]);
+    expect(rotation).toEqual(["c", "a", "b", "c"]);
+  });
+
+  it("keeps the proportion across later batches (the index continues from the enrollment count)", () => {
+    const assigned = Array.from({ length: 600 }, (_, index) => resolvePoolMailboxId(pool, index));
+    expect(assigned.filter((id) => id === "big")).toHaveLength(500);
+  });
+
+  it("treats equal limits, and a pool without limits, as a plain rotation in order", () => {
+    expect(buildPoolRotation([{ mailbox_id: "x", mailbox: { daily_limit: 30 } }, { mailbox_id: "y", mailbox: { daily_limit: 30 } }])).toEqual(["x", "y"]);
+    expect(buildPoolRotation([{ mailbox_id: "x" }, { mailbox_id: "y", mailbox: null }])).toEqual(["x", "y"]);
+  });
+
+  it("bounds the cycle for awkward limits and still gives every mailbox a turn", () => {
+    const rotation = buildPoolRotation([
+      { mailbox_id: "p", mailbox: { daily_limit: 997 } },
+      { mailbox_id: "q", mailbox: { daily_limit: 1000 } },
+      { mailbox_id: "r", mailbox: { daily_limit: 1 } },
+    ]);
+    expect(rotation.length).toBeLessThanOrEqual(1001);
+    expect(new Set(rotation)).toEqual(new Set(["p", "q", "r"]));
   });
 });
 

@@ -5,89 +5,72 @@ import {
   countLeadsMatchingRules,
   getOrganizationAllocation,
   getUserOrganization,
+  listCampaigns,
+  listCrmLeadsPage,
   listLeadListsWithCounts,
   listLeadSegments,
-  listLeadsPage,
+  listSequenceSteps,
+  listSequences,
 } from "@/lib/db";
 import { optionalRead } from "@/lib/db/resilient-read";
+import { resolveCrmFilters } from "@/lib/leads/crm-filters";
 import { periodFor } from "@/lib/verified-leads/period";
-import {
-  LEAD_VERIFICATION_STATUSES,
-  leadSegmentRulesSchema,
-  type LeadVerificationStatus,
-} from "@/lib/validations/lead-segments";
+import { leadSegmentRulesSchema } from "@/lib/validations/lead-segments";
+import { parseCrmSearchParams } from "@/lib/validations/crm-leads";
 import { FadeIn } from "@/components/motion/fade-in";
+import { CrmLeadFilters, type StepOption } from "@/components/leads/crm-lead-filters";
 import { LeadListsPanel } from "@/components/leads/lead-lists-panel";
 import { LeadTable } from "@/components/leads/lead-table";
 import { SegmentsPanel } from "@/components/leads/segments-panel";
 
-// Scalability Track, Phase D, Step 3 (item 8): page number driven by a URL
-// search param rather than client state, so a Server Component page can
-// refetch server-side on navigation — same shape the analytics pages
-// already use for their date-range params. Batch D: the segment and
-// verification-status filters work the same way, applied in the query so
-// pagination and totals describe the filtered set.
-function parsePage(raw: string | undefined): number {
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
-}
-
-function parseVerificationStatus(raw: string | undefined): LeadVerificationStatus | undefined {
-  return LEAD_VERIFICATION_STATUSES.find((status) => status === raw);
-}
-
+// The Leads page is a CRM view: every filter lives in the URL (see
+// lib/validations/crm-leads.ts) and is applied in the query, so pagination
+// and totals describe the filtered set and a view can be bookmarked.
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; segment?: string; verification?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const user = await getUser();
   // app/(app)/layout.tsx already redirects unauthenticated requests before
   // this page renders; this narrows the type for what follows.
   if (!user) return null;
 
-  const { page: pageParam, segment: segmentParam, verification: verificationParam } = await searchParams;
-  const page = parsePage(pageParam);
-  const verificationStatus = parseVerificationStatus(verificationParam);
-
+  const params = parseCrmSearchParams(await searchParams);
   const supabase = await createClient();
-  // One query for the lists and each list's lead count (see
-  // listLeadListsWithCounts), not one count query per list.
-  const [leadLists, segments] = await Promise.all([
+
+  const [{ filters, activeSegment, segmentNotice }, leadLists, segments, campaigns] = await Promise.all([
+    resolveCrmFilters(supabase, user.id, params),
+    // One query for the lists and each list's lead count.
     listLeadListsWithCounts(supabase, user.id),
     listLeadSegments(supabase, user.id),
+    listCampaigns(supabase, user.id),
   ]);
 
-  // Only one of the caller's own segments can filter (the list above is
-  // scoped to them), and only once its stored rules re-validate.
-  const segmentsWithRules = (segments ?? []).map((segment) => {
-    const rules = leadSegmentRulesSchema.safeParse(segment.rules);
-    return { segment, rules: rules.success ? rules.data : null };
-  });
-  const requestedSegment = segmentParam
-    ? segmentsWithRules.find(({ segment }) => segment.id === segmentParam)
-    : undefined;
-  const activeSegment = requestedSegment?.rules ? requestedSegment : undefined;
-  const segmentNotice = !segmentParam || activeSegment
-    ? undefined
-    : requestedSegment
-      ? "This segment's rules are no longer valid. Edit it to use it again. Showing all leads."
-      : "That segment wasn't found. Showing all leads.";
+  // The chosen campaign's steps, for "opened step 2" (only the caller's own
+  // campaign: it must be in their list).
+  const filterCampaign = params.campaign ? (campaigns ?? []).find((campaign) => campaign.id === params.campaign) : undefined;
+  const steps: StepOption[] = filterCampaign
+    ? await (async () => {
+        const sequences = await listSequences(supabase, filterCampaign.id);
+        const rows = sequences[0] ? await listSequenceSteps(supabase, sequences[0].id) : [];
+        return [...rows]
+          .sort((a, b) => a.step_order - b.step_order)
+          .map((step, index) => ({ id: step.id, number: index + 1, subject: step.subject }));
+      })()
+    : [];
 
-  const filtersActive = Boolean(activeSegment || verificationStatus);
-
-  const [{ leads, pageSize, totalCount }, accountLeadCount, segmentsWithCounts, allocation] = await Promise.all([
-    listLeadsPage(supabase, user.id, {
-      page,
-      rules: activeSegment?.rules ?? undefined,
-      verificationStatus,
-    }),
-    filtersActive ? countLeads(supabase, user.id) : null,
+  const [{ leads, page, pageSize, totalCount }, accountLeadCount, segmentsWithCounts, allocation] = await Promise.all([
+    listCrmLeadsPage(supabase, user.id, filters, params.page),
+    countLeads(supabase, user.id),
     Promise.all(
-      segmentsWithRules.map(async ({ segment, rules }) => ({
-        ...segment,
-        matchCount: rules ? await countLeadsMatchingRules(supabase, user.id, rules) : null,
-      })),
+      (segments ?? []).map(async (segment) => {
+        const rules = leadSegmentRulesSchema.safeParse(segment.rules);
+        return {
+          ...segment,
+          matchCount: rules.success ? await countLeadsMatchingRules(supabase, user.id, rules.data) : null,
+        };
+      }),
     ),
     // This month's Polimatiq verified-lead delivery, if the plan includes one.
     optionalRead(async () => {
@@ -96,13 +79,19 @@ export default async function LeadsPage({
     }, null),
   ]);
 
+  const campaignOptions = (campaigns ?? []).map((campaign) => ({
+    id: campaign.id,
+    name: campaign.name,
+    status: campaign.status,
+  }));
+
   return (
     <div className="space-y-6 sm:space-y-8">
       <FadeIn>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Leads</h1>
           <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-            Manage individual prospects, the lists that group them, and segments that match them by rules.
+            See who opened, clicked and replied, filter by any campaign step, and act on many leads at once.
           </p>
           {allocation.data && allocation.data.quota > 0 && (
             <p className="mt-2 text-sm text-muted-foreground">
@@ -114,29 +103,34 @@ export default async function LeadsPage({
         </div>
       </FadeIn>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <FadeIn delay={0.05} className="min-w-0 lg:col-span-2">
-          <LeadTable
-            leads={leads}
-            leadLists={leadLists}
-            leadCount={totalCount}
-            accountLeadCount={accountLeadCount ?? totalCount}
-            page={page}
-            pageSize={pageSize}
-            verificationStatus={verificationStatus}
-            activeSegment={activeSegment ? { id: activeSegment.segment.id, name: activeSegment.segment.name } : undefined}
-            segmentNotice={segmentNotice}
-          />
-        </FadeIn>
-        <FadeIn delay={0.1} className="space-y-6 lg:col-span-1">
-          <SegmentsPanel
-            segments={segmentsWithCounts}
-            leadLists={leadLists}
-            activeSegmentId={activeSegment?.segment.id}
-          />
-          <LeadListsPanel leadLists={leadLists} />
-        </FadeIn>
-      </div>
+      <FadeIn delay={0.05} className="min-w-0 space-y-4">
+        <CrmLeadFilters
+          // Remounts the search box when the URL's search changes (e.g. "Clear filters").
+          key={params.q ?? ""}
+          params={params}
+          leadLists={leadLists}
+          campaigns={campaignOptions}
+          steps={steps}
+          activeSegment={activeSegment}
+          segmentNotice={segmentNotice}
+        />
+        <LeadTable
+          leads={leads}
+          leadLists={leadLists}
+          campaigns={campaignOptions}
+          params={params}
+          leadCount={totalCount}
+          accountLeadCount={accountLeadCount}
+          page={page}
+          pageSize={pageSize}
+          now={new Date().toISOString()}
+        />
+      </FadeIn>
+
+      <FadeIn delay={0.1} className="grid gap-6 lg:grid-cols-2">
+        <SegmentsPanel segments={segmentsWithCounts} leadLists={leadLists} activeSegmentId={activeSegment?.id} />
+        <LeadListsPanel leadLists={leadLists} />
+      </FadeIn>
     </div>
   );
 }

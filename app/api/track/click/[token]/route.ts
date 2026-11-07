@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { recordEmailEvent } from "@/lib/db";
+import { recordEngagement } from "@/lib/email/record-engagement";
 import { verifyClickTrackingToken } from "@/lib/email/tracking-token";
 import { resolveLegacyClickToken } from "@/lib/email/legacy-click-token";
 
@@ -45,7 +45,7 @@ function rejectedResponse(): NextResponse {
 // The one exception is a link signed with a since-lost secret: see
 // lib/email/legacy-click-token.ts, which only accepts a destination the
 // stored, actually-sent step contains for that lead.
-export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const verified = verifyClickTrackingToken(token);
   const context = verified ?? (await resolveLegacyClickToken(token));
@@ -56,17 +56,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
 
   try {
     const supabase = createAdminClient();
-    await recordEmailEvent(supabase, {
-      campaign_id: context.campaignId,
-      lead_id: context.leadId,
-      mailbox_id: context.mailboxId,
-      event_type: "clicked",
-      metadata: {
-        sequenceStepId: context.sequenceStepId,
-        destinationUrl: context.destinationUrl,
-        ...(verified ? {} : { legacyToken: true }),
-      },
-    });
+    // Classified person vs link scanner (email_events.is_bot); a person's
+    // click also implies an open when none was recorded.
+    await recordEngagement(
+      supabase,
+      "clicked",
+      { campaignId: context.campaignId, campaignLeadId: context.campaignLeadId, leadId: context.leadId, mailboxId: context.mailboxId, sequenceStepId: context.sequenceStepId },
+      request.headers.get("user-agent"),
+      { destinationUrl: context.destinationUrl, ...(verified ? {} : { legacyToken: true }) },
+    );
   } catch (error) {
     // Never let a DB error block the redirect or surface to the recipient
     // — a missed click event is far better than a broken link. Logged

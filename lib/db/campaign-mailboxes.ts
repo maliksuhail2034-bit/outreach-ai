@@ -16,7 +16,8 @@ import { unwrap } from "./shared";
 export async function listCampaignMailboxes(supabase: Client, campaignId: string) {
   const { data, error } = await supabase
     .from("campaign_mailboxes")
-    .select("*")
+    // The mailbox's daily limit weights the round-robin (resolvePoolMailboxId).
+    .select("*, mailbox:mailboxes(daily_limit)")
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });

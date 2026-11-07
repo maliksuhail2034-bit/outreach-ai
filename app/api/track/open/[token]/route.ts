@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { recordEmailEvent } from "@/lib/db";
+import { recordEngagement } from "@/lib/email/record-engagement";
 import { verifyOpenTrackingToken } from "@/lib/email/tracking-token";
 
 // Same runtime requirement as every other Route Handler in this codebase
@@ -42,20 +42,20 @@ function pixelResponse(): NextResponse {
 // event was recorded, or why it wasn't — nothing about verification or
 // recording failures is observable from the response, and nothing here
 // throws past this handler.
-export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
   try {
     const { token } = await params;
     const context = verifyOpenTrackingToken(token);
 
     if (context) {
       const supabase = createAdminClient();
-      await recordEmailEvent(supabase, {
-        campaign_id: context.campaignId,
-        lead_id: context.leadId,
-        mailbox_id: context.mailboxId,
-        event_type: "opened",
-        metadata: { sequenceStepId: context.sequenceStepId },
-      });
+      // Classified person vs scanner/prefetcher (email_events.is_bot).
+      await recordEngagement(
+        supabase,
+        "opened",
+        { campaignId: context.campaignId, campaignLeadId: context.campaignLeadId, leadId: context.leadId, mailboxId: context.mailboxId, sequenceStepId: context.sequenceStepId },
+        request.headers.get("user-agent"),
+      );
     }
   } catch (error) {
     // Never let a DB error (bad token content that happens to fail the

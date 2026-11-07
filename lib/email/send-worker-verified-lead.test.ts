@@ -80,7 +80,7 @@ function claimedLead(): Tables<"campaign_leads"> {
 
 function useStepBody(body: string) {
   db.listSequenceSteps.mockResolvedValue([
-    { id: "step-1", sequence_id: "seq-1", step_order: 0, day_delay: 0, subject: "Hi {{first_name}}", body, created_at: "", updated_at: "" },
+    { id: "step-1", sequence_id: "seq-1", step_order: 0, day_delay: 0, condition: "always", condition_step_id: null, subject: "Hi {{first_name}}", body, created_at: "", updated_at: "" },
   ]);
 }
 

@@ -367,6 +367,8 @@ describe("loadAttachmentsForSend", () => {
 describe("resolveThreadingHeaders", () => {
   function makeStep(id: string, stepOrder: number): Tables<"sequence_steps"> {
     return {
+      condition: "always",
+      condition_step_id: null,
       id,
       sequence_id: "sequence-1",
       step_order: stepOrder,
@@ -478,6 +480,30 @@ describe("resolveThreadingHeaders", () => {
     await resolveThreadingHeaders(client, steps, stepTwo, "cl-1");
 
     expect(chainable.eq).not.toHaveBeenCalledWith("sequence_step_id", stepTwo.id);
+  });
+
+  it("walks back past a skipped (never sent) step to thread under the email the lead actually received", async () => {
+    const stepThree = makeStep("step-3", 2);
+    const attempts: Record<string, Tables<"send_attempts"> | null> = {
+      "step-2": null,
+      "step-1": makeSendAttempt({ sequence_step_id: "step-1", provider_message_id: "first@example.com" }),
+    };
+    let stepId = "";
+    const chainable = {
+      select: vi.fn(),
+      eq: vi.fn((column: string, value: string) => {
+        if (column === "sequence_step_id") stepId = value;
+        return chainable;
+      }),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: attempts[stepId] ?? null, error: null })),
+    };
+    chainable.select.mockReturnValue(chainable);
+    const client = { from: vi.fn(() => chainable) } as unknown as Client;
+
+    const result = await resolveThreadingHeaders(client, [stepOne, stepTwo, stepThree], stepThree, "cl-1");
+
+    expect(result).toEqual({ inReplyTo: "first@example.com", references: ["first@example.com"] });
+    expect(chainable.maybeSingle).toHaveBeenCalledTimes(2);
   });
 });
 

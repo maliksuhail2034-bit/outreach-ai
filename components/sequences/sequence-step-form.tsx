@@ -19,6 +19,9 @@ import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { isStepCondition } from "@/lib/email/step-conditions";
+import { CONDITION_OPTIONS } from "./step-timeline";
 import { TemplatePicker } from "./template-picker";
 import { MergeTagPicker } from "./merge-tag-picker";
 import { TemplateValidationList } from "./template-validation-list";
@@ -27,9 +30,33 @@ import { AttachmentManager, type AttachmentSummary } from "./attachment-manager"
 import { ComposerEditor, type ComposerEditorHandle } from "./composer-editor";
 
 type SequenceStepFormProps = (
-  | { mode: "create"; campaignId: string; step?: undefined; onSuccess?: () => void }
-  | { mode: "edit"; campaignId: string; step: Tables<"sequence_steps">; onSuccess?: () => void }
-) & { templates: Tables<"templates">[]; existingAttachments?: AttachmentSummary[] };
+  | {
+      mode: "create";
+      campaignId: string;
+      step?: undefined;
+      onSuccess?: () => void;
+    }
+  | {
+      mode: "edit";
+      campaignId: string;
+      step: Tables<"sequence_steps">;
+      onSuccess?: () => void;
+    }
+) & {
+  templates: Tables<"templates">[];
+  existingAttachments?: AttachmentSummary[];
+  earlierSteps: EarlierStepOption[];
+};
+
+// The steps that come before this one, which its condition can refer to.
+export interface EarlierStepOption {
+  id: string;
+  number: number;
+  subject: string | null;
+}
+
+// Radix Select can't hold "" as a value; "any" stands for "any earlier email".
+const ANY_EARLIER_STEP = "any";
 
 type ActiveField = "subject" | "body";
 
@@ -39,6 +66,7 @@ export function SequenceStepForm({
   step,
   templates,
   existingAttachments = [],
+  earlierSteps,
   onSuccess,
 }: SequenceStepFormProps) {
   const [isPending, startTransition] = useTransition();
@@ -96,11 +124,16 @@ export function SequenceStepForm({
             dayDelay: step.day_delay,
             subject: step.subject ?? "",
             body: step.body ?? "",
+            condition: isStepCondition(step.condition) ? step.condition : "always",
+            conditionStepId: step.condition_step_id ?? "",
           }
         : {
-            dayDelay: 0,
+            // A follow-up defaults to 3 days later; the first email to the day the lead is enrolled.
+            dayDelay: earlierSteps.length > 0 ? 3 : 0,
             subject: "",
             body: "",
+            condition: "always",
+            conditionStepId: "",
           },
   });
 
@@ -114,6 +147,7 @@ export function SequenceStepForm({
 
   const subjectValue = useWatch({ control: form.control, name: "subject" }) ?? "";
   const bodyValue = useWatch({ control: form.control, name: "body" }) ?? "";
+  const conditionValue = useWatch({ control: form.control, name: "condition" }) ?? "always";
 
   // Live, non-blocking hints as the user types — reuses the canonical
   // renderer via validate-template.ts (Batch 1) rather than re-parsing
@@ -180,10 +214,14 @@ export function SequenceStepForm({
           name="dayDelay"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Days after previous step</FormLabel>
+              <FormLabel>
+                {earlierSteps.length > 0 ? "Days after the previous email sent" : "Days after the lead is added"}
+              </FormLabel>
               <FormControl>
                 <Input
                   type="number"
+                  min={0}
+                  max={365}
                   name={field.name}
                   ref={field.ref}
                   value={field.value}
@@ -191,10 +229,85 @@ export function SequenceStepForm({
                   onChange={(e) => field.onChange(e.target.valueAsNumber)}
                 />
               </FormControl>
+              <p className="text-xs text-muted-foreground">
+                {earlierSteps.length > 0
+                  ? "Counted from the last email this lead actually received, so a skipped step adds no days. Always sent inside the campaign's sending hours."
+                  : "0 sends in the next sending hours after a lead is added. Leads added to a running campaign start here too."}
+              </p>
               <FormMessage />
             </FormItem>
           )}
         />
+
+        {earlierSteps.length > 0 && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              control={form.control}
+              name="condition"
+              render={({ field }) => (
+                <FormItem className="min-w-0">
+                  <FormLabel>Send this step</FormLabel>
+                  <Select value={field.value ?? "always"} onValueChange={field.onChange} disabled={isPending}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {CONDITION_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {conditionValue !== "always" && (
+              <FormField
+                control={form.control}
+                name="conditionStepId"
+                render={({ field }) => (
+                  <FormItem className="min-w-0">
+                    <FormLabel>Which email</FormLabel>
+                    <Select
+                      value={field.value ? field.value : ANY_EARLIER_STEP}
+                      onValueChange={(value) => field.onChange(value === ANY_EARLIER_STEP ? "" : value)}
+                      disabled={isPending}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full min-w-0">
+                          <span className="min-w-0 truncate">
+                            <SelectValue />
+                          </span>
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value={ANY_EARLIER_STEP}>Any earlier email</SelectItem>
+                        {earlierSteps.map((earlier) => (
+                          <SelectItem key={earlier.id} value={earlier.id}>
+                            Step {earlier.number}
+                            {earlier.subject ? `: ${earlier.subject}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {conditionValue !== "always" && (
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                Leads who don&apos;t match skip this step and go on to the next one. Opens and clicks by security
+                scanners don&apos;t count. To give openers and non-openers different follow-ups, add two steps with the
+                same delay: one &ldquo;only if they opened&rdquo; and one &ldquo;only if they didn&apos;t open&rdquo;.
+              </p>
+            )}
+          </div>
+        )}
 
         <FormField
           control={form.control}

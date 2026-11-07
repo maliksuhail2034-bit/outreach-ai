@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { FolderPlusIcon, PencilIcon, Trash2Icon } from "lucide-react";
@@ -73,7 +74,9 @@ export function LeadListsPanel({ leadLists }: { leadLists: LeadList[] }) {
             {leadLists.map((list) => (
               <li key={list.id} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0">
-                  <p className="truncate font-medium">{list.name}</p>
+                  <Link href={`/leads?list=${list.id}`} className="block truncate font-medium hover:underline">
+                    {list.name}
+                  </Link>
                   <p className="truncate text-sm text-muted-foreground">
                     {list.leadCount} {list.leadCount === 1 ? "lead" : "leads"}
                     {list.description ? ` · ${list.description}` : ""}

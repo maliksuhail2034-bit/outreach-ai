@@ -15,13 +15,9 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TimezoneSelect } from "@/components/campaigns/timezone-select";
-import { isVerifiedPoolLead, leadEmailLabel } from "@/lib/leads/display";
+import { isVerifiedPoolLead, leadEmailLabel, leadStatusLabel } from "@/lib/leads/display";
 
 const NO_LIST = "none";
-
-function statusLabel(status: string) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
 
 // onSuccess is optional so a Server Component (the lead detail page) can
 // render this form: a function prop can't cross the server/client boundary.
@@ -214,7 +210,7 @@ export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
                     <SelectContent>
                       {LEAD_STATUSES.map((status) => (
                         <SelectItem key={status} value={status}>
-                          {statusLabel(status)}
+                          {leadStatusLabel(status)}
                         </SelectItem>
                       ))}
                     </SelectContent>

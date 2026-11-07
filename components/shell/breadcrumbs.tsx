@@ -18,16 +18,14 @@ const LABELS: Record<string, string> = {
   settings: "Settings",
 };
 
-// A dynamic route segment (e.g. a campaignId) is a raw UUID, not a
-// human-readable slug — the generic hyphen-to-space/title-case transform
-// below would mangle it (e.g. "375966a9 4750 4ab8 Bb0d 6ef897286b5c").
-// Render it as-is instead. Resolving it to the entity's real name would
-// need this client component to fetch data it doesn't have — out of scope
-// here.
+// A dynamic route segment (e.g. a campaignId) is a raw UUID, which means
+// nothing to a person. It reads as "Details": the page's own heading names
+// the campaign or lead, and resolving the name here would need this client
+// component to fetch data it doesn't have.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function labelFor(segment: string) {
-  if (UUID_PATTERN.test(segment)) return segment;
+  if (UUID_PATTERN.test(segment)) return "Details";
   return LABELS[segment] ?? segment.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 

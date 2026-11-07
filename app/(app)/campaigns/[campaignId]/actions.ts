@@ -62,6 +62,8 @@ import {
 import { campaignLeadSchema, type CampaignLeadInput } from "@/lib/validations/campaign-leads";
 import { leadSegmentRulesSchema } from "@/lib/validations/lead-segments";
 import { sequenceStepSchema, type SequenceStepInput } from "@/lib/validations/sequence-steps";
+import { bulkLeadTargetSchema, type BulkLeadTarget } from "@/lib/validations/crm-leads";
+import { resolveBulkLeads } from "@/lib/leads/crm-filters";
 import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -453,7 +455,7 @@ async function enrollLeadRows(
   userId: string,
   campaign: Tables<"campaigns">,
   leadRows: Tables<"leads">[],
-  source: "list" | "segment",
+  source: "list" | "segment" | "selection",
   mailboxId: string | undefined,
   confirmSuppressed: boolean,
 ) {
@@ -548,6 +550,33 @@ export async function enrollLeadSegmentAction(
 
     const leads = await listLeadsMatchingRules(supabase, user.id, rules.data, { limit: BULK_ENROLLMENT_LIMIT });
     return enrollLeadRows(supabase, user.id, campaign, leads ?? [], "segment", mailboxId, confirmSuppressed);
+  });
+}
+
+// From the Leads page: the ticked leads, or every lead matching its filters
+// (e.g. everyone who opened step 2 of another campaign, as a follow-up
+// campaign). Enrolling into a running campaign starts them at step 1, the
+// same as any other enrollment; leads already enrolled are skipped.
+export async function enrollLeadsAction(
+  campaignId: string,
+  target: BulkLeadTarget,
+  mailboxId?: string,
+  confirmSuppressed = false,
+) {
+  const parsedTarget = bulkLeadTargetSchema.parse(target);
+  return runUserFacing(async () => {
+    const user = await requireUser();
+    const supabase = await createClient();
+
+    const campaign = await getCampaign(supabase, user.id, campaignId);
+    const organization = await getUserOrganization(supabase, user);
+    await checkRateLimit("campaign:enroll", organization.id);
+
+    const leads = await resolveBulkLeads(supabase, user.id, parsedTarget);
+    if (leads.length === 0) throw new UserFacingError("No leads match. Nobody was enrolled.");
+    const result = await enrollLeadRows(supabase, user.id, campaign, leads, "selection", mailboxId, confirmSuppressed);
+    revalidatePath("/leads");
+    return result;
   });
 }
 
@@ -646,6 +675,23 @@ export async function deleteLeadPermanentlyAction(campaignId: string, leadId: st
 // has no campaign_id column, so getCampaign(userId, campaignId) is the
 // explicit ownership check, backed by RLS on sequences/sequence_steps.
 
+// A step's condition may only refer to a step earlier in the same sequence,
+// and the first step has nothing earlier, so it's always sent. The form
+// only offers valid choices; this re-checks a direct POST.
+function resolveStepCondition(
+  input: SequenceStepInput,
+  earlierSteps: Tables<"sequence_steps">[],
+): { condition: string; condition_step_id: string | null } {
+  const condition = input.condition ?? "always";
+  if (condition === "always") return { condition, condition_step_id: null };
+  if (earlierSteps.length === 0) throw new Error("The first step is always sent, so it can't have a condition.");
+  const conditionStepId = input.conditionStepId || null;
+  if (conditionStepId && !earlierSteps.some((step) => step.id === conditionStepId)) {
+    throw new Error("A step's condition must refer to an earlier step in this sequence.");
+  }
+  return { condition, condition_step_id: conditionStepId };
+}
+
 export async function createSequenceStepAction(campaignId: string, input: SequenceStepInput) {
   const parsed = sequenceStepSchema.parse(input);
   const user = await requireUser();
@@ -666,6 +712,7 @@ export async function createSequenceStepAction(campaignId: string, input: Sequen
     subject: parsed.subject || null,
     body: parsed.body || null,
     step_order: nextOrder,
+    ...resolveStepCondition(parsed, steps),
   });
 
   revalidatePath(`/campaigns/${campaignId}`);
@@ -681,11 +728,16 @@ export async function updateSequenceStepAction(campaignId: string, stepId: strin
   await getCampaign(supabase, user.id, campaignId);
   const step = await getSequenceStep(supabase, stepId);
   await assertSequenceInCampaign(supabase, step.sequence_id, campaignId);
+  const siblings = await listSequenceSteps(supabase, step.sequence_id);
 
   await updateSequenceStep(supabase, stepId, {
     day_delay: parsed.dayDelay,
     subject: parsed.subject || null,
     body: parsed.body || null,
+    ...resolveStepCondition(
+      parsed,
+      siblings.filter((sibling) => sibling.step_order < step.step_order),
+    ),
   });
 
   revalidatePath(`/campaigns/${campaignId}`);

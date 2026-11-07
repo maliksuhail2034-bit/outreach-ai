@@ -6,6 +6,8 @@ const verifyOtp = vi.fn();
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => ({ auth: { verifyOtp } })),
 }));
+const ensureProfileFromSignup = vi.fn();
+vi.mock("@/lib/db", () => ({ ensureProfileFromSignup: (...args: unknown[]) => ensureProfileFromSignup(...args) }));
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new RedirectSignal(url);
@@ -34,6 +36,7 @@ async function redirectTarget(query: string): Promise<string> {
 
 beforeEach(() => {
   verifyOtp.mockReset();
+  ensureProfileFromSignup.mockReset();
 });
 
 describe("/auth/confirm", () => {
@@ -70,4 +73,29 @@ describe("/auth/confirm", () => {
       expect(await redirectTarget(`?token_hash=abc&type=signup&next=${encodeURIComponent(next)}`)).toBe("/dashboard");
     },
   );
+
+  it("carries the sign-up name and timezone into the profile on confirmation", async () => {
+    verifyOtp.mockResolvedValue({
+      data: { user: { id: "user-1", user_metadata: { full_name: "  Ada Lovelace ", timezone: "Europe/London" } } },
+      error: null,
+    });
+
+    expect(await redirectTarget("?token_hash=abc&type=signup&next=/dashboard")).toBe("/dashboard");
+    expect(ensureProfileFromSignup).toHaveBeenCalledWith(expect.anything(), "user-1", {
+      fullName: "Ada Lovelace",
+      timezone: "Europe/London",
+    });
+  });
+
+  it("ignores unexpected metadata and never blocks sign-in if seeding fails", async () => {
+    verifyOtp.mockResolvedValue({
+      data: { user: { id: "user-1", user_metadata: { full_name: 42, timezone: "Not/AZone" } } },
+      error: null,
+    });
+    ensureProfileFromSignup.mockRejectedValue(new Error("db down"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await redirectTarget("?token_hash=abc&type=signup&next=/dashboard")).toBe("/dashboard");
+    expect(ensureProfileFromSignup).toHaveBeenCalledWith(expect.anything(), "user-1", { fullName: null, timezone: null });
+  });
 });

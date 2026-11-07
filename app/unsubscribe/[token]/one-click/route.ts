@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { processUnsubscribe } from "@/lib/email/unsubscribe";
 import { verifyUnsubscribeToken } from "@/lib/email/unsubscribe-token";
+import { appUrl } from "@/lib/app-url";
 
 // Same runtime requirement as every other Route Handler in this codebase
 // that touches Supabase server-side (see app/api/health/route.ts).
@@ -29,7 +30,11 @@ function plainText(body: string, status: number): NextResponse {
 export async function POST(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const verified = verifyUnsubscribeToken(token);
-  if (!verified) return plainText("This unsubscribe link is invalid.", 400);
+  if (!verified) {
+    // Format only, never the token — see app/unsubscribe/[token]/page.tsx.
+    console.warn("[unsubscribe] one-click link could not be verified", { format: token.startsWith("v2.") ? "v2" : "legacy-or-unknown" });
+    return plainText("This unsubscribe link is invalid.", 400);
+  }
 
   let formData: FormData;
   try {
@@ -51,9 +56,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 // A client that opens the List-Unsubscribe URL instead of POSTing to it gets
 // the regular confirmation page, which never unsubscribes on load (link
 // scanners and prefetchers fetch with GET — see UnsubscribeConfirm).
-export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  return NextResponse.redirect(new URL(`/unsubscribe/${encodeURIComponent(token)}`, request.url), {
+  return NextResponse.redirect(appUrl(`/unsubscribe/${encodeURIComponent(token)}`), {
     status: 303,
     headers: { "Cache-Control": NO_STORE },
   });

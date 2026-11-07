@@ -8,6 +8,7 @@ import {
   recordEmailEvent,
 } from "@/lib/db";
 import type { UnsubscribeRecipient, VerifiedUnsubscribeToken } from "./unsubscribe-token";
+import { resolveLeadContact } from "@/lib/verified-leads/contact";
 
 export type UnsubscribeResult = { ok: true; email: string } | { ok: false; error: string };
 
@@ -41,7 +42,9 @@ export async function processUnsubscribe(supabase: Client, token: VerifiedUnsubs
     getCampaignById(supabase, campaignLead.campaign_id),
     getLeadById(supabase, campaignLead.lead_id),
   ]);
-  return unsubscribeRecipient(supabase, { userId: campaign.user_id, email: lead.email, campaignLeadId: campaignLead.id });
+  const contact = await resolveLeadContact(supabase, lead);
+  if (!contact) return { ok: false, error: NO_LONGER_VALID };
+  return unsubscribeRecipient(supabase, { userId: campaign.user_id, email: contact.email, campaignLeadId: campaignLead.id });
 }
 
 async function unsubscribeRecipient(supabase: Client, recipient: UnsubscribeRecipient): Promise<UnsubscribeResult> {
@@ -102,5 +105,7 @@ async function findRecipientEnrollment(supabase: Client, recipient: UnsubscribeR
     getCampaignById(supabase, enrollment.campaign_id),
     getLeadById(supabase, enrollment.lead_id),
   ]);
-  return campaign.user_id === recipient.userId && lead.email === recipient.email ? enrollment : null;
+  if (campaign.user_id !== recipient.userId) return null;
+  const contact = await resolveLeadContact(supabase, lead);
+  return contact?.email === recipient.email ? enrollment : null;
 }

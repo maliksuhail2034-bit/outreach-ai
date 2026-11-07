@@ -19,4 +19,7 @@ export interface RateLimitCheckResult {
 
 export interface RateLimiter {
   checkAndRecord(scope: string, identity: string, config: RateLimitConfig): Promise<RateLimitCheckResult>;
+  // Takes back one previously recorded attempt (e.g. a sign-in that
+  // succeeded). Returns whether there was one to remove.
+  release(scope: string, identity: string): Promise<boolean>;
 }

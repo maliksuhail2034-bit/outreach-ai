@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { recordRateLimitAttemptMock } = vi.hoisted(() => ({
+const { recordRateLimitAttemptMock, deleteLatestMock } = vi.hoisted(() => ({
   recordRateLimitAttemptMock: vi.fn(),
+  deleteLatestMock: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -10,6 +11,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/db", () => ({
   recordRateLimitAttempt: recordRateLimitAttemptMock,
+  deleteLatestRateLimitAttempt: deleteLatestMock,
 }));
 
 import { PostgresRateLimiter } from "./postgres";
@@ -36,5 +38,12 @@ describe("PostgresRateLimiter", () => {
     const result = await limiter.checkAndRecord("ai:generate", "org-1", { windowSeconds: 3600, maxAttempts: 20 });
 
     expect(result).toEqual({ allowed: false, retryAfterSeconds: 120 });
+  });
+
+  it("releases through deleteLatestRateLimitAttempt with the service-role client", async () => {
+    deleteLatestMock.mockResolvedValue(true);
+
+    await expect(new PostgresRateLimiter().release("auth:sign_in", "1.2.3.4")).resolves.toBe(true);
+    expect(deleteLatestMock).toHaveBeenCalledWith(expect.anything(), "auth:sign_in", "1.2.3.4");
   });
 });

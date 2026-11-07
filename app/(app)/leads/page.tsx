@@ -3,10 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import {
   countLeads,
   countLeadsMatchingRules,
+  getOrganizationAllocation,
+  getUserOrganization,
   listLeadListsWithCounts,
   listLeadSegments,
   listLeadsPage,
 } from "@/lib/db";
+import { optionalRead } from "@/lib/db/resilient-read";
+import { periodFor } from "@/lib/verified-leads/period";
 import {
   LEAD_VERIFICATION_STATUSES,
   leadSegmentRulesSchema,
@@ -72,7 +76,7 @@ export default async function LeadsPage({
 
   const filtersActive = Boolean(activeSegment || verificationStatus);
 
-  const [{ leads, pageSize, totalCount }, accountLeadCount, segmentsWithCounts] = await Promise.all([
+  const [{ leads, pageSize, totalCount }, accountLeadCount, segmentsWithCounts, allocation] = await Promise.all([
     listLeadsPage(supabase, user.id, {
       page,
       rules: activeSegment?.rules ?? undefined,
@@ -85,6 +89,11 @@ export default async function LeadsPage({
         matchCount: rules ? await countLeadsMatchingRules(supabase, user.id, rules) : null,
       })),
     ),
+    // This month's Polimatiq verified-lead delivery, if the plan includes one.
+    optionalRead(async () => {
+      const organization = await getUserOrganization(supabase, user);
+      return getOrganizationAllocation(supabase, organization.id, periodFor());
+    }, null),
   ]);
 
   return (
@@ -95,6 +104,13 @@ export default async function LeadsPage({
           <p className="mt-1 text-sm text-muted-foreground sm:text-base">
             Manage individual prospects, the lists that group them, and segments that match them by rules.
           </p>
+          {allocation.data && allocation.data.quota > 0 && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Verified leads this month: {allocation.data.delivered_count} of {allocation.data.quota} delivered by
+              Polimatiq. Their addresses are masked and stay inside Polimatiq, and they don&apos;t count toward your
+              plan&apos;s lead limit.
+            </p>
+          )}
         </div>
       </FadeIn>
 

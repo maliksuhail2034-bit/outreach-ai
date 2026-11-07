@@ -52,6 +52,22 @@ export function forecastNextRamp(input: WarmupRampInput, now: Date = new Date())
   return { nextVolume, nextIncreaseAt: nextIncreaseAt.toISOString() };
 }
 
+// What the dashboard should say about the next ramp increase. A forecast date
+// that has already passed means the increase is waiting for the warmup
+// worker's next cycle (it applies overdue increases when it processes the
+// profile) — not that it happened then, so it's shown as due rather than as
+// a stale past date.
+export type NextIncreaseStatus =
+  | { kind: "none" }
+  | { kind: "due" }
+  | { kind: "scheduled"; at: string };
+
+export function nextIncreaseStatus(forecast: WarmupRampForecast, now: Date = new Date()): NextIncreaseStatus {
+  if (forecast.nextVolume === null || !forecast.nextIncreaseAt) return { kind: "none" };
+  if (new Date(forecast.nextIncreaseAt).getTime() <= now.getTime()) return { kind: "due" };
+  return { kind: "scheduled", at: forecast.nextIncreaseAt };
+}
+
 // Whole calendar days since a profile first started warming. 0 for a
 // profile that hasn't started (startedAt null) — not fractional, since
 // "Days warming" is meant to read as a simple counter on the dashboard.

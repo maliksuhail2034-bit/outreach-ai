@@ -1,18 +1,41 @@
 "use client";
 
-import { useActionState } from "react";
+import { startTransition, useActionState, useState, type FormEvent } from "react";
 import { KeyRoundIcon } from "lucide-react";
 import { resetPassword, type AuthActionState } from "@/lib/actions/auth";
+import { unmetPasswordRules } from "@/lib/validations/auth";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FadeIn } from "@/components/motion/fade-in";
+import { PasswordInput, PasswordMatchHint, PasswordRequirements } from "@/components/auth/password-requirements";
 
 const initialState: AuthActionState = undefined;
 
 export function ResetPasswordForm() {
   const [state, action, pending] = useActionState(resetPassword, initialState);
+  // Controlled + submitted via onSubmit so a rejected attempt doesn't wipe
+  // both fields (see app/(auth)/signup/page.tsx for the same pattern).
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [attempted, setAttempted] = useState(false);
+
+  const passwordValid = unmetPasswordRules(password).length === 0;
+  const passwordsMatch = password === confirmPassword;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAttempted(true);
+    if (!passwordValid || !passwordsMatch) return;
+    const formData = new FormData(event.currentTarget);
+    startTransition(() => action(formData));
+  }
+
+  const passwordError = state?.fieldErrors?.password?.[0];
+  const confirmError =
+    attempted && confirmPassword.length > 0 && !passwordsMatch
+      ? "Passwords do not match."
+      : state?.fieldErrors?.confirmPassword?.[0];
 
   return (
     <FadeIn>
@@ -25,28 +48,46 @@ export function ResetPasswordForm() {
           <CardDescription>Choose a strong password for your account.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form action={action} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="password">New password</Label>
-              <Input id="password" name="password" type="password" autoComplete="new-password" required />
-              {state?.fieldErrors?.password && (
-                <p className="text-sm text-destructive">{state.fieldErrors.password[0]}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm new password</Label>
-              <Input
-                id="confirmPassword"
-                name="confirmPassword"
-                type="password"
+              <PasswordInput
+                id="password"
+                name="password"
                 autoComplete="new-password"
                 required
+                maxLength={72}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                aria-describedby="password-requirements"
+                aria-invalid={(attempted && !passwordValid) || Boolean(passwordError)}
               />
-              {state?.fieldErrors?.confirmPassword && (
-                <p className="text-sm text-destructive">{state.fieldErrors.confirmPassword[0]}</p>
+              {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+            </div>
+            <PasswordRequirements id="password-requirements" password={password} showUnmet={attempted} />
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm new password</Label>
+              <PasswordInput
+                id="confirmPassword"
+                name="confirmPassword"
+                autoComplete="new-password"
+                required
+                maxLength={72}
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                aria-invalid={Boolean(confirmError)}
+              />
+              {confirmError ? (
+                <p className="text-sm text-destructive">{confirmError}</p>
+              ) : (
+                <PasswordMatchHint password={password} confirmPassword={confirmPassword} />
               )}
             </div>
-            {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+            {state?.error && (
+              <p className="text-sm text-destructive" role="alert">
+                {state.error}
+              </p>
+            )}
             <Button type="submit" className="w-full" disabled={pending}>
               {pending ? "Updating…" : "Update password"}
             </Button>

@@ -1,7 +1,9 @@
 import type { Client } from "@/lib/db/shared";
 
+type RetentionTable = "rate_limit_events" | "job_runs" | "auth_events" | "page_views";
+
 export interface RetentionDeletionSummary {
-  table: "rate_limit_events" | "job_runs";
+  table: RetentionTable;
   cutoff: string;
   deletedCount: number;
 }
@@ -23,6 +25,12 @@ export interface RetentionWorkerSummary {
 // engineering one, and isn't assumed here.
 const RATE_LIMIT_EVENTS_RETENTION_DAYS = 7;
 const JOB_RUNS_RETENTION_DAYS = 90;
+// Sign-in records for the staff security panel (IPs are personal data):
+// kept long enough to investigate an incident, then dropped.
+const AUTH_EVENTS_RETENTION_DAYS = 90;
+// Cookieless page-load analytics (staff console Traffic page): six months
+// covers every range the page offers.
+const PAGE_VIEWS_RETENTION_DAYS = 180;
 
 function cutoffIso(days: number): string {
   const cutoff = new Date();
@@ -44,9 +52,11 @@ function cutoffIso(days: number): string {
 export async function runRetentionWorker(supabase: Client): Promise<RetentionWorkerSummary> {
   const results: RetentionDeletionSummary[] = [];
 
-  const targets: { table: "rate_limit_events" | "job_runs"; days: number }[] = [
+  const targets: { table: RetentionTable; days: number }[] = [
     { table: "rate_limit_events", days: RATE_LIMIT_EVENTS_RETENTION_DAYS },
     { table: "job_runs", days: JOB_RUNS_RETENTION_DAYS },
+    { table: "auth_events", days: AUTH_EVENTS_RETENTION_DAYS },
+    { table: "page_views", days: PAGE_VIEWS_RETENTION_DAYS },
   ];
 
   for (const { table, days } of targets) {

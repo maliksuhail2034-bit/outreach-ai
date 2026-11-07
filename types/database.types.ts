@@ -333,37 +333,41 @@ export type Database = {
           },
         ]
       }
-      billing_customers: {
+      auth_events: {
         Row: {
+          country: string | null
           created_at: string
+          email_hash: string | null
+          event_type: string
           id: string
-          organization_id: string
-          stripe_customer_id: string
+          ip: string | null
           updated_at: string
+          user_agent: string | null
+          user_id: string | null
         }
         Insert: {
+          country?: string | null
           created_at?: string
+          email_hash?: string | null
+          event_type: string
           id?: string
-          organization_id: string
-          stripe_customer_id: string
+          ip?: string | null
           updated_at?: string
+          user_agent?: string | null
+          user_id?: string | null
         }
         Update: {
+          country?: string | null
           created_at?: string
+          email_hash?: string | null
+          event_type?: string
           id?: string
-          organization_id?: string
-          stripe_customer_id?: string
+          ip?: string | null
           updated_at?: string
+          user_agent?: string | null
+          user_id?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "billing_customers_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: true
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       billing_checkouts: {
         Row: {
@@ -413,6 +417,38 @@ export type Database = {
             foreignKeyName: "billing_checkouts_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_customers: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          stripe_customer_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          stripe_customer_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          stripe_customer_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_customers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -915,6 +951,45 @@ export type Database = {
         }
         Relationships: []
       }
+      grc_controls: {
+        Row: {
+          control_key: string
+          created_at: string
+          description: string
+          framework: string
+          id: string
+          notes: string
+          status: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          control_key: string
+          created_at?: string
+          description?: string
+          framework: string
+          id?: string
+          notes?: string
+          status?: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          control_key?: string
+          created_at?: string
+          description?: string
+          framework?: string
+          id?: string
+          notes?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       integrations: {
         Row: {
           config: Json
@@ -961,6 +1036,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      ip_blocklist: {
+        Row: {
+          cidr: unknown
+          created_at: string
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          reason: string
+          updated_at: string
+        }
+        Insert: {
+          cidr: unknown
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          reason: string
+          updated_at?: string
+        }
+        Update: {
+          cidr?: unknown
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          reason?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       job_runs: {
         Row: {
@@ -1059,6 +1164,7 @@ export type Database = {
           country: string | null
           created_at: string
           custom_fields: Json
+          display_email: string | null
           email: string
           first_name: string | null
           id: string
@@ -1076,6 +1182,7 @@ export type Database = {
           verification_risk_score: number | null
           verification_status: string
           verified_at: string | null
+          verified_lead_id: string | null
           website: string | null
         }
         Insert: {
@@ -1084,6 +1191,7 @@ export type Database = {
           country?: string | null
           created_at?: string
           custom_fields?: Json
+          display_email?: string | null
           email: string
           first_name?: string | null
           id?: string
@@ -1101,6 +1209,7 @@ export type Database = {
           verification_risk_score?: number | null
           verification_status?: string
           verified_at?: string | null
+          verified_lead_id?: string | null
           website?: string | null
         }
         Update: {
@@ -1109,6 +1218,7 @@ export type Database = {
           country?: string | null
           created_at?: string
           custom_fields?: Json
+          display_email?: string | null
           email?: string
           first_name?: string | null
           id?: string
@@ -1126,6 +1236,7 @@ export type Database = {
           verification_risk_score?: number | null
           verification_status?: string
           verified_at?: string | null
+          verified_lead_id?: string | null
           website?: string | null
         }
         Relationships: [
@@ -1348,6 +1459,48 @@ export type Database = {
         }
         Relationships: []
       }
+      page_views: {
+        Row: {
+          country: string | null
+          created_at: string
+          day: string
+          device: string
+          id: string
+          path: string
+          referrer_host: string | null
+          signed_in: boolean
+          updated_at: string
+          utm_source: string | null
+          visitor_hash: string
+        }
+        Insert: {
+          country?: string | null
+          created_at?: string
+          day?: string
+          device: string
+          id?: string
+          path: string
+          referrer_host?: string | null
+          signed_in?: boolean
+          updated_at?: string
+          utm_source?: string | null
+          visitor_hash: string
+        }
+        Update: {
+          country?: string | null
+          created_at?: string
+          day?: string
+          device?: string
+          id?: string
+          path?: string
+          referrer_host?: string | null
+          signed_in?: boolean
+          updated_at?: string
+          utm_source?: string | null
+          visitor_hash?: string
+        }
+        Relationships: []
+      }
       payment_webhook_events: {
         Row: {
           event_id: string
@@ -1366,6 +1519,33 @@ export type Database = {
           event_type?: string
           processed_at?: string
           provider?: string
+        }
+        Relationships: []
+      }
+      plan_lead_quotas: {
+        Row: {
+          created_at: string
+          id: string
+          leads_per_month: number
+          plan_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          leads_per_month: number
+          plan_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          leads_per_month?: number
+          plan_id?: string
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -1585,6 +1765,152 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      staff_audit_log: {
+        Row: {
+          action: string
+          actor_role: string | null
+          actor_user_id: string | null
+          created_at: string
+          hash: string
+          id: string
+          ip: string | null
+          metadata: Json
+          prev_hash: string
+          seq: number
+          target_id: string | null
+          target_type: string | null
+          updated_at: string
+        }
+        Insert: {
+          action: string
+          actor_role?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          hash?: string
+          id?: string
+          ip?: string | null
+          metadata?: Json
+          prev_hash?: string
+          seq?: number
+          target_id?: string | null
+          target_type?: string | null
+          updated_at?: string
+        }
+        Update: {
+          action?: string
+          actor_role?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          hash?: string
+          id?: string
+          ip?: string | null
+          metadata?: Json
+          prev_hash?: string
+          seq?: number
+          target_id?: string | null
+          target_type?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      staff_members: {
+        Row: {
+          archived_at: string | null
+          archived_by: string | null
+          created_at: string
+          created_by: string | null
+          display_name: string
+          id: string
+          last_seen_at: string | null
+          password_changed_at: string | null
+          password_must_change: boolean
+          password_policy_version: number
+          role: string
+          status: string
+          updated_at: string
+          user_id: string
+          username: string
+        }
+        Insert: {
+          archived_at?: string | null
+          archived_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          display_name: string
+          id?: string
+          last_seen_at?: string | null
+          password_changed_at?: string | null
+          password_must_change?: boolean
+          password_policy_version?: number
+          role: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          username: string
+        }
+        Update: {
+          archived_at?: string | null
+          archived_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          display_name?: string
+          id?: string
+          last_seen_at?: string | null
+          password_changed_at?: string | null
+          password_must_change?: boolean
+          password_policy_version?: number
+          role?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
+      staff_work_sessions: {
+        Row: {
+          country: string | null
+          created_at: string
+          end_reason: string | null
+          ended_at: string | null
+          id: string
+          last_activity_at: string
+          staff_id: string
+          started_at: string
+          updated_at: string
+        }
+        Insert: {
+          country?: string | null
+          created_at?: string
+          end_reason?: string | null
+          ended_at?: string | null
+          id?: string
+          last_activity_at?: string
+          staff_id: string
+          started_at?: string
+          updated_at?: string
+        }
+        Update: {
+          country?: string | null
+          created_at?: string
+          end_reason?: string | null
+          ended_at?: string | null
+          id?: string
+          last_activity_at?: string
+          staff_id?: string
+          started_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_work_sessions_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_members"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       stripe_webhook_events: {
         Row: {
@@ -1816,6 +2142,209 @@ export type Database = {
           },
         ]
       }
+      verified_lead_allocations: {
+        Row: {
+          created_at: string
+          delivered_count: number
+          id: string
+          lead_list_id: string | null
+          organization_id: string
+          period: string
+          plan_id: string
+          quota: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          delivered_count?: number
+          id?: string
+          lead_list_id?: string | null
+          organization_id: string
+          period: string
+          plan_id: string
+          quota: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          delivered_count?: number
+          id?: string
+          lead_list_id?: string | null
+          organization_id?: string
+          period?: string
+          plan_id?: string
+          quota?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      verified_lead_batches: {
+        Row: {
+          created_at: string
+          duplicate_count: number
+          file_name: string
+          id: string
+          inserted_count: number
+          rejected_count: number
+          row_count: number
+          source: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          duplicate_count?: number
+          file_name: string
+          id?: string
+          inserted_count?: number
+          rejected_count?: number
+          row_count?: number
+          source: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          duplicate_count?: number
+          file_name?: string
+          id?: string
+          inserted_count?: number
+          rejected_count?: number
+          row_count?: number
+          source?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
+      verified_lead_deliveries: {
+        Row: {
+          created_at: string
+          delivered_at: string
+          id: string
+          lead_id: string | null
+          organization_id: string
+          period: string
+          updated_at: string
+          user_id: string
+          verified_lead_id: string
+        }
+        Insert: {
+          created_at?: string
+          delivered_at?: string
+          id?: string
+          lead_id?: string | null
+          organization_id: string
+          period: string
+          updated_at?: string
+          user_id: string
+          verified_lead_id: string
+        }
+        Update: {
+          created_at?: string
+          delivered_at?: string
+          id?: string
+          lead_id?: string | null
+          organization_id?: string
+          period?: string
+          updated_at?: string
+          user_id?: string
+          verified_lead_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verified_lead_deliveries_verified_lead_id_fkey"
+            columns: ["verified_lead_id"]
+            isOneToOne: false
+            referencedRelation: "verified_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      verified_leads: {
+        Row: {
+          batch_id: string | null
+          city: string | null
+          company: string | null
+          country: string | null
+          created_at: string
+          created_by: string | null
+          custom_fields: Json
+          email: string
+          first_name: string | null
+          id: string
+          industry: string | null
+          last_delivered_at: string | null
+          last_name: string | null
+          linkedin: string | null
+          phone: string | null
+          source: string
+          status: string
+          suppressed_at: string | null
+          suppressed_reason: string | null
+          times_delivered: number
+          title: string | null
+          updated_at: string
+          verification_result: string
+          verified_at: string
+          website: string | null
+        }
+        Insert: {
+          batch_id?: string | null
+          city?: string | null
+          company?: string | null
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          custom_fields?: Json
+          email: string
+          first_name?: string | null
+          id?: string
+          industry?: string | null
+          last_delivered_at?: string | null
+          last_name?: string | null
+          linkedin?: string | null
+          phone?: string | null
+          source: string
+          status?: string
+          suppressed_at?: string | null
+          suppressed_reason?: string | null
+          times_delivered?: number
+          title?: string | null
+          updated_at?: string
+          verification_result?: string
+          verified_at: string
+          website?: string | null
+        }
+        Update: {
+          batch_id?: string | null
+          city?: string | null
+          company?: string | null
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          custom_fields?: Json
+          email?: string
+          first_name?: string | null
+          id?: string
+          industry?: string | null
+          last_delivered_at?: string | null
+          last_name?: string | null
+          linkedin?: string | null
+          phone?: string | null
+          source?: string
+          status?: string
+          suppressed_at?: string | null
+          suppressed_reason?: string | null
+          times_delivered?: number
+          title?: string | null
+          updated_at?: string
+          verification_result?: string
+          verified_at?: string
+          website?: string | null
+        }
+        Relationships: []
+      }
       warmup_events: {
         Row: {
           created_at: string
@@ -1867,10 +2396,13 @@ export type Database = {
           in_reply_to: string | null
           message_type: string
           organization_id: string
+          placement: string | null
+          placement_checked_at: string | null
           provider_message_id: string
           replied_at: string | null
           reply_decision: string
           reply_due_at: string | null
+          rescued_at: string | null
           sent_at: string
           status: string
           subject: string
@@ -1884,10 +2416,13 @@ export type Database = {
           in_reply_to?: string | null
           message_type: string
           organization_id: string
+          placement?: string | null
+          placement_checked_at?: string | null
           provider_message_id: string
           replied_at?: string | null
           reply_decision?: string
           reply_due_at?: string | null
+          rescued_at?: string | null
           sent_at?: string
           status?: string
           subject: string
@@ -1901,10 +2436,13 @@ export type Database = {
           in_reply_to?: string | null
           message_type?: string
           organization_id?: string
+          placement?: string | null
+          placement_checked_at?: string | null
           provider_message_id?: string
           replied_at?: string | null
           reply_decision?: string
           reply_due_at?: string | null
+          rescued_at?: string | null
           sent_at?: string
           status?: string
           subject?: string
@@ -2029,9 +2567,11 @@ export type Database = {
           emails_received: number
           emails_sent: number
           id: string
+          inbox_count: number
           organization_id: string
           positive_interactions: number
           reply_rate: number | null
+          spam_count: number
           spam_rate: number | null
           stat_date: string
           updated_at: string
@@ -2044,9 +2584,11 @@ export type Database = {
           emails_received?: number
           emails_sent?: number
           id?: string
+          inbox_count?: number
           organization_id: string
           positive_interactions?: number
           reply_rate?: number | null
+          spam_count?: number
           spam_rate?: number | null
           stat_date: string
           updated_at?: string
@@ -2059,9 +2601,11 @@ export type Database = {
           emails_received?: number
           emails_sent?: number
           id?: string
+          inbox_count?: number
           organization_id?: string
           positive_interactions?: number
           reply_rate?: number | null
+          spam_count?: number
           spam_rate?: number | null
           stat_date?: string
           updated_at?: string
@@ -2090,6 +2634,36 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      allocate_verified_leads: {
+        Args: {
+          p_max_age_days?: number
+          p_max_shares?: number
+          p_min_gap_days?: number
+          p_organization_id: string
+          p_period: string
+          p_plan_id: string
+          p_quota: number
+          p_user_id: string
+        }
+        Returns: number
+      }
+      analytics_campaign_event_counts: {
+        Args: { p_since: string; p_until: string }
+        Returns: {
+          campaign_id: string
+          event_count: number
+          event_type: string
+          unique_leads: number
+        }[]
+      }
+      analytics_daily_event_counts: {
+        Args: { p_since: string; p_timezone?: string; p_until: string }
+        Returns: {
+          day: string
+          event_count: number
+          event_type: string
+        }[]
+      }
       attach_billing_checkout_subscription: {
         Args: {
           p_checkout_id: string
@@ -2337,6 +2911,49 @@ export type Database = {
       request_send_now: {
         Args: { p_campaign_lead_id: string }
         Returns: boolean
+      }
+      auth_event_summary: {
+        Args: { p_list_limit?: number; p_since: string }
+        Returns: Json
+      }
+      is_staff_email: {
+        Args: { p_email: string }
+        Returns: boolean
+      }
+      staff_end_work_session: {
+        Args: { p_reason?: string; p_staff_id: string }
+        Returns: undefined
+      }
+      staff_revoke_user_sessions: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
+      staff_touch_work_session: {
+        Args: { p_country?: string; p_idle_minutes?: number; p_staff_id: string }
+        Returns: undefined
+      }
+      staff_verify_audit_chain: {
+        Args: never
+        Returns: {
+          checked: number
+          first_broken_seq: number | null
+        }[]
+      }
+      staff_work_seconds: {
+        Args: { p_since: string }
+        Returns: {
+          seconds: number
+          sessions: number
+          staff_id: string
+        }[]
+      }
+      traffic_summary: {
+        Args: { p_from: string; p_limit?: number; p_to: string }
+        Returns: Json
+      }
+      users_with_verified_mfa: {
+        Args: { p_user_ids: string[] }
+        Returns: string[]
       }
     }
     Enums: {

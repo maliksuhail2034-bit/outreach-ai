@@ -39,17 +39,25 @@ export function TrendCard({
   icon,
   description,
   tone = "brand",
+  goodDirection = "up",
   className,
 }: {
   title: string;
   value: ReactNode;
   trend: TrendResult;
+  // Which way is an improvement — "down" for bounce/unsubscribe/failure
+  // metrics, so a rise there is shown as bad rather than good.
+  goodDirection?: "up" | "down";
   icon: ReactNode;
   description?: string;
   tone?: "brand" | "success" | "warning" | "danger";
   className?: string;
 }) {
   const Icon = DIRECTION_ICON[trend.direction];
+  const variant =
+    trend.direction === "stable"
+      ? DIRECTION_VARIANT.stable
+      : (trend.direction === goodDirection ? DIRECTION_VARIANT.up : DIRECTION_VARIANT.down);
 
   return (
     <motion.div
@@ -68,7 +76,7 @@ export function TrendCard({
       </div>
       <div className="mt-3 flex items-baseline gap-2">
         <span className="text-2xl font-semibold tracking-tight">{value}</span>
-        <Badge variant={DIRECTION_VARIANT[trend.direction]} className="gap-1">
+        <Badge variant={variant} className="gap-1">
           <Icon className="size-3" />
           {trend.percentageChange === null ? trend.direction : `${Math.abs(trend.percentageChange)}%`}
         </Badge>

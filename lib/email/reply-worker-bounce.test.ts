@@ -16,6 +16,8 @@ const db = vi.hoisted(() => ({
   getEmailReplyByEventId: vi.fn(),
   getLatestJobRunSummary: vi.fn(),
   getLeadById: vi.fn(),
+  getDeliveredVerifiedLeadEmail: vi.fn(),
+  listDeliveredLeadIdsByRealEmail: vi.fn(),
   getSentEventForOwner: vi.fn(),
   listActiveCampaignLeadsForMailbox: vi.fn(),
   listLeadIdsByEmail: vi.fn(),
@@ -189,6 +191,15 @@ describe("reply sync — a mapped hard bounce", () => {
     expect(await runReplySyncWorker(supabaseStub)).toMatchObject({ bounced: 1 });
     // Suppressed exactly as stored, matching the send worker's lookup.
     expect(db.createSuppression).toHaveBeenCalledWith(supabaseStub, expect.objectContaining({ email: "Dead@Prospect.test" }));
+  });
+
+  it("suppresses a verified-pool lead by its real address (pulling it from the pool), not the placeholder", async () => {
+    db.getLeadById.mockResolvedValue(makeLead({ email: "verified+vl-1@leads.polimatiq.invalid", verified_lead_id: "vl-1" }));
+    db.getDeliveredVerifiedLeadEmail.mockResolvedValue({ email: "dead@prospect.test", status: "active" });
+    inbox([makeBounceNotice()]);
+
+    expect(await runReplySyncWorker(supabaseStub)).toMatchObject({ bounced: 1 });
+    expect(db.createSuppression).toHaveBeenCalledWith(supabaseStub, expect.objectContaining({ email: "dead@prospect.test", reason: "bounced" }));
   });
 
   it("still suppresses and records the bounce when the enrollment is in a state it doesn't overwrite", async () => {

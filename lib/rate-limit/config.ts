@@ -4,6 +4,7 @@
 // one map, not hunting through every action.ts that uses it.
 export type RateLimitScope =
   | "auth:sign_in"
+  | "auth:sign_in_account"
   | "auth:sign_up"
   | "auth:forgot_password_ip"
   | "auth:forgot_password_email"
@@ -18,6 +19,8 @@ export type RateLimitScope =
   | "campaign:resolve_send_attempt"
   | "campaign:send_now"
   | "leads:import"
+  | "staff:lead_upload"
+  | "staff:allocation_run"
   | "billing:checkout"
   | "billing:checkout_start"
   | "billing:manage";
@@ -41,6 +44,10 @@ const HOUR = 60 * MINUTE;
 
 export const RATE_LIMIT_CONFIG: Record<RateLimitScope, ScopeConfig> = {
   "auth:sign_in": { windowSeconds: 15 * MINUTE, maxAttempts: 10, failClosed: true },
+  // Per account (hashed email — see lib/actions/auth.ts). Looser than the
+  // per-IP limit so a shared office IP isn't the bottleneck, but low enough
+  // that a distributed attack on one account stalls fast.
+  "auth:sign_in_account": { windowSeconds: 15 * MINUTE, maxAttempts: 15, failClosed: true },
   "auth:sign_up": { windowSeconds: HOUR, maxAttempts: 5, failClosed: true },
   // Dual-keyed (see get-client-ip.ts's caller in lib/actions/auth.ts):
   // per-IP alone doesn't stop a distributed attacker rotating IPs from
@@ -64,6 +71,11 @@ export const RATE_LIMIT_CONFIG: Record<RateLimitScope, ScopeConfig> = {
   // API.
   "campaign:send_now": { windowSeconds: HOUR, maxAttempts: 60, failClosed: false },
   "leads:import": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
+  // Staff verified-lead uploads (up to 10,000 rows each), per staff member.
+  "staff:lead_upload": { windowSeconds: HOUR, maxAttempts: 30, failClosed: false },
+  // The owner's "run allocation now": the run is idempotent, but each one
+  // walks every organization, so stop accidental repeat clicks.
+  "staff:allocation_run": { windowSeconds: HOUR, maxAttempts: 10, failClosed: false },
   // Starting a new subscription checkout — shared across both providers
   // (createCheckoutSessionAction/Stripe, createRazorpaySubscriptionAction/
   // Razorpay): each calls out to the provider's own create-session/

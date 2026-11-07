@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { checkAndRecordMock } = vi.hoisted(() => ({
+const { checkAndRecordMock, releaseMock } = vi.hoisted(() => ({
   checkAndRecordMock: vi.fn(),
+  releaseMock: vi.fn(),
 }));
 
 vi.mock("./get-provider", () => ({
-  getRateLimiter: () => ({ checkAndRecord: checkAndRecordMock }),
+  getRateLimiter: () => ({ checkAndRecord: checkAndRecordMock, release: releaseMock }),
 }));
 
-import { checkRateLimit, RateLimitError } from "./check-rate-limit";
+import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "./check-rate-limit";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -18,7 +19,7 @@ describe("checkRateLimit", () => {
   it("resolves without throwing when the limiter allows the attempt", async () => {
     checkAndRecordMock.mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
 
-    await expect(checkRateLimit("ai:generate", "org-1")).resolves.toBeUndefined();
+    await expect(checkRateLimit("ai:generate", "org-1")).resolves.toBe(true);
   });
 
   it("throws RateLimitError with the retryAfterSeconds from the limiter when blocked", async () => {
@@ -51,7 +52,27 @@ describe("checkRateLimit", () => {
     checkAndRecordMock.mockRejectedValue(new Error("db unavailable"));
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(checkRateLimit("ai:generate", "org-1")).resolves.toBeUndefined();
+    // false: nothing was recorded, so there is nothing a caller may release.
+    await expect(checkRateLimit("ai:generate", "org-1")).resolves.toBe(false);
+
+    consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("releaseRateLimitAttempt", () => {
+  it("asks the limiter to take back one attempt for the scope and identity", async () => {
+    releaseMock.mockResolvedValue(true);
+
+    await releaseRateLimitAttempt("auth:sign_in", "1.2.3.4");
+
+    expect(releaseMock).toHaveBeenCalledWith("auth:sign_in", "1.2.3.4");
+  });
+
+  it("never throws — a failed refund just leaves the attempt counted (the stricter outcome)", async () => {
+    releaseMock.mockRejectedValue(new Error("db unavailable"));
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(releaseRateLimitAttempt("auth:sign_in", "1.2.3.4")).resolves.toBeUndefined();
 
     consoleErrorSpy.mockRestore();
   });

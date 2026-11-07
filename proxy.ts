@@ -1,6 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { Database } from "@/types/database.types";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { trustedClientIp } from "@/lib/rate-limit/get-client-ip";
+import { isRequestIpBlocked } from "@/lib/security/ip-blocklist";
+import { recordPageView } from "@/lib/traffic/record";
 
 // Next.js 16 renamed Middleware to Proxy (same file-convention mechanics,
 // new file name and export name) — see AGENTS.md and CLAUDE.md.
@@ -13,7 +17,38 @@ import type { Database } from "@/types/database.types";
 // upkeep only, not the authorization boundary. See the Next.js Proxy docs:
 // optimistic checks here are fine, but real authorization must happen
 // close to the data (RLS, Server Function checks), not in Proxy.
-export async function proxy(request: NextRequest) {
+// Supabase SSR stores the session as `sb-<project-ref>-auth-token` (split
+// into `.0`, `.1`… chunks when large).
+function hasSupabaseSession(request: NextRequest): boolean {
+  return request.cookies.getAll().some(({ name }) => name.startsWith("sb-") && /-auth-token(\.\d+)?$/.test(name));
+}
+
+export async function proxy(request: NextRequest, event: NextFetchEvent) {
+  // The security team's IP blocklist (lib/security/ip-blocklist.ts), checked
+  // before anything else, signed in or not.
+  if (await isRequestIpBlocked(trustedClientIp(request.headers), createAdminClient)) {
+    return new NextResponse("Access from your network has been blocked. Contact support@polimatiq.com if you think this is a mistake.", {
+      status: 403,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+
+  const signedIn = hasSupabaseSession(request);
+
+  // Cookieless page-load analytics for the staff console's Traffic page
+  // (lib/traffic/page-view.ts decides what counts). Written after the
+  // response is sent, so it never delays the page.
+  event.waitUntil(recordPageView(request, signedIn));
+
+  // Anonymous visitors (marketing, legal, login/signup pages) have no
+  // session to refresh, so skip the round trip to Supabase Auth entirely.
+  // That call used to run on every public page view, adding latency and an
+  // Auth API request per visitor — the most traffic-sensitive path the app
+  // has.
+  if (!signedIn) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient<Database>(

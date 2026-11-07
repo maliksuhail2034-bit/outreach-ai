@@ -20,15 +20,22 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/rate-limit/get-client-ip", () => ({
   getClientIp: vi.fn(async () => "203.0.113.7"),
 }));
+vi.mock("@/lib/security/auth-events", () => ({ recordSignInEvent: vi.fn() }));
+const staffLookup = vi.hoisted(() => ({ isStaffEmail: vi.fn() }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
+vi.mock("@/lib/db/staff", () => staffLookup);
 vi.mock("@/lib/rate-limit/check-rate-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit/check-rate-limit")>()),
   checkRateLimit: vi.fn(),
+  releaseRateLimitAttempt: vi.fn(),
 }));
 
-import { checkRateLimit, RateLimitError } from "@/lib/rate-limit/check-rate-limit";
+import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "@/lib/rate-limit/check-rate-limit";
+import { recordSignInEvent } from "@/lib/security/auth-events";
 import { forgotPassword, resetPassword, signIn, signOut, signUp } from "./auth";
 
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
+const mockRelease = vi.mocked(releaseRateLimitAttempt);
 
 function form(values: Record<string, string>) {
   const data = new FormData();
@@ -45,7 +52,7 @@ const VALID_SIGNUP = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockCheckRateLimit.mockResolvedValue(undefined);
+  mockCheckRateLimit.mockResolvedValue(true);
   vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://polimatiq.test");
 });
 
@@ -91,8 +98,31 @@ describe("signUp", () => {
 });
 
 describe("signIn", () => {
+  it("records each outcome for the security panel: success by user id, failure by the email typed", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValueOnce({ data: { user: { id: "user-1" } }, error: null });
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_success", { userId: "user-1" });
+
+    supabaseAuth.signInWithPassword.mockResolvedValueOnce({ data: { user: null }, error: { message: "Invalid login credentials" } });
+    await signIn(undefined, form({ email: "ada@example.com", password: "wrong" }));
+    expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_failure", { email: "ada@example.com" });
+  });
+
+  it("refuses staff accounts here and signs them straight back out", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({
+      data: { user: { id: "staff-user", app_metadata: { polimatiq_staff: true } } },
+      error: null,
+    });
+
+    await expect(signIn(undefined, form({ email: "owner@polimatiq.test", password: "x" }))).resolves.toEqual({
+      error: "Staff accounts sign in at /console/login with their username.",
+    });
+    expect(supabaseAuth.signOut).toHaveBeenCalled();
+    expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_failure", { email: "owner@polimatiq.test" });
+  });
+
   it("redirects to the dashboard on success", async () => {
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: null });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow(
       "NEXT_REDIRECT:/dashboard",
@@ -100,15 +130,102 @@ describe("signIn", () => {
   });
 
   it("returns Supabase's generic credentials error without revealing whether the account exists", async () => {
-    supabaseAuth.signInWithPassword.mockResolvedValue({ error: { message: "Invalid login credentials" } });
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { message: "Invalid login credentials" } });
 
     await expect(signIn(undefined, form({ email: "ada@example.com", password: "wrong" }))).resolves.toEqual({
       error: "Invalid login credentials",
     });
   });
+
+  it("is rate limited per IP and per account, keyed on a hash rather than the raw email", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+
+    await expect(signIn(undefined, form({ email: "Ada@Example.com ", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(mockCheckRateLimit).toHaveBeenCalledWith("auth:sign_in", "203.0.113.7");
+    const accountKeys = mockCheckRateLimit.mock.calls
+      .filter(([scope]) => scope === "auth:sign_in_account")
+      .map(([, identity]) => identity);
+    expect(accountKeys).toHaveLength(2);
+    expect(accountKeys[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(accountKeys[0]).toBe(accountKeys[1]); // case/whitespace-insensitive
+    expect(accountKeys[0]).not.toContain("ada");
+  });
+
+  it("stops before calling Supabase when the per-account limit is hit", async () => {
+    mockCheckRateLimit.mockImplementation(async (scope) => {
+      if (scope === "auth:sign_in_account") throw new RateLimitError(600);
+      return true;
+    });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).resolves.toEqual({
+      error: new RateLimitError(600).message,
+    });
+    expect(supabaseAuth.signInWithPassword).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("refunds both reserved attempts after a successful sign-in, so only failures count", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+
+    const accountKey = mockCheckRateLimit.mock.calls.find(([scope]) => scope === "auth:sign_in_account")?.[1];
+    expect(mockRelease).toHaveBeenCalledTimes(2);
+    expect(mockRelease).toHaveBeenCalledWith("auth:sign_in", "203.0.113.7");
+    expect(mockRelease).toHaveBeenCalledWith("auth:sign_in_account", accountKey);
+  });
+
+  it.each([
+    ["a wrong password for a real account", "Invalid login credentials"],
+    ["an account that doesn't exist", "Invalid login credentials"],
+  ])("keeps counting %s — identical response, nothing refunded", async (_label, message) => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({ error: { message } });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "wrong" }))).resolves.toEqual({ error: message });
+    expect(mockCheckRateLimit).toHaveBeenCalledTimes(2);
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("refunds nothing it didn't record (a limiter that failed open)", async () => {
+    mockCheckRateLimit.mockResolvedValue(false);
+    supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+
+    await expect(signIn(undefined, form({ email: "ada@example.com", password: "x" }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+});
+
+describe("signUp profile seed", () => {
+  it("stores the browser timezone in user metadata only when it's one the profile picker offers", async () => {
+    supabaseAuth.signUp.mockResolvedValue({ error: null });
+
+    await signUp(undefined, form({ ...VALID_SIGNUP, timezone: "Europe/Berlin" }));
+    expect(supabaseAuth.signUp.mock.calls[0][0].options.data).toEqual({ full_name: "Ada Lovelace", timezone: "Europe/Berlin" });
+
+    await signUp(undefined, form({ ...VALID_SIGNUP, timezone: "Mars/Olympus_Mons" }));
+    expect(supabaseAuth.signUp.mock.calls[1][0].options.data).toEqual({ full_name: "Ada Lovelace" });
+  });
+
+  it("reports every unmet password rule, not just the first", async () => {
+    const result = await signUp(undefined, form({ ...VALID_SIGNUP, password: "short", confirmPassword: "short" }));
+    expect(result?.fieldErrors?.password).toEqual(
+      expect.arrayContaining(["Must be at least 8 characters.", "Include an uppercase letter.", "Include a number."]),
+    );
+  });
 });
 
 describe("forgotPassword", () => {
+  beforeEach(() => staffLookup.isStaffEmail.mockResolvedValue(false));
+
+  it("never sends a reset email to a staff account, and answers exactly as for anyone else", async () => {
+    staffLookup.isStaffEmail.mockResolvedValue(true);
+
+    await expect(forgotPassword(undefined, form({ email: "owner@polimatiq.test" }))).resolves.toEqual({ success: true });
+    expect(supabaseAuth.resetPasswordForEmail).not.toHaveBeenCalled();
+  });
+
   it("reports success for an unknown address so it can't be used to enumerate accounts", async () => {
     supabaseAuth.resetPasswordForEmail.mockResolvedValue({ error: { code: "user_not_found", message: "User not found" } });
 

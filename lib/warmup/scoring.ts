@@ -28,9 +28,8 @@ export interface WarmupScoreInputs {
   stage: WarmupStage;
   targetDailyVolume: number;
   currentDailyVolume: number;
-  // None of these three are written by any pipeline yet — warmup_stats has
-  // no rows until a future stats-aggregation worker exists. Each is simply
-  // excluded from the average until populated.
+  // Each is excluded from the average until it has data. spamRate comes
+  // from inbox placement (lib/warmup/stats.ts); bounceRate has no producer.
   replyRate?: number | null; // percentage, 0-100, higher is better
   bounceRate?: number | null; // percentage, 0-100, lower is better
   spamRate?: number | null; // percentage, 0-100, lower is better
@@ -54,7 +53,12 @@ const STAGE_SIGNAL_VALUE: Record<WarmupStage, number> = {
 // cold email, 1% spam-complaint rate is a commonly cited hard ceiling, and
 // 10% reply rate is treated as a strong outcome worth full marks.
 const BOUNCE_RATE_ZERO_POINT = 5;
-const SPAM_RATE_ZERO_POINT = 1;
+// Warmup spam rate is inbox placement (share of warmup mail filed as spam,
+// from lib/warmup/inbox-agent.ts), not a complaint rate: 30%+ in spam zeroes
+// the signal, 0% is full marks. Weighted double — placement is the outcome
+// warmup exists to improve.
+const SPAM_RATE_ZERO_POINT = 30;
+const SPAM_RATE_WEIGHT = 2;
 const REPLY_RATE_FULL_POINT = 10;
 
 export function calculateWarmupScore(inputs: WarmupScoreInputs): number {
@@ -70,7 +74,7 @@ export function calculateWarmupScore(inputs: WarmupScoreInputs): number {
     signals.push({ value: clamp(100 - (inputs.bounceRate / BOUNCE_RATE_ZERO_POINT) * 100, 0, 100), weight: 1 });
   }
   if (inputs.spamRate != null) {
-    signals.push({ value: clamp(100 - (inputs.spamRate / SPAM_RATE_ZERO_POINT) * 100, 0, 100), weight: 1 });
+    signals.push({ value: clamp(100 - (inputs.spamRate / SPAM_RATE_ZERO_POINT) * 100, 0, 100), weight: SPAM_RATE_WEIGHT });
   }
   if (inputs.replyRate != null) {
     signals.push({ value: clamp((inputs.replyRate / REPLY_RATE_FULL_POINT) * 100, 0, 100), weight: 1 });

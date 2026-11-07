@@ -219,7 +219,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
   mockRequireUser.mockResolvedValue(USER as never);
   mockGetUserOrganization.mockResolvedValue(ORGANIZATION as never);
-  mockCheckRateLimit.mockResolvedValue(undefined);
+  mockCheckRateLimit.mockResolvedValue(true);
   mockGetCampaign.mockResolvedValue(makeCampaign() as never);
   mockGetCampaignLead.mockResolvedValue(makeCampaignLead() as never);
   mockGetCampaignLeadByCampaignAndLead.mockResolvedValue(null);
@@ -493,6 +493,8 @@ describe("enrollLeadListAction", () => {
   function makeLead(id: string, overrides: Partial<Tables<"leads">> = {}): Tables<"leads"> {
     return {
       id,
+      display_email: null,
+      verified_lead_id: null,
       user_id: "user-1",
       email: `${id}@example.com`,
       first_name: null,
@@ -580,6 +582,8 @@ describe("enrollLeadSegmentAction", () => {
   function makeLead(id: string): Tables<"leads"> {
     return {
       id,
+      display_email: null,
+      verified_lead_id: null,
       user_id: "user-1",
       email: `${id}@example.com`,
       first_name: null,

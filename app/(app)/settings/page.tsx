@@ -4,6 +4,7 @@ import { BadgeCheckIcon, KeyRoundIcon, ShieldCheckIcon, WebhookIcon } from "luci
 import { getUser, getCachedProfile } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getSettings } from "@/lib/db";
+import { getSignupProfileSeed } from "@/lib/user";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +19,7 @@ export default async function SettingsPage() {
 
   const supabase = await createClient();
   const [profile, settings] = await Promise.all([getCachedProfile(user.id), getSettings(supabase, user.id)]);
+  const signupSeed = getSignupProfileSeed(user);
 
   return (
     <div className="max-w-2xl space-y-6 sm:space-y-8">
@@ -34,9 +36,10 @@ export default async function SettingsPage() {
         <ProfileForm
           email={user.email ?? ""}
           defaultValues={{
-            fullName: profile?.full_name ?? "",
+            // Falls back to the name entered at sign-up, so it's never asked twice.
+            fullName: profile?.full_name ?? signupSeed.fullName ?? "",
             avatarUrl: profile?.avatar_url ?? "",
-            timezone: profile?.timezone ?? "UTC",
+            timezone: profile?.timezone ?? signupSeed.timezone ?? "UTC",
           }}
         />
       </FadeIn>

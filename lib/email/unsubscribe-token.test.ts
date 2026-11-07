@@ -61,6 +61,21 @@ describe("signUnsubscribeToken / verifyUnsubscribeToken — current tokens", () 
     }
   });
 
+  // Deliberately no expiry: a recipient must be able to opt out from any
+  // email they ever received, however old (CAN-SPAM/RFC 8058 expect the link
+  // to keep working), so the only way a token stops verifying is a secret
+  // change.
+  it("never expires", () => {
+    const token = signUnsubscribeToken(RECIPIENT);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2036-01-01T00:00:00Z"));
+      expect(verifyUnsubscribeToken(token)).toEqual({ kind: "recipient", recipient: RECIPIENT });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects a token issued with a different secret", () => {
     const token = signUnsubscribeToken(RECIPIENT);
     vi.stubEnv("UNSUBSCRIBE_TOKEN_SECRET", "a-completely-different-secret");

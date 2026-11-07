@@ -29,6 +29,7 @@ import { assertWithinLeadLimit, PlanLimitError } from "@/lib/billing/limits";
 import type { ActionResult } from "@/lib/action-result";
 import { verifyLead } from "@/lib/verification/verify";
 import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
+import { isVerifiedPoolLead } from "@/lib/leads/display";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form (react-hook-
@@ -117,12 +118,15 @@ export async function updateLeadAction(id: string, input: LeadInput) {
   const parsed = leadSchema.parse(input);
   const user = await requireUser();
   const supabase = await createClient();
+  const existing = await getLead(supabase, user.id, id);
 
   await updateLead(supabase, user.id, id, {
     list_id: parsed.listId ? parsed.listId : null,
     first_name: parsed.firstName ? parsed.firstName : null,
     last_name: parsed.lastName ? parsed.lastName : null,
-    email: parsed.email.trim().toLowerCase(),
+    // A Polimatiq verified lead's address is fixed (and the database rejects
+    // changing it), so the submitted value is ignored for those leads.
+    ...(isVerifiedPoolLead(existing) ? {} : { email: parsed.email.trim().toLowerCase() }),
     company: parsed.company ? parsed.company : null,
     title: parsed.title ? parsed.title : null,
     ...(parsed.status ? { status: parsed.status } : {}),
@@ -193,6 +197,8 @@ export async function verifyLeadAction(id: string) {
   await checkRateLimit("verification:verify_single", organization.id);
 
   const lead = await getLead(supabase, user.id, id);
+  // Pool leads arrive verified; their stored address is a placeholder.
+  if (isVerifiedPoolLead(lead)) throw new Error("Verified leads from Polimatiq are already verified.");
   await verifyLead(supabase, user.id, organization.id, id, lead.email, "millionverifier");
 
   revalidatePath("/leads");

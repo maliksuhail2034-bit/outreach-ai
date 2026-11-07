@@ -1,5 +1,5 @@
 import type { NextResponse } from "next/server";
-import { runSendWorker } from "@/lib/email/send-worker";
+import { resolveWorkerTuning, runSendWorker } from "@/lib/email/send-worker";
 import { runCronJob } from "@/lib/monitoring/run-cron-job";
 
 // Triggered by an external scheduler — host-agnostic by design, since the
@@ -13,7 +13,8 @@ import { runCronJob } from "@/lib/monitoring/run-cron-job";
 export const runtime = "nodejs";
 
 function handle(request: Request): Promise<NextResponse> {
-  return runCronJob(request, "send-emails", (supabase) => runSendWorker(supabase));
+  const { limit, concurrency } = resolveWorkerTuning();
+  return runCronJob(request, "send-emails", (supabase) => runSendWorker(supabase, limit, concurrency));
 }
 
 export async function GET(request: Request) {

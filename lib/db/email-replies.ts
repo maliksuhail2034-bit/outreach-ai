@@ -38,7 +38,7 @@ export async function recordEmailReply(supabase: Client, values: TablesInsert<"e
 // embed names its three display columns so the encrypted credential columns
 // on mailboxes can never ride along.
 export const INBOX_REPLY_SELECT =
-  "id, campaign_id, lead_id, mailbox_id, subject, from_email, from_name, to_emails, body_text, received_at, read_at, lead:leads(id, first_name, last_name, email, company), campaign:campaigns(id, name), mailbox:mailboxes(id, email, display_name)" as const;
+  "id, campaign_id, lead_id, mailbox_id, subject, from_email, from_name, to_emails, body_text, received_at, read_at, lead:leads(id, first_name, last_name, email, display_email, company), campaign:campaigns(id, name), mailbox:mailboxes(id, email, display_name)" as const;
 
 export interface InboxReply {
   id: string;

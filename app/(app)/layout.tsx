@@ -19,6 +19,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!user) {
     redirect("/login");
   }
+  // Staff accounts belong in the staff console, never in the customer app
+  // (where visiting a page would create a customer organization for them).
+  // app_metadata is only writable with the service role, so this flag in the
+  // signed JWT can't be set by a customer; lib/staff/auth.ts re-checks the
+  // staff_members table, which is the actual authority, inside the console.
+  if (user.app_metadata?.polimatiq_staff === true) {
+    redirect("/console");
+  }
 
   return (
     <div className="min-h-svh bg-background">

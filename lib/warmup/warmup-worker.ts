@@ -7,7 +7,9 @@ import {
   insertWarmupEvent,
   insertWarmupMessage,
   updateWarmupMessage,
-  getWarmupMessageByProviderMessageId,
+  listUnplacedWarmupMessages,
+  listWarmupMessagesByProviderMessageIds,
+  recordWarmupPlacement,
   listDueWarmupReplies,
   countWarmupMessagesSentToday,
   listWarmupMessagesSentOnDate,
@@ -17,14 +19,15 @@ import {
   getMailboxCredentials,
 } from "@/lib/db";
 import { getEmailProvider } from "@/lib/email/get-provider";
-import { getReplyProvider } from "@/lib/email/get-reply-provider";
 import { EmailSendError, type OutboundEmailMessage } from "@/lib/email/provider";
 import { computeNextSendTime, DEFAULT_SENDING_WINDOW } from "@/lib/email/scheduling";
 import { forecastNextRamp, randomizedNextSendDelayMinutes } from "./scheduler";
 import { canTransition, nextStageForStatusChange, transition } from "./state-machine";
 import { calculateWarmupScore } from "./scoring";
+import { runInboxAgent, type InboxAgentResult } from "./inbox-agent";
 import { computeDailyWarmupStats } from "./stats";
-import { INITIAL_TEMPLATES, REPLY_TEMPLATES, pickTemplate } from "./templates";
+import { composeInitialMessage, composeReplyMessage } from "./templates";
+import { escapeHtml } from "@/lib/email/merge-tags";
 import type { WarmupStage } from "./types";
 import { captureError } from "@/lib/monitoring/error-tracking";
 import { errorMessage } from "@/lib/monitoring/error-message";
@@ -176,7 +179,6 @@ async function processWarmupProfile(
   const dueReplies = await listDueWarmupReplies(supabase, mailbox.id, now.toISOString());
   for (const due of dueReplies) {
     if (profile.status !== "enabled") break; // stop once auto-paused mid-cycle
-    const replyTemplate = pickTemplate(REPLY_TEMPLATES);
     const originalSender = await getMailboxCredentials(supabase, due.from_mailbox_id);
 
     const result = await sendWarmupMessage({
@@ -189,7 +191,7 @@ async function processWarmupProfile(
       toDisplayName: originalSender.display_name,
       messageType: "reply",
       subject: `Re: ${due.subject}`,
-      bodyText: replyTemplate.body,
+      bodyText: composeReplyMessage(mailbox.display_name),
       inReplyTo: due.provider_message_id,
       references: [due.provider_message_id],
     });
@@ -216,7 +218,7 @@ async function processWarmupProfile(
 
       if (peer) {
         const peerMailbox = await getMailboxCredentials(supabase, peer.mailbox_id);
-        const template = pickTemplate(INITIAL_TEMPLATES);
+        const template = composeInitialMessage(peerMailbox.display_name, mailbox.display_name);
 
         const result = await sendWarmupMessage({
           supabase,
@@ -308,13 +310,13 @@ async function recordDailyWarmupStats(
   ]);
 
   const stats = computeDailyWarmupStats(sentMessages, emailsReceived);
-  // bounceRate/spamRate are omitted — see lib/warmup/stats.ts's header
-  // comment on why neither has a real signal to average yet.
+  // bounceRate is omitted — see lib/warmup/stats.ts's header comment.
   const warmupScore = calculateWarmupScore({
     stage: profile.stage as WarmupStage,
     targetDailyVolume: profile.target_daily_volume,
     currentDailyVolume: profile.current_daily_volume,
     replyRate: stats.replyRate,
+    spamRate: stats.spamRate,
   });
   const statDate = startOfDay.toISOString().slice(0, 10);
 
@@ -331,6 +333,9 @@ async function recordDailyWarmupStats(
     emails_received: stats.emailsReceived,
     reply_rate: stats.replyRate,
     positive_interactions: stats.positiveInteractions,
+    inbox_count: stats.inboxCount,
+    spam_count: stats.spamCount,
+    spam_rate: stats.spamRate,
     warmup_score: warmupScore,
   });
 }
@@ -411,13 +416,15 @@ async function advanceRampAndStage(
   return updated;
 }
 
-// Step 2: poll this mailbox's real IMAP inbox for newly-arrived peer
-// warmup mail, using this feature's OWN cursor (profile.imap_last_uid/
+// Step 2: the recipient side — see lib/warmup/inbox-agent.ts. One IMAP
+// session per cycle that finds newly arrived warmup mail in the INBOX
+// (envelope only, never message bodies), marks it read and stars some of
+// it, pulls recent warmup mail out of spam, and records where each landed.
+// It uses this feature's OWN cursor (profile.imap_last_uid/
 // imap_uid_validity) — never mailboxes.imap_last_uid, which belongs to the
-// real reply-sync pipeline (lib/email/reply-worker.ts) and must never race
-// with it on the same physical mailbox. Reuses ImapReplyChecker (via
-// getReplyProvider) as pure, non-destructive IMAP mechanics only — it never
-// marks messages as seen or deletes anything.
+// reply-sync pipeline (lib/email/reply-worker.ts).
+const PLACEMENT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
+
 async function pollInboundWarmupMessages(
   supabase: Client,
   profile: Tables<"warmup_profiles">,
@@ -426,15 +433,28 @@ async function pollInboundWarmupMessages(
 ): Promise<void> {
   if (!mailbox.imap_enabled) return;
 
-  const patchedMailbox: Tables<"mailboxes"> = {
-    ...mailbox,
-    imap_last_uid: profile.imap_last_uid,
-    imap_uid_validity: profile.imap_uid_validity,
-  };
+  const now = new Date();
+  // Rows are loaded once and reused for both the "is this ours?" check and
+  // the reply decision below, so each arrival costs no extra query.
+  const warmupRowsById = new Map<string, Tables<"warmup_messages">>();
 
-  let result;
+  let result: InboxAgentResult;
   try {
-    result = await getReplyProvider(patchedMailbox).fetchNewMessages();
+    const pending = await listUnplacedWarmupMessages(
+      supabase,
+      mailbox.id,
+      new Date(now.getTime() - PLACEMENT_LOOKBACK_MS).toISOString(),
+    );
+    result = await runInboxAgent(mailbox, {
+      readOnly: dryRun,
+      cursor: { uidValidity: profile.imap_uid_validity, lastUid: profile.imap_last_uid },
+      pending: pending.map((row) => ({ providerMessageId: row.provider_message_id })),
+      identifyWarmupMessages: async (messageIds) => {
+        const rows = await listWarmupMessagesByProviderMessageIds(supabase, messageIds);
+        for (const row of rows) warmupRowsById.set(row.provider_message_id, row);
+        return new Set(rows.filter((row) => row.to_mailbox_id === mailbox.id).map((row) => row.provider_message_id));
+      },
+    });
   } catch (error) {
     // One mailbox's IMAP failure must not stop the rest of its cycle —
     // mirrors reply-worker.ts's per-mailbox soft-skip.
@@ -446,37 +466,47 @@ async function pollInboundWarmupMessages(
   }
 
   if (dryRun) {
-    console.log("[warmup-worker] dry-run: would advance imap cursor and evaluate replies", {
+    console.log("[warmup-worker] dry-run: would advance imap cursor, record placements and evaluate replies", {
       warmupProfileId: profile.id,
-      messagesFetched: result.messages.length,
+      arrived: result.arrivedMessageIds.length,
+      placements: result.placements,
       cursor: result.cursor,
     });
-  } else {
-    await updateWarmupProfile(supabase, profile.organization_id, profile.mailbox_id, {
-      imap_uid_validity: result.cursor.uidValidity,
-      imap_last_uid: result.cursor.lastUid,
-    });
+    return;
   }
 
-  for (const message of result.messages) {
-    const original = await getWarmupMessageByProviderMessageId(supabase, message.messageId);
+  await updateWarmupProfile(supabase, profile.organization_id, profile.mailbox_id, {
+    imap_uid_validity: result.cursor.uidValidity,
+    imap_last_uid: result.cursor.lastUid,
+  });
+
+  const nowIso = now.toISOString();
+  for (const placement of result.placements) {
+    await recordWarmupPlacement(supabase, placement.providerMessageId, placement.placement, placement.rescued, nowIso);
+  }
+  const rescuedCount = result.placements.filter((placement) => placement.rescued).length;
+  if (rescuedCount > 0) {
+    console.log("[warmup-worker] rescued warmup mail from spam", { warmupProfileId: profile.id, rescuedCount });
+  }
+
+  // Rescued messages weren't part of the INBOX arrival lookup above.
+  const missing = result.arrivedMessageIds.filter((id) => !warmupRowsById.has(id));
+  if (missing.length > 0) {
+    for (const row of await listWarmupMessagesByProviderMessageIds(supabase, missing)) {
+      warmupRowsById.set(row.provider_message_id, row);
+    }
+  }
+
+  for (const messageId of result.arrivedMessageIds) {
+    const original = warmupRowsById.get(messageId);
     // Only ever react to our own 'initial' messages landing back in the
-    // recipient's inbox — never to a 'reply', which bounds every thread to
-    // one hop and prevents infinite ping-pong between the owned mailboxes.
+    // recipient's mailbox — never to a 'reply', which bounds every thread
+    // to one hop and prevents infinite ping-pong between the owned mailboxes.
     if (!original || original.message_type !== "initial" || original.to_mailbox_id !== mailbox.id || original.reply_decision !== "undecided") {
       continue;
     }
 
-    const shouldReply = Math.random() < REPLY_PROBABILITY;
-    if (dryRun) {
-      console.log("[warmup-worker] dry-run: would set reply_decision", {
-        warmupMessageId: original.id,
-        decision: shouldReply ? "pending" : "skipped",
-      });
-      continue;
-    }
-
-    if (shouldReply) {
+    if (Math.random() < REPLY_PROBABILITY) {
       const delayMinutes = MIN_REPLY_DELAY_MINUTES + Math.random() * (MAX_REPLY_DELAY_MINUTES - MIN_REPLY_DELAY_MINUTES);
       await updateWarmupMessage(supabase, original.id, {
         reply_decision: "pending",
@@ -521,6 +551,15 @@ export function classifyWarmupFailure(
   }
   const consecutiveFailures = currentConsecutiveFailures + 1;
   return { consecutiveFailures, shouldPause: consecutiveFailures >= threshold };
+}
+
+// Plain paragraphs, escaped — the same shape a person typing in a webmail
+// client produces.
+export function warmupHtml(bodyText: string): string {
+  return bodyText
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+    .join("");
 }
 
 interface SendWarmupMessageParams {
@@ -568,7 +607,7 @@ async function sendWarmupMessage(params: SendWarmupMessageParams): Promise<SendW
     from: { name: fromMailbox.display_name ?? undefined, email: fromMailbox.email },
     to: { name: toDisplayName ?? undefined, email: toEmail },
     subject,
-    html: `<p>${bodyText}</p>`,
+    html: warmupHtml(bodyText),
     text: bodyText,
     ...(inReplyTo ? { inReplyTo } : {}),
     ...(references ? { references } : {}),

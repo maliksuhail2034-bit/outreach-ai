@@ -38,6 +38,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EnrollDialog } from "./enroll-dialog";
+import { leadEmailLabel } from "@/lib/leads/display";
 
 type Suppression = Tables<"suppressions">;
 
@@ -62,7 +63,7 @@ function statusLabel(status: string) {
 function leadDisplay(lead: Lead | undefined) {
   if (!lead) return "Unknown lead";
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
-  return name || lead.email;
+  return name || leadEmailLabel(lead);
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -132,7 +133,7 @@ export function CampaignLeadTable({
     if (statusFilter !== ALL_STATUSES && row.status !== statusFilter) return false;
     if (search.trim()) {
       const lead = leadById.get(row.lead_id);
-      const haystack = `${leadDisplay(lead)} ${lead?.email ?? ""}`.toLowerCase();
+      const haystack = `${leadDisplay(lead)} ${lead ? leadEmailLabel(lead) : ""}`.toLowerCase();
       if (!haystack.includes(search.trim().toLowerCase())) return false;
     }
     return true;
@@ -375,7 +376,7 @@ export function CampaignLeadTable({
                             ) : (
                               <p className="truncate font-medium">{leadDisplay(lead)}</p>
                             )}
-                            {lead && <p className="truncate text-xs text-muted-foreground">{lead.email}</p>}
+                            {lead && <p className="truncate text-xs text-muted-foreground">{leadEmailLabel(lead)}</p>}
                             {lead && suppressionReasonByEmail.has(lead.email) && (
                               <Badge variant="destructive" className="mt-1">
                                 Suppressed: {statusLabel(suppressionReasonByEmail.get(lead.email)!)}

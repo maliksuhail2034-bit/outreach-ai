@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { recordRateLimitAttempt } from "@/lib/db";
+import { deleteLatestRateLimitAttempt, recordRateLimitAttempt } from "@/lib/db";
 import type { RateLimitCheckResult, RateLimitConfig, RateLimiter } from "../provider";
 
 // The only real implementation today — see the migration
@@ -16,5 +16,9 @@ export class PostgresRateLimiter implements RateLimiter {
     const supabase = createAdminClient();
     const result = await recordRateLimitAttempt(supabase, scope, identity, config.windowSeconds, config.maxAttempts);
     return { allowed: result.allowed, retryAfterSeconds: result.retryAfterSeconds };
+  }
+
+  async release(scope: string, identity: string): Promise<boolean> {
+    return deleteLatestRateLimitAttempt(createAdminClient(), scope, identity);
   }
 }

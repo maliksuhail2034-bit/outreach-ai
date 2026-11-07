@@ -17,6 +17,7 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { ManageSubscriptionButton } from "@/components/billing/manage-subscription-button";
 import { ManageRazorpaySubscriptionButton } from "@/components/billing/manage-razorpay-subscription-button";
 import { PlanList } from "@/components/billing/plan-list";
+import { GeoipAttribution } from "@/components/billing/geoip-attribution";
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: "long", day: "numeric", year: "numeric" });
 
@@ -170,6 +171,7 @@ export default async function BillingPage() {
           planChangeBlocked={planChangeBlocked}
           internalUnlimited={internalUnlimited}
         />
+        <GeoipAttribution />
       </FadeIn>
     </div>
   );

@@ -22,6 +22,7 @@ import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/act
 import { LeadForm } from "@/components/leads/lead-form";
 import { LeadDetailActions } from "@/components/leads/lead-detail-actions";
 import { LeadEnrollmentsTable } from "@/components/leads/lead-enrollments-table";
+import { leadEmailLabel } from "@/lib/leads/display";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   new: "outline",
@@ -80,9 +81,9 @@ const EMAIL_EVENT_VARIANT: Record<string, TimelineEntry["variant"]> = {
 // ANALYTICS_ROW_LIMIT, just for one lead instead of a whole account.
 const EVENT_FETCH_LIMIT = 500;
 
-function leadName(name: { first_name: string | null; last_name: string | null; email: string }) {
+function leadName(name: { first_name: string | null; last_name: string | null; email: string; display_email: string | null }) {
   const full = [name.first_name, name.last_name].filter(Boolean).join(" ");
-  return full || name.email;
+  return full || leadEmailLabel(name);
 }
 
 function statusLabel(status: string) {
@@ -223,7 +224,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
                 {detailsFormFailed ? (
                   <ThrowIfFailed error={leadListsResult.error} />
                 ) : (
-                  <LeadForm mode="edit" lead={lead} leadLists={leadLists} onSuccess={() => {}} />
+                  <LeadForm mode="edit" lead={lead} leadLists={leadLists} />
                 )}
               </WidgetErrorBoundary>
             </CardContent>

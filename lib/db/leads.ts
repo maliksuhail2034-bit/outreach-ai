@@ -179,6 +179,15 @@ export async function countLeads(supabase: Client, userId: string) {
   return countOrThrow(await supabase.from("leads").select("*", { count: "exact", head: true }).eq("user_id", userId));
 }
 
+// The customer's own leads only — verified leads delivered by Polimatiq are
+// an included benefit and don't use up the plan's lead allowance (matches the
+// database trigger private.enforce_plan_row_limit()).
+export async function countOwnLeads(supabase: Client, userId: string) {
+  return countOrThrow(
+    await supabase.from("leads").select("*", { count: "exact", head: true }).eq("user_id", userId).is("verified_lead_id", null),
+  );
+}
+
 export async function getLead(supabase: Client, userId: string, id: string) {
   const result = await supabase.from("leads").select("*").eq("user_id", userId).eq("id", id).single();
   return unwrap<Tables<"leads">>(result);
@@ -340,6 +349,7 @@ export async function queueLeadsForVerification(supabase: Client, userId: string
     .from("leads")
     .update({ verification_status: "pending", verification_locked_until: null })
     .eq("user_id", userId)
+    .is("verified_lead_id", null)
     .in("id", ids);
   if (error) throw error;
 }
@@ -348,7 +358,8 @@ export async function queueAllLeadsForVerification(supabase: Client, userId: str
   const { error } = await supabase
     .from("leads")
     .update({ verification_status: "pending", verification_locked_until: null })
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .is("verified_lead_id", null);
   if (error) throw error;
 }
 

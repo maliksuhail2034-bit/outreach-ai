@@ -33,6 +33,7 @@ import { LEAD_VERIFICATION_STATUSES, type LeadVerificationStatus } from "@/lib/v
 import { TimezoneSelect } from "@/components/campaigns/timezone-select";
 import { CsvImportDialog } from "./csv-import-dialog";
 import { LeadForm } from "./lead-form";
+import { isVerifiedPoolLead, leadEmailLabel } from "@/lib/leads/display";
 
 type Lead = Tables<"leads">;
 type LeadList = Tables<"lead_lists">;
@@ -83,7 +84,7 @@ function statusLabel(status: string) {
 
 function leadName(lead: Lead) {
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
-  return name || lead.email;
+  return name || leadEmailLabel(lead);
 }
 
 export function LeadTable({
@@ -205,7 +206,7 @@ export function LeadTable({
       try {
         await verifyLeadAction(lead.id);
       } catch {
-        toast.error(`Couldn't verify ${lead.email}. Connect a provider in Settings -> Verification and try again.`);
+        toast.error(`Couldn't verify ${leadEmailLabel(lead)}. Connect a provider in Settings -> Verification and try again.`);
       } finally {
         setVerifyingIds((prev) => {
           const next = new Set(prev);
@@ -381,7 +382,7 @@ export function LeadTable({
               </div>
             )}
 
-            <div className="overflow-x-auto" style={{ contain: "layout" }}>
+            <div className="relative overflow-x-auto" style={{ contain: "layout" }}>
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
@@ -403,7 +404,7 @@ export function LeadTable({
                     <th className="py-2 pr-4 font-medium">List</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium">Verification</th>
-                    <th className="py-2 pl-4 text-right font-medium">
+                    <th className="sticky right-0 bg-card py-2 pl-4 text-right font-medium">
                       <span className="sr-only">Actions</span>
                     </th>
                   </tr>
@@ -424,7 +425,7 @@ export function LeadTable({
                         <Link href={`/leads/${lead.id}`} className="block truncate font-medium hover:underline">
                           {leadName(lead)}
                         </Link>
-                        <p className="truncate text-xs text-muted-foreground">{lead.email}</p>
+                        <p className="truncate text-xs text-muted-foreground">{leadEmailLabel(lead)}</p>
                       </td>
                       <td className="max-w-40 truncate py-3 pr-4 text-muted-foreground">{lead.company || "—"}</td>
                       <td className="max-w-40 truncate py-3 pr-4 text-muted-foreground">{lead.title || "—"}</td>
@@ -439,17 +440,20 @@ export function LeadTable({
                           {VERIFICATION_STATUS_LABEL[lead.verification_status] ?? lead.verification_status}
                         </Badge>
                       </td>
-                      <td className="py-3 pl-4">
+                      {/* Pinned so the row actions stay visible while the table scrolls sideways. */}
+                      <td className="sticky right-0 bg-card py-3 pl-4">
                         <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Verify ${leadName(lead)}`}
-                            disabled={verifyingIds.has(lead.id)}
-                            onClick={() => handleVerify(lead)}
-                          >
-                            <BadgeCheckIcon className="size-4" />
-                          </Button>
+                          {!isVerifiedPoolLead(lead) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Verify ${leadName(lead)}`}
+                              disabled={verifyingIds.has(lead.id)}
+                              onClick={() => handleVerify(lead)}
+                            >
+                              <BadgeCheckIcon className="size-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -506,7 +510,7 @@ export function LeadTable({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Remove lead?</DialogTitle>
-            <DialogDescription>This removes {deleting?.email} permanently.</DialogDescription>
+            <DialogDescription>This removes {deleting ? leadEmailLabel(deleting) : ""} permanently.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleting(null)} disabled={isDeleting}>

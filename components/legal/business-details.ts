@@ -22,7 +22,7 @@ export const BUSINESS_DETAILS: BusinessDetails = {
   operatorName: "Polimatiq",
   supportEmail: "support@polimatiq.com",
   governingLaw: "the laws of India",
-  lastUpdated: "9 October 2026",
+  lastUpdated: "25 October 2026",
 };
 
 export const PLACEHOLDER_LABELS: Record<keyof BusinessDetails, string> = {

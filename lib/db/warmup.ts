@@ -185,7 +185,7 @@ export async function listWarmupMessagesSentOnDate(
 ) {
   const { data, error } = await supabase
     .from("warmup_messages")
-    .select("message_type, reply_decision")
+    .select("message_type, reply_decision, placement")
     .eq("from_warmup_profile_id", warmupProfileId)
     .gte("sent_at", startOfDayIso)
     .lte("sent_at", endOfDayIso);
@@ -224,4 +224,70 @@ export async function upsertWarmupStat(supabase: Client, values: TablesInsert<"w
     .select("*")
     .single();
   return unwrap<Tables<"warmup_stats">>(result);
+}
+
+// Upper bound on ids per `in (...)` filter, keeping the PostgREST request
+// URL small (Message-IDs can be ~100 characters each).
+const MESSAGE_ID_CHUNK = 50;
+
+// Batched form of getWarmupMessageByProviderMessageId: which of these
+// Message-IDs are warmup emails, in one query per chunk instead of one per
+// inbox message.
+export async function listWarmupMessagesByProviderMessageIds(supabase: Client, providerMessageIds: string[]) {
+  const unique = [...new Set(providerMessageIds)];
+  const rows: Tables<"warmup_messages">[] = [];
+  for (let index = 0; index < unique.length; index += MESSAGE_ID_CHUNK) {
+    const { data, error } = await supabase
+      .from("warmup_messages")
+      .select("*")
+      .in("provider_message_id", unique.slice(index, index + MESSAGE_ID_CHUNK));
+    if (error) throw error;
+    rows.push(...(data ?? []));
+  }
+  return rows;
+}
+
+// Recent warmup mail addressed to this mailbox whose placement (inbox or
+// spam) hasn't been found yet — what the inbox agent searches spam for.
+export async function listUnplacedWarmupMessages(supabase: Client, mailboxId: string, sinceIso: string, limit = 50) {
+  const { data, error } = await supabase
+    .from("warmup_messages")
+    .select("id, provider_message_id")
+    .eq("to_mailbox_id", mailboxId)
+    .is("placement", null)
+    .gte("sent_at", sinceIso)
+    .order("sent_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Records where a warmup message first landed. Only ever sets a placement
+// that's still unknown, so a message rescued from spam (placement 'spam')
+// isn't later relabelled 'inbox' when the agent sees it arrive there.
+export async function recordWarmupPlacement(
+  supabase: Client,
+  providerMessageId: string,
+  placement: "inbox" | "spam",
+  rescued: boolean,
+  now: string,
+) {
+  const { error } = await supabase
+    .from("warmup_messages")
+    .update({ placement, placement_checked_at: now, ...(rescued ? { rescued_at: now } : {}) })
+    .eq("provider_message_id", providerMessageId)
+    .is("placement", null);
+  if (error) throw error;
+}
+
+// Every profile's daily stats since `sinceDate` (YYYY-MM-DD) for one
+// organization, in a single query — the warmup dashboard's 7-day summary.
+export async function listRecentWarmupStats(supabase: Client, organizationId: string, sinceDate: string) {
+  const { data, error } = await supabase
+    .from("warmup_stats")
+    .select("warmup_profile_id, stat_date, emails_sent, emails_received, positive_interactions, inbox_count, spam_count")
+    .eq("organization_id", organizationId)
+    .gte("stat_date", sinceDate);
+  if (error) throw error;
+  return data ?? [];
 }

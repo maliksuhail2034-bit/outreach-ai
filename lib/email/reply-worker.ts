@@ -11,6 +11,7 @@ import {
   getSentEventForOwner,
   listActiveCampaignLeadsForMailbox,
   listLeadIdsByEmail,
+  listDeliveredLeadIdsByRealEmail,
   markCampaignLeadBounced,
   recordEmailEvent,
   recordEmailReply,
@@ -24,6 +25,7 @@ import { getReplyProvider } from "./get-reply-provider";
 import type { FetchResult, ReplyMessage, SyncCursor } from "./reply-provider";
 import { captureError } from "@/lib/monitoring/error-tracking";
 import { errorMessage } from "@/lib/monitoring/error-message";
+import { resolveLeadContact } from "@/lib/verified-leads/contact";
 
 // Lead-level status is only ever advanced to 'replied' from these two
 // states — never overwrites a human's own 'qualified'/'unqualified' call.
@@ -349,14 +351,17 @@ async function processDeliveryReport(
   }
 
   const lead = await getLeadById(supabase, sentEvent.lead_id);
-  if (!report.hardBouncedRecipients.includes(lead.email.toLowerCase())) {
+  const contact = await resolveLeadContact(supabase, lead);
+  if (!contact || !report.hardBouncedRecipients.includes(contact.email.toLowerCase())) {
     logUnprocessedBounce(mailbox, message, "bounced address is not the lead's address");
     return "unmatched";
   }
 
+  // The real address for a verified-pool lead, so the suppression trigger
+  // pulls it from the pool for every customer.
   await createSuppression(supabase, {
     user_id: mailbox.user_id,
-    email: lead.email,
+    email: contact.email,
     reason: "bounced",
     source_campaign_id: sentEvent.campaign_id,
   });
@@ -459,7 +464,13 @@ async function matchReply(
     };
   }
 
-  const candidateLeadIds = await listLeadIdsByEmail(supabase, mailbox.user_id, message.from.email);
+  // A verified-pool lead stores a placeholder address, so its real address
+  // is matched through the pool's delivery records.
+  const [ownLeadIds, deliveredLeadIds] = await Promise.all([
+    listLeadIdsByEmail(supabase, mailbox.user_id, message.from.email),
+    listDeliveredLeadIdsByRealEmail(supabase, mailbox.user_id, message.from.email),
+  ]);
+  const candidateLeadIds = [...new Set([...ownLeadIds, ...deliveredLeadIds])];
   if (candidateLeadIds.length === 0) return null;
 
   const candidateCampaignLeads = await listActiveCampaignLeadsForMailbox(supabase, mailbox.id, candidateLeadIds);

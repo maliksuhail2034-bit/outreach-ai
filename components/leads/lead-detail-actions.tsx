@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { isVerifiedPoolLead, leadEmailLabel } from "@/lib/leads/display";
 
 // Same verify/delete business logic as components/leads/lead-table.tsx,
 // just single-lead and page-level instead of row-level: reuses the exact
@@ -32,7 +33,7 @@ export function LeadDetailActions({ lead }: { lead: Tables<"leads"> }) {
       try {
         await verifyLeadAction(lead.id);
       } catch {
-        toast.error(`Couldn't verify ${lead.email}. Connect a provider in Settings -> Verification and try again.`);
+        toast.error(`Couldn't verify ${leadEmailLabel(lead)}. Connect a provider in Settings -> Verification and try again.`);
       }
     });
   }
@@ -55,10 +56,13 @@ export function LeadDetailActions({ lead }: { lead: Tables<"leads"> }) {
 
   return (
     <>
-      <Button variant="outline" size="sm" disabled={isVerifying} onClick={handleVerify}>
-        <BadgeCheckIcon />
-        {isVerifying ? "Verifying…" : "Verify"}
-      </Button>
+      {/* Pool leads arrive already verified by Polimatiq. */}
+      {!isVerifiedPoolLead(lead) && (
+        <Button variant="outline" size="sm" disabled={isVerifying} onClick={handleVerify}>
+          <BadgeCheckIcon />
+          {isVerifying ? "Verifying…" : "Verify"}
+        </Button>
+      )}
       <Button variant="outline" size="sm" onClick={() => setDeleteOpen(true)}>
         <Trash2Icon />
         Delete
@@ -68,7 +72,7 @@ export function LeadDetailActions({ lead }: { lead: Tables<"leads"> }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Remove lead?</DialogTitle>
-            <DialogDescription>This removes {lead.email} permanently.</DialogDescription>
+            <DialogDescription>This removes {leadEmailLabel(lead)} permanently.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={isDeleting}>

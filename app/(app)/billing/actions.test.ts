@@ -79,7 +79,7 @@ beforeEach(() => {
   mockRequireUser.mockRejectedValue(new Error("Unauthorized: no authenticated user."));
   mockGetUserOrganization.mockResolvedValue(ORGANIZATION as never);
   // Allowed by default — the rate-limit tests override this with a rejection.
-  mockCheckRateLimit.mockResolvedValue(undefined);
+  mockCheckRateLimit.mockResolvedValue(true);
   mockGetPriceId.mockReturnValue("price_test_starter_1m");
 });
 

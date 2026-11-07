@@ -41,14 +41,35 @@ describe("runRetentionWorker", () => {
   });
 
   it("reports deleted counts for both rate_limit_events and job_runs", async () => {
-    const supabase = createSupabaseStub({ rate_limit_events: 12, job_runs: 4 });
+    const supabase = createSupabaseStub({ rate_limit_events: 12, job_runs: 4, auth_events: 2, page_views: 30 });
 
     const summary = await runRetentionWorker(supabase);
 
     expect(summary.results).toEqual([
       expect.objectContaining({ table: "rate_limit_events", deletedCount: 12 }),
       expect.objectContaining({ table: "job_runs", deletedCount: 4 }),
+      expect.objectContaining({ table: "auth_events", deletedCount: 2 }),
+      expect.objectContaining({ table: "page_views", deletedCount: 30 }),
     ]);
+  });
+
+  it("keeps sign-in records (auth_events) for 90 days", async () => {
+    const supabase = createSupabaseStub({});
+
+    const summary = await runRetentionWorker(supabase);
+
+    const cutoff = new Date(summary.results.find((r) => r.table === "auth_events")!.cutoff).getTime();
+    const ninetyDaysAgo = Date.now() - 90 * 86_400_000;
+    expect(Math.abs(cutoff - ninetyDaysAgo)).toBeLessThan(2 * 3_600_000);
+  });
+
+  it("keeps traffic analytics (page_views) for 180 days", async () => {
+    const supabase = createSupabaseStub({});
+
+    const summary = await runRetentionWorker(supabase);
+
+    const cutoff = new Date(summary.results.find((r) => r.table === "page_views")!.cutoff).getTime();
+    expect(Math.abs(cutoff - (Date.now() - 180 * 86_400_000))).toBeLessThan(2 * 3_600_000);
   });
 
   it("queries both tables with a created_at cutoff", async () => {

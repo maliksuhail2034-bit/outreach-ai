@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordEmailEvent } from "@/lib/db";
 import { verifyClickTrackingToken } from "@/lib/email/tracking-token";
+import { resolveLegacyClickToken } from "@/lib/email/legacy-click-token";
 
 // Same runtime requirement as every other Route Handler in this codebase
 // that touches Supabase server-side (see app/api/health/route.ts and
@@ -40,9 +41,14 @@ function rejectedResponse(): NextResponse {
 // signing, and (b) have a destinationUrl that is a real http(s) absolute
 // URL, never javascript:/data:/anything else. Nothing below re-derives or
 // re-validates the destination; it doesn't need to.
+//
+// The one exception is a link signed with a since-lost secret: see
+// lib/email/legacy-click-token.ts, which only accepts a destination the
+// stored, actually-sent step contains for that lead.
 export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const context = verifyClickTrackingToken(token);
+  const verified = verifyClickTrackingToken(token);
+  const context = verified ?? (await resolveLegacyClickToken(token));
 
   if (!context) {
     return rejectedResponse();
@@ -55,7 +61,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
       lead_id: context.leadId,
       mailbox_id: context.mailboxId,
       event_type: "clicked",
-      metadata: { sequenceStepId: context.sequenceStepId, destinationUrl: context.destinationUrl },
+      metadata: {
+        sequenceStepId: context.sequenceStepId,
+        destinationUrl: context.destinationUrl,
+        ...(verified ? {} : { legacyToken: true }),
+      },
     });
   } catch (error) {
     // Never let a DB error block the redirect or surface to the recipient

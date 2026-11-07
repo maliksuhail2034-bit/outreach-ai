@@ -8,15 +8,18 @@ import { encryptSmtpPassword } from "@/lib/crypto/smtp-secret";
 import { exchangeCodeForTokens, getMicrosoftUserInfo, MicrosoftOAuthError } from "@/lib/email/microsoft-oauth";
 import { OUTLOOK_IMAP_HOST, OUTLOOK_IMAP_PORT, OUTLOOK_SMTP_HOST, OUTLOOK_SMTP_PORT } from "@/lib/email/microsoft-constants";
 import { STATE_COOKIE_NAME } from "../start/route";
+import { appUrl } from "@/lib/app-url";
 
 // Defaults a brand-new Outlook mailbox gets, matching mailbox-form.tsx's own
 // create-mode defaults exactly — same as the Google callback's defaults.
 const DEFAULT_DAILY_LIMIT = 50;
 const DEFAULT_HOURLY_LIMIT = 10;
-const DEFAULT_COOLDOWN_MINUTES = 0;
+// 5 minutes, randomised up to 7.5 by claimable_due_sends(), so sends never
+// go out on a fixed machine-like cadence.
+const DEFAULT_COOLDOWN_MINUTES = 5;
 
-function redirectWithError(request: NextRequest, message: string) {
-  const url = new URL("/mailboxes", request.url);
+function redirectWithError(message: string) {
+  const url = appUrl("/mailboxes");
   url.searchParams.set("error", message);
   const response = NextResponse.redirect(url);
   response.cookies.delete(STATE_COOKIE_NAME);
@@ -40,7 +43,7 @@ export async function GET(request: NextRequest) {
 
   const microsoftError = searchParams.get("error");
   if (microsoftError) {
-    return redirectWithError(request, "Microsoft sign-in was cancelled or denied.");
+    return redirectWithError("Microsoft sign-in was cancelled or denied.");
   }
 
   const code = searchParams.get("code");
@@ -48,7 +51,7 @@ export async function GET(request: NextRequest) {
   const stateCookie = request.cookies.get(STATE_COOKIE_NAME)?.value;
 
   if (!code || !isValidState(stateCookie, state)) {
-    return redirectWithError(request, "This connection request is invalid or expired. Try connecting again.");
+    return redirectWithError("This connection request is invalid or expired. Try connecting again.");
   }
 
   // Re-checked independently of the /mailboxes page's own auth guard —
@@ -60,7 +63,7 @@ export async function GET(request: NextRequest) {
   if (!user) {
     // The session ended during the round trip to the provider — send the
     // user to sign in again instead of failing with a 500.
-    const url = new URL("/login", request.url);
+    const url = appUrl("/login");
     url.searchParams.set("error", "Your session expired. Sign in and connect the mailbox again.");
     const response = NextResponse.redirect(url);
     response.cookies.delete(STATE_COOKIE_NAME);
@@ -131,13 +134,13 @@ export async function GET(request: NextRequest) {
     // generic message before it can reach the redirect URL. Mirrors
     // app/api/oauth/google/callback/route.ts exactly.
     if (error instanceof MicrosoftOAuthError || error instanceof PlanLimitError) {
-      return redirectWithError(request, error.message);
+      return redirectWithError(error.message);
     }
     console.error("[oauth/microsoft/callback] unexpected error", error);
-    return redirectWithError(request, "Couldn't connect this Microsoft account. Try again.");
+    return redirectWithError("Couldn't connect this Microsoft account. Try again.");
   }
 
-  const response = NextResponse.redirect(new URL("/mailboxes?connected=outlook", request.url));
+  const response = NextResponse.redirect(appUrl("/mailboxes?connected=outlook"));
   response.cookies.delete(STATE_COOKIE_NAME);
   return response;
 }

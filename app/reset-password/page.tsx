@@ -11,6 +11,11 @@ export default async function ResetPasswordPage() {
   if (!user) {
     redirect("/forgot-password");
   }
+  // Staff set their password in the console (stricter policy). Older staff
+  // setup links pointed here.
+  if (user.app_metadata?.polimatiq_staff === true) {
+    redirect("/console/account?required=password");
+  }
 
   return (
     <AuthShell>

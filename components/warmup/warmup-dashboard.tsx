@@ -6,8 +6,9 @@ import { FlameIcon, PauseIcon, PlayIcon, PowerIcon, SettingsIcon } from "lucide-
 
 import type { Tables } from "@/types/database.types";
 import type { MailboxSafe } from "@/lib/db";
-import { daysWarming, forecastNextRamp } from "@/lib/warmup/scheduler";
+import { daysWarming, forecastNextRamp, nextIncreaseStatus } from "@/lib/warmup/scheduler";
 import type { WarmupStage } from "@/lib/warmup/types";
+import type { WarmupPeriodSummary } from "@/lib/warmup/stats";
 import { disableWarmupAction, pauseWarmupAction } from "@/app/(app)/warmup/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,13 +43,26 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-// Structural warnings only — no fabricated statistics. A profile with real
-// stats (see warmup_stats) will have more to say here once a future stats
-// worker populates them; today this just reflects configuration state.
-function warningsFor(profile: WarmupProfile | undefined): string[] {
+// Configuration state plus what the last 7 days of real placement data say.
+function warningsFor(
+  profile: WarmupProfile | undefined,
+  summary: WarmupPeriodSummary | undefined,
+  imapEnabled: boolean,
+): string[] {
   if (!profile || profile.status === "disabled") return ["Not warming up"];
-  if (profile.status === "paused") return ["Paused"];
-  return [];
+  const warnings: string[] = [];
+  if (profile.status === "paused") warnings.push("Paused");
+  if (!imapEnabled) warnings.push("Enable IMAP so this mailbox can rescue warmup mail from spam");
+  if (summary?.inboxRate != null && summary.inboxRate < 80) {
+    warnings.push(`Only ${summary.inboxRate}% reached the inbox — hold off on campaigns from this mailbox`);
+  }
+  return warnings;
+}
+
+function placementVariant(rate: number): "success" | "warning" | "destructive" {
+  if (rate >= 90) return "success";
+  if (rate >= 75) return "warning";
+  return "destructive";
 }
 
 const DEFAULT_SETTINGS = { targetDailyVolume: 30, rampUpPercent: 20 };
@@ -56,9 +70,11 @@ const DEFAULT_SETTINGS = { targetDailyVolume: 30, rampUpPercent: 20 };
 export function WarmupDashboard({
   mailboxes,
   profileByMailbox,
+  summaryByProfile = {},
 }: {
   mailboxes: MailboxSafe[];
   profileByMailbox: Record<string, WarmupProfile>;
+  summaryByProfile?: Record<string, WarmupPeriodSummary>;
 }) {
   const [dialogMailboxId, setDialogMailboxId] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<"enable" | "settings">("enable");
@@ -111,9 +127,10 @@ export function WarmupDashboard({
       <CardHeader>
         <CardTitle>Mailbox warmup</CardTitle>
         <CardDescription>
-          Ramp sending volume gradually to build inbox reputation before real campaigns. This doesn&apos;t yet
-          change what a live campaign actually sends — a mailbox&apos;s Daily/Hourly limit (set when connecting
-          it, under Mailboxes) is what controls that today, so set a conservative one for a new mailbox.
+          Your warmup mailboxes email each other, open, star and reply to that mail, and pull any of it that lands
+          in spam back to the inbox, so providers learn to trust them. Inbox % is measured on that warmup mail.
+          Warmup doesn&apos;t change what a live campaign sends — the mailbox&apos;s Daily/Hourly limit (under
+          Mailboxes) controls that, so keep it conservative while a mailbox is still warming.
         </CardDescription>
       </CardHeader>
 
@@ -136,10 +153,13 @@ export function WarmupDashboard({
                     targetDailyVolume: profile.target_daily_volume,
                     currentDailyVolume: profile.current_daily_volume,
                     rampUpPercent: profile.ramp_up_percent,
-                    lastActivityAt: profile.last_activity_at,
+                    // Same anchor the warmup worker ramps from.
+                    lastActivityAt: profile.last_ramp_increase_at ?? profile.started_at,
                   })
                 : { nextVolume: null, nextIncreaseAt: null };
-              const warnings = warningsFor(profile);
+              const nextIncrease = nextIncreaseStatus(forecast);
+              const summary = profile ? summaryByProfile[profile.id] : undefined;
+              const warnings = warningsFor(profile, summary, mailbox.imap_enabled);
 
               return (
                 <li key={mailbox.id} className="space-y-2 py-4 first:pt-0 last:pb-0">
@@ -152,13 +172,27 @@ export function WarmupDashboard({
                         <Badge variant={scoreVariant(profile?.health_score ?? 0)}>
                           {profile?.health_score ?? 0}/100
                         </Badge>
+                        {summary?.inboxRate != null && (
+                          <Badge variant={placementVariant(summary.inboxRate)}>{summary.inboxRate}% inbox</Badge>
+                        )}
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {profile?.current_daily_volume ?? 0}/{profile?.target_daily_volume ?? DEFAULT_SETTINGS.targetDailyVolume}
                         {" per day · Days warming: "}
                         {daysWarming(profile?.started_at ?? null)}
                         {" · Next increase: "}
-                        {forecast.nextIncreaseAt ? new Date(forecast.nextIncreaseAt).toLocaleDateString() : "—"}
+                        {nextIncrease.kind === "scheduled"
+                          ? new Date(nextIncrease.at).toLocaleDateString()
+                          : nextIncrease.kind === "due"
+                            ? "due at the next warmup cycle"
+                            : "—"}
+                        {summary && (
+                          <>
+                            {" · Last 7 days: "}
+                            {summary.sent} sent, {summary.received} received, {summary.replies} replies
+                            {summary.spam > 0 ? `, ${summary.spam} rescued from spam` : ""}
+                          </>
+                        )}
                         {warnings.length > 0 && (
                           <>
                             {" · "}

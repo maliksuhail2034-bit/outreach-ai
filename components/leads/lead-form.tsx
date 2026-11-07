@@ -15,6 +15,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TimezoneSelect } from "@/components/campaigns/timezone-select";
+import { isVerifiedPoolLead, leadEmailLabel } from "@/lib/leads/display";
 
 const NO_LIST = "none";
 
@@ -22,9 +23,11 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+// onSuccess is optional so a Server Component (the lead detail page) can
+// render this form: a function prop can't cross the server/client boundary.
 type LeadFormProps =
-  | { mode: "create"; lead?: undefined; leadLists: Tables<"lead_lists">[]; onSuccess: () => void }
-  | { mode: "edit"; lead: Tables<"leads">; leadLists: Tables<"lead_lists">[]; onSuccess: () => void };
+  | { mode: "create"; lead?: undefined; leadLists: Tables<"lead_lists">[]; onSuccess?: () => void }
+  | { mode: "edit"; lead: Tables<"leads">; leadLists: Tables<"lead_lists">[]; onSuccess?: () => void };
 
 export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
   const [isPending, startTransition] = useTransition();
@@ -64,7 +67,7 @@ export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
           await updateLeadAction(lead.id, values);
           toast.success("Lead updated.");
         }
-        onSuccess();
+        onSuccess?.();
       } catch (error) {
         toast.error(
           error instanceof ActionError
@@ -112,15 +115,28 @@ export function LeadForm({ mode, lead, leadLists, onSuccess }: LeadFormProps) {
         <FormField
           control={form.control}
           name="email"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Email</FormLabel>
-              <FormControl>
-                <Input placeholder="jane@company.com" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
+          render={({ field }) =>
+            mode === "edit" && isVerifiedPoolLead(lead) ? (
+              // The real address of a Polimatiq verified lead never reaches
+              // the browser; the form keeps the placeholder value, which the
+              // server ignores for these leads.
+              <FormItem>
+                <FormLabel>Email</FormLabel>
+                <FormControl>
+                  <Input value={leadEmailLabel(lead)} readOnly disabled aria-readonly />
+                </FormControl>
+                <FormDescription>Verified lead from Polimatiq. The address is masked and can&apos;t be changed.</FormDescription>
+              </FormItem>
+            ) : (
+              <FormItem>
+                <FormLabel>Email</FormLabel>
+                <FormControl>
+                  <Input placeholder="jane@company.com" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )
+          }
         />
 
         <div className="grid gap-4 sm:grid-cols-2">

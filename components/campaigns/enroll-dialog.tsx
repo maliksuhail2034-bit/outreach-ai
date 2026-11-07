@@ -23,6 +23,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { leadEmailLabel } from "@/lib/leads/display";
 
 function reasonLabel(reason: string) {
   return reason.charAt(0).toUpperCase() + reason.slice(1);
@@ -41,7 +42,7 @@ const USE_DEFAULT = "default";
 
 function leadDisplay(lead: Lead) {
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
-  return name || lead.email;
+  return name || leadEmailLabel(lead);
 }
 
 export function EnrollDialog({

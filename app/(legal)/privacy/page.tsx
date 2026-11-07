@@ -68,7 +68,10 @@ const sections: LegalSection[] = [
         <p>
           <strong>Technical data:</strong> information your browser sends, such as IP address and approximate
           country (used, for example, to decide which payment currency applies to you), plus security, rate-limit
-          and service logs.
+          and service logs. Your country is looked up from your IP address in a database stored on the server that
+          runs the Service, which is hosted by Hostinger; your IP address is not sent to a third party for this. That database is{" "}
+          <a href="https://db-ip.com">IP Geolocation by DB-IP</a>, licensed under{" "}
+          <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
         </p>
         <p>
           <strong>Communications:</strong> messages you send to support and related records.
@@ -105,7 +108,7 @@ const sections: LegalSection[] = [
       <>
         <p>We share personal data only as needed to run the Service, with:</p>
         <ul>
-          <li><strong>Infrastructure providers:</strong> Supabase (database and authentication) and Vercel (application hosting);</li>
+          <li><strong>Infrastructure providers:</strong> Supabase (database and authentication) and Hostinger (application hosting);</li>
           <li><strong>Payment processing:</strong> Razorpay;</li>
           <li><strong>Email delivery for account messages</strong> such as confirmations and password resets;</li>
           <li>
@@ -141,12 +144,20 @@ const sections: LegalSection[] = [
     id: "cookies",
     title: "Cookies and similar technologies",
     content: (
-      <p>
-        We use cookies that are needed to keep you signed in and to secure your session, and your browser stores
-        preferences such as light or dark theme. We do not use advertising cookies or third-party analytics
-        trackers on our website or application. Campaign emails sent through the Service may contain open-tracking
-        pixels and tracked links, as described above.
-      </p>
+      <>
+        <p>
+          We use cookies that are needed to keep you signed in and to secure your session, and your browser stores
+          preferences such as light or dark theme. We do not use advertising cookies or third-party analytics
+          trackers on our website or application. Campaign emails sent through the Service may contain open-tracking
+          pixels and tracked links, as described above.
+        </p>
+        <p>
+          We count visits to our website ourselves, without cookies. For each visit we record the page, the
+          referring site, the type of device and the approximate country, but not your IP address or browser
+          details, and a visitor can&rsquo;t be recognised from one day to the next. These statistics are kept for
+          180 days.
+        </p>
+      </>
     ),
   },
   {
@@ -157,7 +168,9 @@ const sections: LegalSection[] = [
         <p>
           We keep customer account data and customer content for as long as your account is active and as needed
           to provide the Service. Some operational logs are deleted automatically on a schedule, for example
-          rate-limit records after 7 days and background job records after 90 days.
+          rate-limit records after 7 days, web server access logs after 7 days, sign-in records after 90 days,
+          background job records after 90 days and visit statistics after 180 days. Logs kept on the server that
+          runs the Service, such as application and error logs, are deleted automatically after 7 days.
         </p>
         <p>
           Unsubscribe and bounce suppression records are kept so that suppressed addresses stay blocked, including
@@ -171,12 +184,23 @@ const sections: LegalSection[] = [
     id: "security",
     title: "Security",
     content: (
-      <p>
-        We use measures such as encryption in transit, encryption of stored mailbox credentials and provider API
-        keys, access controls that separate each customer&rsquo;s data, and restricted administrative access. No
-        system is completely secure, and we cannot guarantee absolute security. Keep your password secure and tell
-        us at <SupportEmail subject="Security" /> if you suspect unauthorized access.
-      </p>
+      <>
+        <p>
+          We use measures such as encryption in transit, encryption of stored mailbox credentials and provider API
+          keys, access controls that separate each customer&rsquo;s data, and restricted administrative access. No
+          system is completely secure, and we cannot guarantee absolute security. Keep your password secure and tell
+          us at <SupportEmail subject="Security" /> if you suspect unauthorized access.
+        </p>
+        <p>
+          To protect the Service, the web server that runs it keeps a log of each request for 7 days: IP address,
+          date and time, page requested, browser type and the response. A security tool on that server, CrowdSec,
+          reads these logs and our sign-in logs to block addresses that scan for weaknesses or try to guess
+          passwords. When it blocks an address, CrowdSec shares that address, the kind of behaviour detected and the
+          time with CrowdSec SAS (France), so other servers can block it too, and we receive their list of known
+          malicious addresses in return. We keep records of sign-in attempts (time, outcome, IP address and
+          approximate country) for 90 days to investigate security incidents.
+        </p>
+      </>
     ),
   },
   {
@@ -251,6 +275,7 @@ export default function PrivacyPage() {
     <LegalDocument
       href="/privacy"
       title="Privacy Policy"
+      lastUpdated="7 November 2026"
       summary={
         <p>
           This policy explains what personal data Polimatiq collects, how it is used and shared, how long it is

@@ -4,6 +4,7 @@ import {
   claimDueVerifications,
   getOrganizationMembership,
   getVerificationProviderKeyByProvider,
+  getVerifiedLeadVerificationStatus,
   queueLeadsForVerification,
   setLeadVerificationResult,
 } from "@/lib/db";
@@ -65,6 +66,21 @@ export async function runVerificationWorker(
 
 async function processLead(supabase: Client, lead: Tables<"leads">): Promise<"verified" | "failed" | "retried"> {
   const verifiedAt = new Date().toISOString();
+
+  // A Polimatiq verified-pool lead stores a placeholder address, so the
+  // provider is never called for it (no customer credits spent); it gets the
+  // pool's own result back. The UI never queues these, but the status column
+  // is customer-writable, so the worker checks too.
+  if (lead.verified_lead_id) {
+    const status = await getVerifiedLeadVerificationStatus(supabase, lead.verified_lead_id);
+    await setLeadVerificationResult(supabase, lead.id, {
+      verification_status: status ?? "unknown",
+      verification_risk_score: null,
+      verification_detail: { source: "polimatiq_verified_pool" },
+      verified_at: verifiedAt,
+    });
+    return "verified";
+  }
 
   // A lead's owning user should always have an organization (backfilled by
   // the organizations migration for every pre-existing user, provisioned

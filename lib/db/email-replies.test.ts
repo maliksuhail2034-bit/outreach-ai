@@ -165,7 +165,7 @@ describe("INBOX_REPLY_SELECT", () => {
   });
 
   it("embeds only the lead and campaign fields the inbox shows", () => {
-    expect(INBOX_REPLY_SELECT).toContain("lead:leads(id, first_name, last_name, email, company)");
+    expect(INBOX_REPLY_SELECT).toContain("lead:leads(id, first_name, last_name, email, display_email, company)");
     expect(INBOX_REPLY_SELECT).toContain("campaign:campaigns(id, name)");
   });
 });

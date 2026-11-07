@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysWarming, forecastNextRamp, randomizedNextSendDelayMinutes } from "./scheduler";
+import { daysWarming, forecastNextRamp, nextIncreaseStatus, randomizedNextSendDelayMinutes } from "./scheduler";
 
 const NOW = new Date("2026-08-02T00:00:00.000Z");
 
@@ -102,5 +102,36 @@ describe("randomizedNextSendDelayMinutes", () => {
   it("clamps to the maximum even for a very low daily volume", () => {
     const delay = randomizedNextSendDelayMinutes(1, { startHour: 0, endHour: 24 });
     expect(delay).toBeLessThanOrEqual(240);
+  });
+});
+
+describe("nextIncreaseStatus", () => {
+  const now = new Date("2026-11-06T12:00:00.000Z");
+
+  it("reports an overdue increase as due, not as a past date (a profile the worker hasn't processed yet)", () => {
+    const forecast = forecastNextRamp(
+      { stage: "warming", targetDailyVolume: 30, currentDailyVolume: 10, rampUpPercent: 20, lastActivityAt: "2026-11-02T08:00:00.000Z" },
+      now,
+    );
+    expect(forecast.nextIncreaseAt).toBe("2026-11-03T08:00:00.000Z");
+    expect(nextIncreaseStatus(forecast, now)).toEqual({ kind: "due" });
+  });
+
+  it("treats an increase due exactly now as due", () => {
+    expect(nextIncreaseStatus({ nextVolume: 12, nextIncreaseAt: now.toISOString() }, now)).toEqual({ kind: "due" });
+  });
+
+  it("keeps a future increase as a scheduled date", () => {
+    const at = "2026-11-07T08:00:00.000Z";
+    expect(nextIncreaseStatus({ nextVolume: 12, nextIncreaseAt: at }, now)).toEqual({ kind: "scheduled", at });
+  });
+
+  it("reports nothing when there is nothing left to ramp (healthy, paused, or at target)", () => {
+    expect(nextIncreaseStatus({ nextVolume: null, nextIncreaseAt: null }, now)).toEqual({ kind: "none" });
+    const atTarget = forecastNextRamp(
+      { stage: "warming", targetDailyVolume: 30, currentDailyVolume: 30, rampUpPercent: 20, lastActivityAt: null },
+      now,
+    );
+    expect(nextIncreaseStatus(atTarget, now)).toEqual({ kind: "none" });
   });
 });

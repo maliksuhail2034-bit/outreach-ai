@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
 
+import { isCountedRoute } from "./routes";
+
 // Decides whether a request is a page load worth counting and turns it into
 // a privacy-safe page_views row (see supabase/migrations/20261108100000_page_views.sql).
 // Pure apart from the clock, so every rule is unit-tested; proxy.ts does the
@@ -102,6 +104,8 @@ export interface PageViewInput {
 export function buildPageView(input: PageViewInput): PageViewRow | null {
   const userAgent = input.headers.get("user-agent");
   if (!input.secret || isBot(userAgent) || !isPageLoad(input.method, input.url.pathname, input.headers)) return null;
+  // Only real pages: a probe for /wp-admin or a mistyped link is a 404, not a visit.
+  if (!isCountedRoute(input.url.pathname)) return null;
   const day = (input.now ?? new Date()).toISOString().slice(0, 10);
   return {
     day,

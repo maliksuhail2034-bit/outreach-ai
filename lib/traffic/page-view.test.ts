@@ -121,7 +121,7 @@ describe("visitorHash", () => {
 describe("buildPageView", () => {
   const input = {
     method: "GET",
-    url: new URL("http://127.0.0.1:3000/pricing?utm_source=newsletter&email=jane@acme.com"),
+    url: new URL("http://127.0.0.1:3000/signup?utm_source=newsletter&email=jane@acme.com"),
     headers: documentHeaders({ referer: "https://news.ycombinator.com/item?id=1" }),
     ip: "203.0.113.7",
     country: "IN",
@@ -135,7 +135,7 @@ describe("buildPageView", () => {
     const row = buildPageView(input);
     expect(row).toEqual({
       day: "2026-11-07",
-      path: "/pricing",
+      path: "/signup",
       referrer_host: "news.ycombinator.com",
       utm_source: "newsletter",
       country: "IN",
@@ -153,6 +153,11 @@ describe("buildPageView", () => {
     expect(buildPageView({ ...input, headers: headers({ "user-agent": "Googlebot/2.1", "sec-fetch-dest": "document" }) })).toBeNull();
     expect(buildPageView({ ...input, headers: documentHeaders({ rsc: "1" }) })).toBeNull();
     expect(buildPageView({ ...input, secret: "" })).toBeNull();
+  });
+
+  it("doesn't count pages that don't exist (404s, bot probes)", () => {
+    expect(buildPageView({ ...input, url: new URL("http://127.0.0.1:3000/pricing") })).toBeNull();
+    expect(buildPageView({ ...input, url: new URL("http://127.0.0.1:3000/wp-admin") })).toBeNull();
   });
 
   it("drops a malformed country", () => {

@@ -189,8 +189,9 @@ export default async function TrafficPage({ searchParams }: { searchParams: Prom
       <div className="space-y-1 text-xs text-muted-foreground">
         <p>
           A page load is a full visit to a page (opening a link, refreshing). Clicking between pages inside the app after
-          that isn&apos;t counted again. Search-engine crawlers and other bots are left out. Staff console pages are never
-          counted. Data is kept for 180 days.
+          that isn&apos;t counted again. Search-engine crawlers and other bots are left out, and so are visits to pages
+          that don&apos;t exist (mistyped links, bots probing for weak spots). Staff console pages are never counted.
+          Data is kept for 180 days.
         </p>
         <GeoipAttribution />
       </div>

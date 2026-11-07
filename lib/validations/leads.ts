@@ -1,7 +1,18 @@
 import { z } from "zod";
 import { isValidIanaTimezone } from "@/lib/timezones";
 
-export const LEAD_STATUSES = ["new", "contacted", "replied", "qualified", "unqualified"] as const;
+// Mirrors leads_status_check (supabase/migrations/20261113100000_crm_sequences.sql), in pipeline order.
+export const LEAD_STATUSES = [
+  "new",
+  "contacted",
+  "replied",
+  "interested",
+  "meeting_booked",
+  "qualified",
+  "won",
+  "lost",
+  "unqualified",
+] as const;
 
 const INVALID_TIMEZONE_MESSAGE = "Choose a valid timezone (e.g. America/New_York).";
 

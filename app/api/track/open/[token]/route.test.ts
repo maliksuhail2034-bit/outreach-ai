@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const recordEmailEvent = vi.fn();
-vi.mock("@/lib/db", () => ({
-  recordEmailEvent: (...args: unknown[]) => recordEmailEvent(...args),
+const recordEngagement = vi.fn();
+vi.mock("@/lib/email/record-engagement", () => ({
+  recordEngagement: (...args: unknown[]) => recordEngagement(...args),
 }));
 
 const createAdminClient = vi.fn();
@@ -21,18 +21,20 @@ const CONTEXT: OpenTrackingContext = {
   sequenceStepId: "950e8400-e29b-41d4-a716-446655440004",
 };
 
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36";
+
 function makeParams(token: string) {
   return { params: Promise.resolve({ token }) };
 }
 
 function request(token: string): Request {
-  return new Request(`https://app.example.com/api/track/open/${token}`);
+  return new Request(`https://app.example.com/api/track/open/${token}`, { headers: { "user-agent": USER_AGENT } });
 }
 
 describe("GET /api/track/open/[token]", () => {
   beforeEach(() => {
     vi.stubEnv("TRACKING_TOKEN_SECRET", "test-secret-do-not-use-in-prod");
-    recordEmailEvent.mockReset().mockResolvedValue({});
+    recordEngagement.mockReset().mockResolvedValue({ isBot: false });
     createAdminClient.mockReset().mockReturnValue({ __fakeAdminClient: true });
   });
 
@@ -51,15 +53,17 @@ describe("GET /api/track/open/[token]", () => {
     expect(body[0]).toBe(0x47); // 'G' — GIF magic byte, confirms it's actually image bytes
 
     expect(createAdminClient).toHaveBeenCalledTimes(1);
-    expect(recordEmailEvent).toHaveBeenCalledWith(
+    expect(recordEngagement).toHaveBeenCalledWith(
       { __fakeAdminClient: true },
+      "opened",
       {
-        campaign_id: CONTEXT.campaignId,
-        lead_id: CONTEXT.leadId,
-        mailbox_id: CONTEXT.mailboxId,
-        event_type: "opened",
-        metadata: { sequenceStepId: CONTEXT.sequenceStepId },
+        campaignId: CONTEXT.campaignId,
+        campaignLeadId: CONTEXT.campaignLeadId,
+        leadId: CONTEXT.leadId,
+        mailboxId: CONTEXT.mailboxId,
+        sequenceStepId: CONTEXT.sequenceStepId,
       },
+      USER_AGENT,
     );
   });
 
@@ -81,7 +85,7 @@ describe("GET /api/track/open/[token]", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("image/gif");
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
     expect(createAdminClient).not.toHaveBeenCalled();
   });
 
@@ -90,7 +94,7 @@ describe("GET /api/track/open/[token]", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("image/gif");
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
   });
 
   it("returns the pixel and records nothing for an empty token", async () => {
@@ -98,11 +102,11 @@ describe("GET /api/track/open/[token]", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("image/gif");
-    expect(recordEmailEvent).not.toHaveBeenCalled();
+    expect(recordEngagement).not.toHaveBeenCalled();
   });
 
   it("still returns a valid pixel response if recording the event throws", async () => {
-    recordEmailEvent.mockRejectedValue(new Error("db exploded"));
+    recordEngagement.mockRejectedValue(new Error("db exploded"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const token = signOpenTrackingToken(CONTEXT);
 

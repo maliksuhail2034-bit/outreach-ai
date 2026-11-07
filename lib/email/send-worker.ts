@@ -13,6 +13,8 @@ import {
   getSettings,
   getSuppression,
   listAttachmentsForStepScoped,
+  listHumanStepEngagement,
+  listSentAttemptsForCampaignLead,
   listSequenceSteps,
   listSequences,
   markMailboxErrored,
@@ -37,6 +39,7 @@ import {
   resolveSendDecision,
 } from "./scheduling";
 import { buildUnsubscribeUrl, oneClickUnsubscribeUrl } from "./unsubscribe-token";
+import { isStepConditionMet } from "./step-conditions";
 import { resolveLeadContact, VERIFIED_LEAD_SOURCE_NOTICE } from "@/lib/verified-leads/contact";
 import { buildOpenTrackingUrl, type OpenTrackingContext, buildClickTrackingUrl, type ClickTrackingContext } from "./tracking-token";
 import { captureError } from "@/lib/monitoring/error-tracking";
@@ -360,18 +363,21 @@ export async function resolveThreadingHeaders(
   targetStep: Tables<"sequence_steps">,
   campaignLeadId: string,
 ): Promise<{ inReplyTo?: string; references?: string[] }> {
-  const previousStep = findPreviousStep(steps, targetStep.id);
-  if (!previousStep) return {};
-
-  const previousAttempt = await getSendAttempt(supabase, campaignLeadId, previousStep.id);
-  if (!previousAttempt || previousAttempt.status !== "sent" || !previousAttempt.provider_message_id) {
-    return {};
+  // Walks back past steps that were never sent (skipped by their
+  // condition) to the nearest one that was, so a follow-up after a skipped
+  // step still threads under the email the lead actually received.
+  let previousStep = findPreviousStep(steps, targetStep.id);
+  while (previousStep) {
+    const previousAttempt = await getSendAttempt(supabase, campaignLeadId, previousStep.id);
+    if (previousAttempt?.status === "sent" && previousAttempt.provider_message_id) {
+      return {
+        inReplyTo: previousAttempt.provider_message_id,
+        references: [previousAttempt.provider_message_id],
+      };
+    }
+    previousStep = findPreviousStep(steps, previousStep.id);
   }
-
-  return {
-    inReplyTo: previousAttempt.provider_message_id,
-    references: [previousAttempt.provider_message_id],
-  };
+  return {};
 }
 
 // Batch 9A: open-tracking pixel injection, pulled out of processCampaignLead
@@ -600,6 +606,59 @@ async function stopErroredMailbox(
   });
 }
 
+// Evaluates targetStep's condition against what this lead was actually sent
+// and how a person engaged with it (lib/email/step-conditions.ts). When it
+// isn't met, the lead moves on to the next step without sending, and that
+// step is timed from the last email actually sent — not from the skipped
+// step's planned day — so alternative steps (e.g. "opened step 1" and
+// "didn't open step 1", both 3 days later) land on the same day. Returns
+// whether the step was skipped.
+async function skipStepIfConditionUnmet(
+  supabase: Client,
+  campaignLead: Tables<"campaign_leads">,
+  targetStep: Tables<"sequence_steps">,
+  steps: Tables<"sequence_steps">[],
+  sendingWindow: unknown,
+  leadTimezone: string | null,
+): Promise<boolean> {
+  const [sentAttempts, engagement] = await Promise.all([
+    listSentAttemptsForCampaignLead(supabase, campaignLead.id),
+    listHumanStepEngagement(supabase, campaignLead.campaign_id, campaignLead.lead_id),
+  ]);
+  const sentStepIds = new Set(sentAttempts.map((attempt) => attempt.sequence_step_id));
+  if (isStepConditionMet({ step: targetStep, steps, sentStepIds, engagement })) return false;
+
+  const lastSent = sentAttempts[0];
+  const from = lastSent ? new Date(lastSent.resolved_at ?? lastSent.claimed_at) : new Date();
+  const schedule = computeNextSchedule({
+    steps,
+    currentStepId: targetStep.id,
+    from,
+    sendingWindow: resolveLeadSendingWindow(sendingWindow, leadTimezone),
+  });
+
+  console.info("[send-worker] step skipped, condition not met", {
+    campaignLeadId: campaignLead.id,
+    sequenceStepId: targetStep.id,
+    condition: targetStep.condition,
+    nextStepId: schedule.nextStepId,
+  });
+  // Guarded like every write from the claimed copy (updateClaimedCampaignLead):
+  // a lead that replied or was stopped since the claim keeps that state.
+  await updateClaimedCampaignLead(
+    supabase,
+    campaignLead.id,
+    {
+      status: schedule.completed ? "completed" : "active",
+      current_step_id: schedule.nextStepId,
+      next_send_at: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
+      locked_until: null,
+    },
+    targetStep.id,
+  );
+  return true;
+}
+
 async function processCampaignLead(
   supabase: Client,
   campaignLead: Tables<"campaign_leads">,
@@ -641,6 +700,14 @@ async function processCampaignLead(
       campaignLead.current_step_id,
     );
     return flagged ? "needsReview" : "skipped";
+  }
+
+  // A conditional step (opened / didn't open / clicked / didn't click an
+  // earlier step) whose condition isn't met is skipped without sending. An
+  // explicit Send Now for this step overrides its condition.
+  if (targetStep.condition !== "always" && campaignLead.send_now_step_id !== targetStep.id) {
+    const skipped = await skipStepIfConditionUnmet(supabase, campaignLead, targetStep, steps, campaign.sending_window, lead.timezone);
+    if (skipped) return "skipped";
   }
 
   // The real recipient: a Polimatiq verified-pool lead stores a placeholder

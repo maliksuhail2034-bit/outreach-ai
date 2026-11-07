@@ -1,8 +1,9 @@
 import type { SequenceStepSummary } from "@/lib/analytics/sequence-step-metrics";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-function formatRate(value: number | null) {
-  return value === null ? "—" : `${value}%`;
+// "12 (40%)": people, and their share of the people the step was sent to.
+function formatCount(count: number, value: number | null) {
+  return value === null ? "—" : `${count} (${value}%)`;
 }
 
 // Presentational only — receives already-computed SequenceStepSummary[]
@@ -15,8 +16,8 @@ export function SequenceStepPerformanceTable({ steps }: { steps: SequenceStepSum
       <CardHeader>
         <CardTitle>Sequence step performance</CardTitle>
         <CardDescription>
-          Sent and reply rate per step. Delivery, open, click, and positive-reply rate aren&apos;t tracked at the
-          step level yet.
+          People each step was sent to, and how many of them opened, clicked and replied. Security scanners
+          are left out, and a click counts as an open.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -34,23 +35,21 @@ export function SequenceStepPerformanceTable({ steps }: { steps: SequenceStepSum
                 <tr className="border-b border-border text-xs text-muted-foreground">
                   <th className="py-2 pr-4 font-medium">Step</th>
                   <th className="py-2 pr-4 font-medium">Sent</th>
-                  <th className="py-2 pr-4 font-medium">Delivery rate</th>
-                  <th className="py-2 pr-4 font-medium">Open rate</th>
-                  <th className="py-2 pr-4 font-medium">Click rate</th>
-                  <th className="py-2 pr-4 font-medium">Reply rate</th>
-                  <th className="py-2 pl-4 font-medium">Positive reply rate</th>
+                  <th className="py-2 pr-4 font-medium">Opened</th>
+                  <th className="py-2 pr-4 font-medium">Clicked</th>
+                  <th className="py-2 pr-4 font-medium">Replied</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {steps.map((step) => (
                   <tr key={step.stepId}>
-                    <td className="max-w-56 truncate py-3 pr-4 font-medium">{step.label}</td>
+                    <td className="max-w-56 truncate py-3 pr-4 font-medium">
+                      {step.order}. {step.label}
+                    </td>
                     <td className="py-3 pr-4 text-muted-foreground">{step.sentCount}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">{formatRate(step.deliveryRate)}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">{formatRate(step.openRate)}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">{formatRate(step.clickRate)}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">{formatRate(step.replyRate)}</td>
-                    <td className="py-3 pl-4 text-muted-foreground">{formatRate(step.positiveReplyRate)}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{formatCount(step.openedCount, step.openRate)}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{formatCount(step.clickedCount, step.clickRate)}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{formatCount(step.repliedCount, step.replyRate)}</td>
                   </tr>
                 ))}
               </tbody>

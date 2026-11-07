@@ -792,6 +792,7 @@ export type Database = {
           created_at: string
           event_type: string
           id: string
+          is_bot: boolean
           lead_id: string
           mailbox_id: string | null
           metadata: Json
@@ -803,6 +804,7 @@ export type Database = {
           created_at?: string
           event_type: string
           id?: string
+          is_bot?: boolean
           lead_id: string
           mailbox_id?: string | null
           metadata?: Json
@@ -814,6 +816,7 @@ export type Database = {
           created_at?: string
           event_type?: string
           id?: string
+          is_bot?: boolean
           lead_id?: string
           mailbox_id?: string | null
           metadata?: Json
@@ -1156,6 +1159,41 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      lead_notes: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          lead_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          lead_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          lead_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lead_notes_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       leads: {
         Row: {
@@ -1663,6 +1701,8 @@ export type Database = {
       sequence_steps: {
         Row: {
           body: string | null
+          condition: string
+          condition_step_id: string | null
           created_at: string
           day_delay: number
           id: string
@@ -1673,6 +1713,8 @@ export type Database = {
         }
         Insert: {
           body?: string | null
+          condition?: string
+          condition_step_id?: string | null
           created_at?: string
           day_delay?: number
           id?: string
@@ -1683,6 +1725,8 @@ export type Database = {
         }
         Update: {
           body?: string | null
+          condition?: string
+          condition_step_id?: string | null
           created_at?: string
           day_delay?: number
           id?: string
@@ -2915,6 +2959,63 @@ export type Database = {
       auth_event_summary: {
         Args: { p_list_limit?: number; p_since: string }
         Returns: Json
+      }
+      campaign_engagement: {
+        Args: { p_campaign_id: string }
+        Returns: Json
+      }
+      crm_engaged: {
+        Args: {
+          p_campaign_id: string
+          p_lead_id: string
+          p_step_id: string
+          p_types: string[]
+        }
+        Returns: boolean
+      }
+      crm_leads: {
+        Args: {
+          p_campaign_id?: string
+          p_engagement?: string
+          p_step_id?: string
+        }
+        Returns: {
+          city: string | null
+          company: string | null
+          country: string | null
+          created_at: string
+          custom_fields: Json
+          display_email: string | null
+          email: string
+          first_name: string | null
+          id: string
+          last_name: string | null
+          linkedin: string | null
+          list_id: string | null
+          phone: string | null
+          status: string
+          timezone: string | null
+          title: string | null
+          updated_at: string
+          user_id: string
+          verification_detail: Json | null
+          verification_locked_until: string | null
+          verification_risk_score: number | null
+          verification_status: string
+          verified_at: string | null
+          verified_lead_id: string | null
+          website: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "leads"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      crm_was_sent: {
+        Args: { p_campaign_id: string; p_lead_id: string; p_step_id: string }
+        Returns: boolean
       }
       is_staff_email: {
         Args: { p_email: string }

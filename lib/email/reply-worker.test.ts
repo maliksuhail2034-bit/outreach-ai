@@ -130,6 +130,7 @@ function makeReplyMessage(overrides: Partial<ReplyMessage> = {}): ReplyMessage {
 
 function makeEmailEvent(overrides: Partial<Tables<"email_events">> = {}): Tables<"email_events"> {
   return {
+    is_bot: false,
     id: "event-1",
     campaign_id: "campaign-1",
     lead_id: "lead-1",

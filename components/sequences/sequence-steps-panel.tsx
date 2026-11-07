@@ -2,7 +2,17 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { ArrowDownIcon, ArrowUpIcon, EyeIcon, PaperclipIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  EyeIcon,
+  GitBranchIcon,
+  PaperclipIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import type { Tables } from "@/types/database.types";
 import { composerMarkupToPlainText } from "@/lib/email/composer-markup";
@@ -18,15 +28,21 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { SequenceStepForm } from "./sequence-step-form";
+import { Badge } from "@/components/ui/badge";
+import { SequenceStepForm, type EarlierStepOption } from "./sequence-step-form";
+import { computeStepDays, conditionWarning, describeCondition } from "./step-timeline";
 import { EmailPreviewDialog } from "./email-preview-dialog";
 import type { AttachmentSummary } from "./attachment-manager";
 
 type SequenceStep = Tables<"sequence_steps">;
 
-function delayLabel(dayDelay: number) {
-  if (dayDelay === 0) return "Same day";
-  return `+${dayDelay} day${dayDelay === 1 ? "" : "s"}`;
+function delayLabel(dayDelay: number, isFirst: boolean) {
+  if (isFirst)
+    return dayDelay === 0
+      ? "When the lead is added"
+      : `${dayDelay} day${dayDelay === 1 ? "" : "s"} after the lead is added`;
+  if (dayDelay === 0) return "Same day as the previous email";
+  return `${dayDelay} day${dayDelay === 1 ? "" : "s"} after the previous email`;
 }
 
 function toAttachmentSummaries(rows: Tables<"email_attachments">[] | undefined): AttachmentSummary[] {
@@ -56,6 +72,19 @@ export function SequenceStepsPanel({
   const [removing, setRemoving] = useState<SequenceStep | null>(null);
   const [isRemoving, startRemoveTransition] = useTransition();
   const [, startMoveTransition] = useTransition();
+
+  const sortedSteps = [...steps].sort((a, b) => a.step_order - b.step_order);
+  const stepDays = computeStepDays(sortedSteps);
+  const stepNumbers = new Map(sortedSteps.map((step, index) => [step.id, index + 1]));
+  function earlierStepsThan(step: SequenceStep | null): EarlierStepOption[] {
+    return sortedSteps
+      .filter((other) => step === null || other.step_order < step.step_order)
+      .map((other) => ({
+        id: other.id,
+        number: stepNumbers.get(other.id) ?? 0,
+        subject: other.subject,
+      }));
+  }
 
   function handleRemove() {
     if (!removing) return;
@@ -88,7 +117,8 @@ export function SequenceStepsPanel({
         <div>
           <CardTitle>Sequence</CardTitle>
           <CardDescription>
-            {steps.length} step{steps.length === 1 ? "" : "s"} in this sequence.
+            {steps.length} step{steps.length === 1 ? "" : "s"}. Each lead gets them in order, from the same mailbox,
+            within the daily sending limits. Add as many as you need.
           </CardDescription>
         </div>
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -101,12 +131,13 @@ export function SequenceStepsPanel({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Add a step</DialogTitle>
-              <DialogDescription>Appended to the end of the sequence.</DialogDescription>
+              <DialogDescription>Added to the end of the sequence.</DialogDescription>
             </DialogHeader>
             <SequenceStepForm
               mode="create"
               campaignId={campaignId}
               templates={templates}
+              earlierSteps={earlierStepsThan(null)}
               onSuccess={() => setAddOpen(false)}
             />
           </DialogContent>
@@ -120,67 +151,92 @@ export function SequenceStepsPanel({
             <p className="mt-1 text-sm text-muted-foreground">Add the first email in this sequence to get started.</p>
           </div>
         ) : (
-          <ol className="space-y-3">
-            {steps.map((step, index) => {
+          <ol>
+            {sortedSteps.map((step, index) => {
               const stepAttachments = toAttachmentSummaries(attachmentsByStep[step.id]);
+              const condition = describeCondition(step, stepNumbers);
+              const warning = conditionWarning(step, sortedSteps);
+              const isLast = index === sortedSteps.length - 1;
               return (
-              <li key={step.id} className="rounded-lg border border-border p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      Step {index + 1} · {delayLabel(step.day_delay)}
-                    </p>
-                    <p className="mt-1 truncate font-medium">{step.subject || "(No subject)"}</p>
-                    {step.body && (
-                      <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                        {composerMarkupToPlainText(step.body)}
-                      </p>
-                    )}
-                    {stepAttachments.length > 0 && (
-                      <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                        <PaperclipIcon className="size-3" />
-                        {stepAttachments.length} attachment{stepAttachments.length === 1 ? "" : "s"}
-                      </p>
-                    )}
+                <li key={step.id} className="relative flex gap-3 pb-4 last:pb-0 sm:gap-4">
+                  {/* The timeline rail: day marker plus a line down to the next step. */}
+                  <div className="flex w-14 shrink-0 flex-col items-center">
+                    <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-semibold whitespace-nowrap tabular-nums">
+                      Day {stepDays.get(step.id) ?? 1}
+                    </span>
+                    {!isLast && <span aria-hidden className="mt-1 w-px flex-1 bg-border" />}
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <EmailPreviewDialog
-                      subject={step.subject ?? ""}
-                      body={step.body ?? ""}
-                      attachments={stepAttachments}
-                      trigger={
-                        <Button variant="ghost" size="icon" aria-label="Preview step">
-                          <EyeIcon className="size-4" />
+                  <div className="min-w-0 flex-1 rounded-lg border border-border p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Step {index + 1} · {delayLabel(step.day_delay, index === 0)}
+                        </p>
+                        {condition && (
+                          <Badge variant="info" className="mt-2 gap-1">
+                            <GitBranchIcon className="size-3" aria-hidden />
+                            {condition}
+                          </Badge>
+                        )}
+                        <p className="mt-1 truncate font-medium">{step.subject || "(No subject)"}</p>
+                        {step.body && (
+                          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                            {composerMarkupToPlainText(step.body)}
+                          </p>
+                        )}
+                        {stepAttachments.length > 0 && (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                            <PaperclipIcon className="size-3" />
+                            {stepAttachments.length} attachment
+                            {stepAttachments.length === 1 ? "" : "s"}
+                          </p>
+                        )}
+                        {warning && (
+                          <p className="mt-2 flex items-start gap-1 text-xs text-warning-foreground">
+                            <AlertTriangleIcon className="mt-0.5 size-3 shrink-0" aria-hidden />
+                            {warning}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <EmailPreviewDialog
+                          subject={step.subject ?? ""}
+                          body={step.body ?? ""}
+                          attachments={stepAttachments}
+                          trigger={
+                            <Button variant="ghost" size="icon" aria-label="Preview step">
+                              <EyeIcon className="size-4" />
+                            </Button>
+                          }
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Move step up"
+                          disabled={index === 0}
+                          onClick={() => handleMove(step, "up")}
+                        >
+                          <ArrowUpIcon className="size-4" />
                         </Button>
-                      }
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Move step up"
-                      disabled={index === 0}
-                      onClick={() => handleMove(step, "up")}
-                    >
-                      <ArrowUpIcon className="size-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Move step down"
-                      disabled={index === steps.length - 1}
-                      onClick={() => handleMove(step, "down")}
-                    >
-                      <ArrowDownIcon className="size-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" aria-label="Edit step" onClick={() => setEditing(step)}>
-                      <PencilIcon className="size-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" aria-label="Delete step" onClick={() => setRemoving(step)}>
-                      <Trash2Icon className="size-4" />
-                    </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Move step down"
+                          disabled={isLast}
+                          onClick={() => handleMove(step, "down")}
+                        >
+                          <ArrowDownIcon className="size-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" aria-label="Edit step" onClick={() => setEditing(step)}>
+                          <PencilIcon className="size-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" aria-label="Delete step" onClick={() => setRemoving(step)}>
+                          <Trash2Icon className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </li>
+                </li>
               );
             })}
           </ol>
@@ -198,6 +254,7 @@ export function SequenceStepsPanel({
               campaignId={campaignId}
               step={editing}
               templates={templates}
+              earlierSteps={earlierStepsThan(editing)}
               existingAttachments={toAttachmentSummaries(attachmentsByStep[editing.id])}
               onSuccess={() => setEditing(null)}
             />

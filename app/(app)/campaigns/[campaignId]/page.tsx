@@ -368,7 +368,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                       value={executionStatus.positiveReplies}
                       icon={<ThumbsUpIcon className="size-4" />}
                       isEmpty={executionStatus.positiveReplies === 0}
-                      emptyHint="Sourced from the analytics event model — populates once reply sentiment is recorded there."
+                      emptyHint="Reply sentiment isn't tracked yet."
                     />
                   </FadeIn>
                 </div>

@@ -65,7 +65,7 @@ function claimedLead(overrides: Partial<Tables<"campaign_leads">> = {}): Tables<
 }
 
 function step(id: string, order: number) {
-  return { id, sequence_id: "seq-1", step_order: order, day_delay: 1, subject: "Hi", body: "Hello", created_at: "", updated_at: "" };
+  return { id, sequence_id: "seq-1", step_order: order, day_delay: 1, condition: "always", condition_step_id: null, subject: "Hi", body: "Hello", created_at: "", updated_at: "" };
 }
 
 const MAILBOX_ISSUE = new EmailSendError("Invalid login: 535 5.7.8 Username and Password not accepted.", "failed", true);

@@ -8,7 +8,11 @@ import {
   listCampaigns,
   listEmailEvents,
   listLeadLists,
+  listLeadNotes,
   listMailboxes,
+  listSendAttemptsForCampaignLeads,
+  listSequenceSteps,
+  listSequences,
 } from "@/lib/db";
 import { anyFailed, firstError, isNotFoundError, optionalRead, withRetry } from "@/lib/db/resilient-read";
 import { formatLocalTime, isValidIanaTimezone } from "@/lib/timezones";
@@ -22,15 +26,10 @@ import { ActivityTimeline, type TimelineEntry } from "@/components/analytics/act
 import { LeadForm } from "@/components/leads/lead-form";
 import { LeadDetailActions } from "@/components/leads/lead-detail-actions";
 import { LeadEnrollmentsTable } from "@/components/leads/lead-enrollments-table";
+import { LeadNotes } from "@/components/leads/lead-notes";
+import { LeadStatusSelect } from "@/components/leads/lead-status-select";
 import { leadEmailLabel } from "@/lib/leads/display";
-
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  new: "outline",
-  contacted: "secondary",
-  replied: "secondary",
-  qualified: "default",
-  unqualified: "destructive",
-};
+import { buildLeadActivity } from "@/lib/leads/activity";
 
 const VERIFICATION_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "success" | "outline"> = {
   unverified: "outline",
@@ -52,21 +51,6 @@ const VERIFICATION_STATUS_LABEL: Record<string, string> = {
   error: "Error",
 };
 
-// Same shape/order as app/(app)/analytics/page.tsx's own EMAIL_EVENT_LABEL/
-// VARIANT maps — duplicated rather than imported since that page doesn't
-// export them and the map is small enough that sharing it isn't worth a new
-// module. Every event_type email_events' check constraint allows.
-const EMAIL_EVENT_LABEL: Record<string, string> = {
-  sent: "Sent",
-  delivered: "Delivered",
-  opened: "Opened",
-  clicked: "Clicked",
-  replied: "Replied",
-  bounced: "Bounced",
-  unsubscribed: "Unsubscribed",
-  failed: "Failed",
-};
-
 const EMAIL_EVENT_VARIANT: Record<string, TimelineEntry["variant"]> = {
   sent: "default",
   delivered: "default",
@@ -84,10 +68,6 @@ const EVENT_FETCH_LIMIT = 500;
 function leadName(name: { first_name: string | null; last_name: string | null; email: string; display_email: string | null }) {
   const full = [name.first_name, name.last_name].filter(Boolean).join(" ");
   return full || leadEmailLabel(name);
-}
-
-function statusLabel(status: string) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
@@ -113,14 +93,31 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
     throw error;
   }
 
-  const [campaignLeadsResult, campaignsResult, mailboxesResult, leadListsResult, emailEventsResult] =
+  const [campaignLeadsResult, campaignsResult, mailboxesResult, leadListsResult, emailEventsResult, notesResult] =
     await Promise.all([
       optionalRead(() => listCampaignLeadsForLead(supabase, leadId), []),
       optionalRead(() => listCampaigns(supabase, user.id), []),
       optionalRead(() => listMailboxes(supabase, user.id), []),
       optionalRead(() => listLeadLists(supabase, user.id), []),
       optionalRead(() => listEmailEvents(supabase, undefined, { leadId, limit: EVENT_FETCH_LIMIT }), []),
+      optionalRead(() => listLeadNotes(supabase, user.id, leadId), []),
     ]);
+
+  // The send log (which step each email was) and each enrolled campaign's
+  // step numbers, so the activity reads "Opened · Q4 outbound · Step 2".
+  const enrolledCampaignLeads = campaignLeadsResult.data ?? [];
+  const [sendsResult, stepsResult] = await Promise.all([
+    optionalRead(() => listSendAttemptsForCampaignLeads(supabase, enrolledCampaignLeads.map((row) => row.id)), []),
+    optionalRead(async () => {
+      const numbers = new Map<string, number>();
+      for (const campaignId of new Set(enrolledCampaignLeads.map((row) => row.campaign_id))) {
+        const sequences = await listSequences(supabase, campaignId);
+        const steps = sequences[0] ? await listSequenceSteps(supabase, sequences[0].id) : [];
+        [...steps].sort((a, b) => a.step_order - b.step_order).forEach((step, index) => numbers.set(step.id, index + 1));
+      }
+      return numbers;
+    }, new Map<string, number>()),
+  ]);
 
   const campaignLeads = campaignLeadsResult.data;
   const campaigns = campaignsResult.data ?? [];
@@ -132,19 +129,35 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
 
   const enrollmentsFailed = anyFailed(campaignLeadsResult, campaignsResult, mailboxesResult);
   const enrollmentsError = firstError(campaignLeadsResult, campaignsResult, mailboxesResult);
-  const activityFailed = emailEventsResult.failed;
+  const activityFailed = emailEventsResult.failed || sendsResult.failed;
   const detailsFormFailed = leadListsResult.failed;
 
-  const timeline: TimelineEntry[] = emailEvents
-    .map((event) => ({
-      id: event.id,
-      source: "email_event" as const,
-      label: EMAIL_EVENT_LABEL[event.event_type] ?? event.event_type,
-      variant: EMAIL_EVENT_VARIANT[event.event_type] ?? "outline",
-      detail: null,
-      timestamp: event.created_at,
-    }))
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  const campaignIdByCampaignLeadId = new Map(enrolledCampaignLeads.map((row) => [row.id, row.campaign_id]));
+  const activity = buildLeadActivity({
+    events: emailEvents,
+    sends: (sendsResult.data ?? [])
+      .filter((attempt) => attempt.status === "sent")
+      .map((attempt) => ({
+        id: attempt.id,
+        campaignId: campaignIdByCampaignLeadId.get(attempt.campaign_lead_id) ?? "",
+        stepId: attempt.sequence_step_id,
+        sentAt: attempt.resolved_at ?? attempt.claimed_at,
+      })),
+    campaignNameById,
+    stepNumberById: stepsResult.data,
+  });
+  const timeline: TimelineEntry[] = activity.entries.map((entry) => ({
+    id: entry.id,
+    source: "email_event" as const,
+    label: entry.label,
+    variant: EMAIL_EVENT_VARIANT[entry.eventType] ?? "outline",
+    detail: entry.detail,
+    timestamp: entry.timestamp,
+  }));
+  const hiddenBots =
+    activity.botEvents > 0
+      ? ` ${activity.botEvents} open${activity.botEvents === 1 ? " or click" : "s and clicks"} by security scanners hidden and not counted.`
+      : "";
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -152,7 +165,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{leadName(lead)}</h1>
-            <Badge variant={STATUS_VARIANT[lead.status] ?? "outline"}>{statusLabel(lead.status)}</Badge>
+            <LeadStatusSelect leadId={lead.id} status={lead.status} />
             <Badge variant={VERIFICATION_STATUS_VARIANT[lead.verification_status] ?? "outline"}>
               {VERIFICATION_STATUS_LABEL[lead.verification_status] ?? lead.verification_status}
             </Badge>
@@ -164,6 +177,24 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
             </Button>
           </div>
         </div>
+      </FadeIn>
+
+      <FadeIn delay={0.03}>
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {(
+            [
+              ["Emails sent", activity.counts.sent],
+              ["Opens", activity.counts.opened],
+              ["Clicks", activity.counts.clicked],
+              ["Replies", activity.counts.replied],
+            ] as const
+          ).map(([label, value]) => (
+            <div key={label} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+              <dd className="mt-1 text-2xl font-semibold tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
       </FadeIn>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -190,15 +221,23 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
                 <ActivityTimeline
                   entries={timeline}
                   title="Email activity"
-                  description="Every send/engagement event recorded for this lead, across all campaigns."
+                  description={`Every email sent to this lead and how they engaged, across all campaigns.${hiddenBots}`}
                   emptyLabel="No email activity recorded yet."
+                  showSource={false}
                 />
               )}
             </WidgetErrorBoundary>
           </FadeIn>
         </div>
 
-        <FadeIn delay={0.15} className="lg:col-span-1">
+        <FadeIn delay={0.15} className="space-y-6 lg:col-span-1">
+          <WidgetErrorBoundary label="Notes">
+            {notesResult.failed ? (
+              <ThrowIfFailed error={notesResult.error} />
+            ) : (
+              <LeadNotes leadId={lead.id} notes={notesResult.data} />
+            )}
+          </WidgetErrorBoundary>
           <Card>
             <CardHeader>
               <CardTitle>Details</CardTitle>

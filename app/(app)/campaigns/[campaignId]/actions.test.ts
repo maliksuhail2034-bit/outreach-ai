@@ -201,6 +201,8 @@ function makeMailbox(overrides: Partial<{ id: string; display_name: string; emai
 
 function makeSequenceStep(overrides: Partial<Tables<"sequence_steps">> = {}): Tables<"sequence_steps"> {
   return {
+    condition: "always",
+    condition_step_id: null,
     id: "step-1",
     sequence_id: "seq-1",
     step_order: 0,

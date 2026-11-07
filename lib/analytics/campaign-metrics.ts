@@ -11,6 +11,10 @@ import type { TrendResult } from "./trends";
 // table a count came from, only the number itself.
 export interface CampaignMetricsInputs {
   sentCount: number;
+  // People emailed at least once. When given (a campaign's counts from
+  // campaign_engagement(), which are unique people), every rate is out of
+  // this rather than out of emails sent, so a rate can never pass 100%.
+  contactedCount?: number;
   deliveredCount: number;
   openedCount: number;
   clickedCount: number;
@@ -37,13 +41,14 @@ export interface CampaignMetricsSummary extends CampaignMetricsInputs {
 }
 
 export function summarizeCampaignMetrics(inputs: CampaignMetricsInputs): CampaignMetricsSummary {
+  const denominator = inputs.contactedCount ?? inputs.sentCount;
   return {
     ...inputs,
     deliveryRate: rate(inputs.deliveredCount, inputs.sentCount),
-    openRate: rate(inputs.openedCount, inputs.sentCount),
-    clickRate: rate(inputs.clickedCount, inputs.sentCount),
-    bounceRate: rate(inputs.bouncedCount, inputs.sentCount),
-    replyRate: rate(inputs.repliedCount, inputs.sentCount),
+    openRate: rate(inputs.openedCount, denominator),
+    clickRate: rate(inputs.clickedCount, denominator),
+    bounceRate: rate(inputs.bouncedCount, denominator),
+    replyRate: rate(inputs.repliedCount, denominator),
   };
 }
 

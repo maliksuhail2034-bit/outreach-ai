@@ -31,11 +31,14 @@ export function ActivityTimeline({
   title = "Activity timeline",
   description = "Latest email events and send attempts, merged.",
   emptyLabel = "Nothing recorded yet.",
+  showSource = true,
 }: {
   entries: TimelineEntry[];
   title?: string;
   description?: string;
   emptyLabel?: string;
+  // The source tag only tells entries apart when sources are mixed.
+  showSource?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
@@ -58,12 +61,14 @@ export function ActivityTimeline({
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <Badge variant={entry.variant}>{entry.label}</Badge>
-                  <span className="text-xs uppercase tracking-wide text-muted-foreground/60">
-                    {SOURCE_LABEL[entry.source]}
-                  </span>
+                  {showSource && (
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground/60">
+                      {SOURCE_LABEL[entry.source]}
+                    </span>
+                  )}
                 </div>
                 {entry.detail && (
-                  <p className="mt-1 max-w-64 truncate text-xs text-muted-foreground" title={entry.detail}>
+                  <p className="mt-1 max-w-80 truncate text-xs text-muted-foreground" title={entry.detail}>
                     {entry.detail}
                   </p>
                 )}

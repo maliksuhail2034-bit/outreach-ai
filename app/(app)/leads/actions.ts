@@ -6,6 +6,10 @@ import { createClient } from "@/lib/supabase/server";
 import {
   createLead,
   createLeadList,
+  createLeadNote,
+  deleteLeadNote,
+  moveLeadsToList,
+  setLeadsStatus,
   deleteAllLeads,
   deleteLead,
   deleteLeadList,
@@ -30,6 +34,13 @@ import type { ActionResult } from "@/lib/action-result";
 import { verifyLead } from "@/lib/verification/verify";
 import { checkRateLimit } from "@/lib/rate-limit/check-rate-limit";
 import { isVerifiedPoolLead } from "@/lib/leads/display";
+import { resolveBulkLeads } from "@/lib/leads/crm-filters";
+import {
+  bulkMoveToListSchema,
+  bulkSetStatusSchema,
+  leadNoteSchema,
+  type BulkLeadTarget,
+} from "@/lib/validations/crm-leads";
 
 // Server Functions are reachable directly via POST regardless of which UI
 // calls them, so re-validate here even though the client form (react-hook-
@@ -230,4 +241,60 @@ export async function queueAllLeadsVerificationAction() {
   await queueAllLeadsForVerification(supabase, user.id);
 
   revalidatePath("/leads");
+}
+
+// --- CRM bulk actions and notes ---
+//
+// A bulk action applies to the ticked leads or to every lead matching the
+// Leads page's filters (resolveBulkLeads, which reads only the caller's own
+// leads). Returns how many leads it changed.
+
+export async function moveLeadsToListAction(input: { target: BulkLeadTarget; listId: string }): Promise<ActionResult<{ count: number }>> {
+  const parsed = bulkMoveToListSchema.parse(input);
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const leads = await resolveBulkLeads(supabase, user.id, parsed.target);
+  if (leads.length === 0) return { ok: false, error: "No leads match. Nothing was moved." };
+  // Moving a lead to another user's list is refused by leads_check_list_owner.
+  await moveLeadsToList(supabase, user.id, leads.map((lead) => lead.id), parsed.listId || null);
+
+  revalidatePath("/leads");
+  return { ok: true, data: { count: leads.length } };
+}
+
+export async function setLeadsStatusAction(input: { target: BulkLeadTarget; status: string }): Promise<ActionResult<{ count: number }>> {
+  const parsed = bulkSetStatusSchema.parse(input);
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const leads = await resolveBulkLeads(supabase, user.id, parsed.target);
+  if (leads.length === 0) return { ok: false, error: "No leads match. Nothing was changed." };
+  await setLeadsStatus(supabase, user.id, leads.map((lead) => lead.id), parsed.status);
+
+  revalidatePath("/leads");
+  // The lead detail page changes one lead's status through this too.
+  if (leads.length === 1) revalidatePath(`/leads/${leads[0].id}`);
+  return { ok: true, data: { count: leads.length } };
+}
+
+export async function addLeadNoteAction(leadId: string, input: { body: string }) {
+  const parsed = leadNoteSchema.parse(input);
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  // Ownership: getLead is scoped to the caller (the insert policy re-checks it).
+  await getLead(supabase, user.id, leadId);
+  await createLeadNote(supabase, user.id, leadId, parsed.body);
+
+  revalidatePath(`/leads/${leadId}`);
+}
+
+export async function deleteLeadNoteAction(leadId: string, noteId: string) {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  await deleteLeadNote(supabase, user.id, noteId);
+
+  revalidatePath(`/leads/${leadId}`);
 }

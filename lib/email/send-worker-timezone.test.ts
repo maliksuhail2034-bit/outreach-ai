@@ -95,8 +95,8 @@ beforeEach(() => {
   db.getMailboxCredentials.mockResolvedValue({ id: "mailbox-1", email: "sender@example.test", display_name: "Sender" });
   db.listSequences.mockResolvedValue([{ id: "seq-1" }]);
   db.listSequenceSteps.mockResolvedValue([
-    { id: "step-1", sequence_id: "seq-1", step_order: 0, day_delay: 0, subject: "Hi", body: "Hello", created_at: "", updated_at: "" },
-    { id: "step-2", sequence_id: "seq-1", step_order: 1, day_delay: 1, subject: "Re: Hi", body: "Following up", created_at: "", updated_at: "" },
+    { id: "step-1", sequence_id: "seq-1", step_order: 0, day_delay: 0, condition: "always", condition_step_id: null, subject: "Hi", body: "Hello", created_at: "", updated_at: "" },
+    { id: "step-2", sequence_id: "seq-1", step_order: 1, day_delay: 1, condition: "always", condition_step_id: null, subject: "Re: Hi", body: "Following up", created_at: "", updated_at: "" },
   ]);
   db.getSuppression.mockResolvedValue(null);
   db.claimSendAttempt.mockResolvedValue({ id: "attempt-1", attempt_count: 1 });

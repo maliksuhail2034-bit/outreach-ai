@@ -1,25 +1,16 @@
 import type { Tables } from "@/types/database.types";
 import type { Client } from "@/lib/db";
-import {
-  listAnalyticsEvents,
-  listCampaignLeads,
-  listEmailEvents,
-  listSendAttemptsForCampaignLeads,
-  listSequences,
-  listSequenceSteps,
-} from "@/lib/db";
+import { getCampaignEngagement, listAnalyticsEvents, listSequences, listSequenceSteps } from "@/lib/db";
 import { summarizeCampaignMetrics, type CampaignMetricsSummary } from "@/lib/analytics/campaign-metrics";
 import { groupCounts } from "@/lib/analytics/metrics";
 import {
   identifyBiggestStepDropOff,
-  summarizeSequenceSteps,
+  summarizeStepEngagement,
   type SequenceStepMetricsInput,
 } from "@/lib/analytics/sequence-step-metrics";
 import { calculateCampaignHealthScore, type CampaignHealthScoreResult } from "./health-score";
 
-// Single-campaign scope, so this matches the campaign analytics page's own
-// limit — comfortably covers a campaign's full history without pagination.
-const EVENT_FETCH_LIMIT = 5000;
+const ANALYTICS_EVENT_FETCH_LIMIT = 5000;
 
 export interface CampaignAnalyticsSnapshot {
   campaign: Tables<"campaigns">;
@@ -43,49 +34,39 @@ export async function loadCampaignAnalyticsSnapshot(
   organizationId: string,
   campaign: Tables<"campaigns">,
 ): Promise<CampaignAnalyticsSnapshot> {
-  const [campaignLeads, emailEvents, analyticsEvents] = await Promise.all([
-    listCampaignLeads(supabase, campaign.id),
-    listEmailEvents(supabase, campaign.id, { limit: EVENT_FETCH_LIMIT }),
+  // Engagement is unique people with bots excluded, over every row
+  // (campaign_engagement()); emails sent is the send log.
+  const [engagement, analyticsEvents, sequences] = await Promise.all([
+    getCampaignEngagement(supabase, campaign.id),
     listAnalyticsEvents(supabase, organizationId, {
       subjectType: "campaign",
       subjectId: campaign.id,
-      limit: EVENT_FETCH_LIMIT,
+      limit: ANALYTICS_EVENT_FETCH_LIMIT,
     }),
-  ]);
-
-  const leadIds = (campaignLeads ?? []).map((row) => row.id);
-  const [sendAttemptsResult, sequences] = await Promise.all([
-    listSendAttemptsForCampaignLeads(supabase, leadIds),
     listSequences(supabase, campaign.id),
   ]);
-  const sendAttempts = sendAttemptsResult ?? [];
-  const events = emailEvents ?? [];
-  const sentAttempts = sendAttempts.filter((attempt) => attempt.status === "sent");
 
   const sequence = sequences?.[0] ?? null;
   const sequenceSteps = sequence ? await listSequenceSteps(supabase, sequence.id) : [];
-
-  const eventCounts = groupCounts(events, (event) => event.event_type);
   const analyticsCounts = groupCounts(analyticsEvents, (event) => event.event_type);
 
   const overview = summarizeCampaignMetrics({
-    sentCount: sentAttempts.length,
-    deliveredCount: eventCounts.delivered ?? 0,
-    openedCount: eventCounts.opened ?? 0,
-    clickedCount: eventCounts.clicked ?? 0,
-    repliedCount: eventCounts.replied ?? 0,
-    bouncedCount: eventCounts.bounced ?? 0,
+    sentCount: engagement.emails_sent,
+    contactedCount: engagement.leads_contacted,
+    // No delivery confirmations exist for SMTP/Gmail/Graph sending.
+    deliveredCount: 0,
+    openedCount: engagement.unique_opened,
+    clickedCount: engagement.unique_clicked,
+    repliedCount: engagement.unique_replied,
+    bouncedCount: engagement.unique_bounced,
     positiveReplyCount: analyticsCounts.positive_reply ?? 0,
     meetingBookedCount: analyticsCounts.meeting_booked ?? 0,
   });
 
-  const stepInputs: SequenceStepMetricsInput[] = (sequenceSteps ?? []).map((step, index) => ({
-    stepId: step.id,
-    order: index + 1,
-    label: step.subject || `Step ${index + 1}`,
-  }));
-  const stepSummaries = summarizeSequenceSteps(stepInputs, sendAttempts, events);
-  const biggestStepDropOff = identifyBiggestStepDropOff(stepSummaries);
+  const stepInputs: SequenceStepMetricsInput[] = [...(sequenceSteps ?? [])]
+    .sort((a, b) => a.step_order - b.step_order)
+    .map((step, index) => ({ stepId: step.id, order: index + 1, label: step.subject || `Step ${index + 1}` }));
+  const biggestStepDropOff = identifyBiggestStepDropOff(summarizeStepEngagement(stepInputs, engagement.steps));
 
   const healthScore = calculateCampaignHealthScore({
     bounceRate: overview.bounceRate,

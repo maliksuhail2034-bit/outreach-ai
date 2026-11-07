@@ -101,7 +101,7 @@ beforeEach(() => {
   vi.mocked(getLeadById).mockResolvedValue({ id: "lead-1", email: "lead@example.com" } as never);
   vi.mocked(getMailboxCredentials).mockResolvedValue({ id: "mailbox-1" } as never);
   vi.mocked(listSequences).mockResolvedValue([{ id: "sequence-1" }] as never);
-  vi.mocked(listSequenceSteps).mockResolvedValue([{ id: "step-1", step_order: 0 }, { id: "step-2", step_order: 1 }] as never);
+  vi.mocked(listSequenceSteps).mockResolvedValue([{ id: "step-1", step_order: 0, condition: "always" }, { id: "step-2", step_order: 1, condition: "always" }] as never);
   vi.mocked(getSuppression).mockResolvedValue(null as never);
   vi.mocked(isWithinMonthlyEmailLimit).mockResolvedValue(true);
   vi.mocked(updateCampaignLead).mockResolvedValue(makeLead() as never);

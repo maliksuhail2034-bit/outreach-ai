@@ -66,7 +66,7 @@ function claimedLead(id: string, leadId: string, mailboxId: string): Tables<"cam
 }
 
 function step(id: string, order: number) {
-  return { id, sequence_id: "seq-1", step_order: order, day_delay: 1, subject: "Hi", body: "Hello", created_at: "", updated_at: "" };
+  return { id, sequence_id: "seq-1", step_order: order, day_delay: 1, condition: "always", condition_step_id: null, subject: "Hi", body: "Hello", created_at: "", updated_at: "" };
 }
 
 // Excludes runSendWorker's run-level degraded check, which is unchanged by

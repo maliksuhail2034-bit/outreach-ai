@@ -22,6 +22,7 @@ import { getUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCampaign,
+  getCampaignEngagement,
   getLatestRecommendation,
   getUserOrganization,
   listAiProviderKeys,
@@ -45,7 +46,7 @@ import {
   identifyBestStep,
   identifyBiggestStepDropOff,
   identifyWeakestStep,
-  summarizeSequenceSteps,
+  summarizeStepEngagement,
   type SequenceStepMetricsInput,
 } from "@/lib/analytics/sequence-step-metrics";
 import { ANALYTICS_RANGE_OPTIONS, type DateRangePreset } from "@/lib/analytics/types";
@@ -112,7 +113,7 @@ export default async function CampaignAnalyticsPage({
       : resolveDateRange(preset === "custom" ? "7d" : preset);
   const priorRange = previousDateRange(currentRange);
 
-  const [campaignLeads, emailEvents, analyticsEvents, mailboxes, aiProviderKeys, latestRecommendation] = await Promise.all([
+  const [campaignLeads, emailEvents, analyticsEvents, mailboxes, aiProviderKeys, latestRecommendation, engagement] = await Promise.all([
     listCampaignLeads(supabase, campaignId),
     listEmailEvents(supabase, campaignId, { limit: EVENT_FETCH_LIMIT }),
     listAnalyticsEvents(supabase, organization.id, {
@@ -123,6 +124,8 @@ export default async function CampaignAnalyticsPage({
     listMailboxes(supabase, user.id),
     listAiProviderKeys(supabase, organization.id),
     getLatestRecommendation(supabase, organization.id, "campaign", campaignId),
+    // All-time engagement: unique people, bots excluded, every row.
+    getCampaignEngagement(supabase, campaignId),
   ]);
   const connectedAiProviders = aiProviderKeys.map((key) => key.provider as AiProviderName);
 
@@ -158,16 +161,19 @@ export default async function CampaignAnalyticsPage({
   // --- Campaign Overview (all-time) — reuses lib/analytics/metrics.ts's
   // groupCounts + lib/analytics/campaign-metrics.ts's summarizeCampaignMetrics
   // rather than a bespoke calculation.
+  // Opened/clicked/replied/bounced are unique people (campaign_engagement()),
+  // and their rates are out of the people emailed, never above 100%.
   const eventCounts = groupCounts(events, (event) => event.event_type);
   const analyticsCounts = groupCounts(analyticsEvents, (event) => event.event_type);
 
   const overview = summarizeCampaignMetrics({
-    sentCount: sentAttempts.length,
+    sentCount: engagement.emails_sent,
+    contactedCount: engagement.leads_contacted,
     deliveredCount: eventCounts.delivered ?? 0,
-    openedCount: eventCounts.opened ?? 0,
-    clickedCount: eventCounts.clicked ?? 0,
-    repliedCount: eventCounts.replied ?? 0,
-    bouncedCount: eventCounts.bounced ?? 0,
+    openedCount: engagement.unique_opened,
+    clickedCount: engagement.unique_clicked,
+    repliedCount: engagement.unique_replied,
+    bouncedCount: engagement.unique_bounced,
     positiveReplyCount: analyticsCounts.positive_reply ?? 0,
     meetingBookedCount: analyticsCounts.meeting_booked ?? 0,
   });
@@ -178,8 +184,9 @@ export default async function CampaignAnalyticsPage({
   // over each timestamp list per metric.
   const sentTimestamps = sentAttempts.map(attemptTimestamp);
   const repliedTimestamps = events.filter((e) => e.event_type === "replied").map((e) => e.created_at);
-  const openedTimestamps = events.filter((e) => e.event_type === "opened").map((e) => e.created_at);
-  const clickedTimestamps = events.filter((e) => e.event_type === "clicked").map((e) => e.created_at);
+  // Activity over time, people only (security scanners excluded).
+  const openedTimestamps = events.filter((e) => e.event_type === "opened" && !e.is_bot).map((e) => e.created_at);
+  const clickedTimestamps = events.filter((e) => e.event_type === "clicked" && !e.is_bot).map((e) => e.created_at);
 
   const dailySends = bucketByDayInRange(sentTimestamps, currentRange);
   const dailyReplies = bucketByDayInRange(repliedTimestamps, currentRange);
@@ -231,7 +238,8 @@ export default async function CampaignAnalyticsPage({
   const funnelStages: FunnelStage[] = [
     { key: "leads", label: "Leads", value: leadsCount },
     { key: "queued", label: "Queued", value: queuedCount },
-    { key: "sent", label: "Sent", value: overview.sentCount },
+    // People from here on, so each stage is a share of the one before.
+    { key: "sent", label: "Emailed", value: engagement.leads_contacted },
     { key: "delivered", label: "Delivered", value: overview.deliveredCount },
     { key: "opened", label: "Opened", value: overview.openedCount },
     { key: "clicked", label: "Clicked", value: overview.clickedCount },
@@ -260,7 +268,7 @@ export default async function CampaignAnalyticsPage({
     order: index + 1,
     label: step.subject || `Step ${index + 1}`,
   }));
-  const stepSummaries = summarizeSequenceSteps(stepInputs, sendAttempts, events);
+  const stepSummaries = summarizeStepEngagement(stepInputs, engagement.steps);
   const bestStep = identifyBestStep(stepSummaries);
   const weakestStep = identifyWeakestStep(stepSummaries);
   const biggestStepDropOff = identifyBiggestStepDropOff(stepSummaries);
@@ -350,7 +358,7 @@ export default async function CampaignAnalyticsPage({
               value={overview.positiveReplyCount}
               icon={<ThumbsUpIcon className="size-4" />}
               isEmpty={overview.positiveReplyCount === 0}
-              emptyHint="Sourced from the analytics event model — populates once reply sentiment is recorded there."
+              emptyHint="Reply sentiment isn't tracked yet."
             />
           </FadeIn>
           <FadeIn delay={0.22}>
@@ -359,23 +367,30 @@ export default async function CampaignAnalyticsPage({
               value={overview.meetingBookedCount}
               icon={<CalendarCheckIcon className="size-4" />}
               isEmpty={overview.meetingBookedCount === 0}
-              emptyHint="Sourced from the analytics event model — populates once meeting bookings are recorded there."
+              emptyHint="Meeting bookings aren't tracked yet."
             />
           </FadeIn>
           <FadeIn delay={0.24}>
-            <PercentageCard title="Delivery rate" value={overview.deliveryRate} icon={<MailCheckIcon className="size-4" />} description="Delivered ÷ sent" />
+            {/* Nothing confirms delivery for SMTP/Gmail/Graph sends, so with no
+                delivered events this is "not tracked", never a false 0%. */}
+            <PercentageCard
+              title="Delivery rate"
+              value={overview.deliveredCount > 0 ? overview.deliveryRate : null}
+              icon={<MailCheckIcon className="size-4" />}
+              description="Delivered ÷ sent"
+            />
           </FadeIn>
           <FadeIn delay={0.26}>
-            <PercentageCard title="Open rate" value={overview.openRate} icon={<EyeIcon className="size-4" />} description="Opened ÷ sent" />
+            <PercentageCard title="Open rate" value={overview.openRate} icon={<EyeIcon className="size-4" />} description="People who opened ÷ people emailed" />
           </FadeIn>
           <FadeIn delay={0.27}>
-            <PercentageCard title="Click rate" value={overview.clickRate} icon={<MousePointerClickIcon className="size-4" />} description="Clicked ÷ sent" />
+            <PercentageCard title="Click rate" value={overview.clickRate} icon={<MousePointerClickIcon className="size-4" />} description="People who clicked ÷ people emailed" />
           </FadeIn>
           <FadeIn delay={0.28}>
-            <PercentageCard title="Reply rate" value={overview.replyRate} icon={<MessageCircleReplyIcon className="size-4" />} description="Replied ÷ sent" />
+            <PercentageCard title="Reply rate" value={overview.replyRate} icon={<MessageCircleReplyIcon className="size-4" />} description="People who replied ÷ people emailed" />
           </FadeIn>
           <FadeIn delay={0.3}>
-            <PercentageCard title="Bounce rate" value={overview.bounceRate} icon={<MailWarningIcon className="size-4" />} description="Bounced ÷ sent" />
+            <PercentageCard title="Bounce rate" value={overview.bounceRate} icon={<MailWarningIcon className="size-4" />} description="Bounced ÷ people emailed" />
           </FadeIn>
         </div>
       </div>

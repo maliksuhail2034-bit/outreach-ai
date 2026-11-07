@@ -99,3 +99,41 @@ export async function recordEmailEvent(supabase: Client, values: TablesInsert<"e
   const result = await supabase.from("email_events").insert(values).select("*").single();
   return unwrap<Tables<"email_events">>(result);
 }
+
+// Whether a person (not a bot) already opened this step — a person's click
+// without a recorded open means images were blocked, so the open is implied.
+export async function hasHumanOpenForStep(supabase: Client, campaignId: string, leadId: string, stepId: string): Promise<boolean> {
+  const { count, error } = await supabase
+    .from("email_events")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaignId)
+    .eq("lead_id", leadId)
+    .eq("event_type", "opened")
+    .eq("is_bot", false)
+    .eq("metadata->>sequenceStepId", stepId);
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
+// A person's opens and clicks (bots excluded) on this campaign's emails to
+// this lead, with the step each was for — what step conditions are
+// evaluated against (lib/email/step-conditions.ts). Service-role client
+// (send worker).
+export async function listHumanStepEngagement(
+  supabase: Client,
+  campaignId: string,
+  leadId: string,
+): Promise<{ eventType: "opened" | "clicked"; sequenceStepId: string | null }[]> {
+  const { data, error } = await supabase
+    .from("email_events")
+    .select("event_type, step_id:metadata->>sequenceStepId")
+    .eq("campaign_id", campaignId)
+    .eq("lead_id", leadId)
+    .in("event_type", ["opened", "clicked"])
+    .eq("is_bot", false);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    eventType: row.event_type === "clicked" ? "clicked" : "opened",
+    sequenceStepId: typeof row.step_id === "string" ? row.step_id : null,
+  }));
+}

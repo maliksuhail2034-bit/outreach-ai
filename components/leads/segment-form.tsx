@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { LEAD_STATUS_LABEL } from "@/lib/leads/display";
 import {
   FIELD_LABELS,
   defaultRule,
@@ -45,11 +46,7 @@ const OPERATOR_LABELS: Record<string, string> = {
 };
 
 const VALUE_LABELS: Record<string, string> = {
-  new: "New",
-  contacted: "Contacted",
-  replied: "Replied",
-  qualified: "Qualified",
-  unqualified: "Unqualified",
+  ...LEAD_STATUS_LABEL,
   unverified: "Unverified",
   pending: "Pending",
   valid: "Valid",

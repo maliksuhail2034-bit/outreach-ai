@@ -125,6 +125,20 @@ export async function listSendAttemptsForCampaignLeads(supabase: Client, campaig
   return data;
 }
 
+// The steps actually sent to one campaign lead, latest first — for step
+// conditions (only a received email can be opened) and for timing the step
+// after a skipped one from the last real send. Service-role client.
+export async function listSentAttemptsForCampaignLead(supabase: Client, campaignLeadId: string) {
+  const { data, error } = await supabase
+    .from("send_attempts")
+    .select("sequence_step_id, provider_message_id, resolved_at, claimed_at")
+    .eq("campaign_lead_id", campaignLeadId)
+    .eq("status", "sent")
+    .order("resolved_at", { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return data;
+}
+
 // User-context manual crash recovery — the function
 // supabase/migrations/20260730100030_send_attempts.sql's RLS comment named
 // but never implemented ("Needed so resolveSendAttemptAction ... can

@@ -1,6 +1,6 @@
 import type { Tables } from "@/types/database.types";
 import type { LeadSegmentRule, LeadVerificationStatus } from "@/lib/validations/lead-segments";
-import type { CrmEngagementFilter, CrmSort } from "@/lib/validations/crm-leads";
+import type { CountFilter, CrmEngagementFilter, CrmSort } from "@/lib/validations/crm-leads";
 import { applySegmentRules, escapeLikePattern } from "./lead-segments";
 import { selectAllPages, type Client } from "./shared";
 
@@ -28,6 +28,9 @@ export interface CrmLeadFilters {
   engagement?: CrmEngagementFilter;
   campaignId?: string;
   stepId?: string;
+  // How many times a person opened / clicked, across all campaigns.
+  opens?: CountFilter;
+  clicks?: CountFilter;
   sort?: CrmSort;
 }
 
@@ -104,6 +107,15 @@ function crmLeadsQuery(supabase: Client, userId: string, filters: CrmLeadFilters
   if (filters.verificationStatus) query = query.eq("verification_status", filters.verificationStatus);
   if (filters.rules) query = applySegmentRules(query, filters.rules);
   for (const filter of searchFilters(filters.search ?? "")) query = query.or(filter);
+  // Filters on the crm_opens / crm_clicks computed fields (selected in CRM_SELECT).
+  for (const [column, count] of [
+    ["crm_opens", filters.opens],
+    ["crm_clicks", filters.clicks],
+  ] as const) {
+    if (!count) continue;
+    // .filter() because the typed .eq()/.gte() only know real table columns.
+    query = query.filter(column, count.operator, count.value);
+  }
 
   for (const order of SORT_ORDERS[filters.sort ?? "recent"]) {
     query = query.order(order.column, { ascending: order.ascending, nullsFirst: order.nullsFirst });
@@ -119,6 +131,14 @@ export async function listAllCrmLeads(supabase: Client, userId: string, filters:
     (from, to) => crmLeadsQuery(supabase, userId, filters).range(from, to).overrideTypes<CrmLead[], { merge: false }>(),
     limit,
   );
+}
+
+// How many leads match `filters`: the Leads page's quick-filter counts,
+// computed with exactly the query the table uses.
+export async function countCrmLeads(supabase: Client, userId: string, filters: CrmLeadFilters): Promise<number> {
+  const { count, error } = await crmLeadsQuery(supabase, userId, filters, { head: true }).range(0, 0);
+  if (error) throw error;
+  return count ?? 0;
 }
 
 export async function listCrmLeadsPage(

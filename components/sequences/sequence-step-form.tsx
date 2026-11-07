@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
@@ -26,6 +26,7 @@ import { TemplatePicker } from "./template-picker";
 import { MergeTagPicker } from "./merge-tag-picker";
 import { TemplateValidationList } from "./template-validation-list";
 import { EmailPreviewDialog } from "./email-preview-dialog";
+import { EmailPreviewPane } from "./email-preview-pane";
 import { AttachmentManager, type AttachmentSummary } from "./attachment-manager";
 import { ComposerEditor, type ComposerEditorHandle } from "./composer-editor";
 
@@ -148,6 +149,9 @@ export function SequenceStepForm({
   const subjectValue = useWatch({ control: form.control, name: "subject" }) ?? "";
   const bodyValue = useWatch({ control: form.control, name: "body" }) ?? "";
   const conditionValue = useWatch({ control: form.control, name: "condition" }) ?? "always";
+  // The live preview trails typing slightly, so rendering it never slows the editor.
+  const previewSubject = useDeferredValue(subjectValue);
+  const previewBody = useDeferredValue(bodyValue);
 
   // Live, non-blocking hints as the user types — reuses the canonical
   // renderer via validate-template.ts (Batch 1) rather than re-parsing
@@ -206,176 +210,200 @@ export function SequenceStepForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <TemplatePicker templates={templates} setValue={form.setValue} />
-
-        <FormField
-          control={form.control}
-          name="dayDelay"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>
-                {earlierSteps.length > 0 ? "Days after the previous email sent" : "Days after the lead is added"}
-              </FormLabel>
-              <FormControl>
-                <Input
-                  type="number"
-                  min={0}
-                  max={365}
-                  name={field.name}
-                  ref={field.ref}
-                  value={field.value}
-                  onBlur={field.onBlur}
-                  onChange={(e) => field.onChange(e.target.valueAsNumber)}
-                />
-              </FormControl>
-              <p className="text-xs text-muted-foreground">
-                {earlierSteps.length > 0
-                  ? "Counted from the last email this lead actually received, so a skipped step adds no days. Always sent inside the campaign's sending hours."
-                  : "0 sends in the next sending hours after a lead is added. Leads added to a running campaign start here too."}
-              </p>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        {earlierSteps.length > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField
-              control={form.control}
-              name="condition"
-              render={({ field }) => (
-                <FormItem className="min-w-0">
-                  <FormLabel>Send this step</FormLabel>
-                  <Select value={field.value ?? "always"} onValueChange={field.onChange} disabled={isPending}>
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {CONDITION_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            {conditionValue !== "always" && (
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]"
+      >
+        <div className="min-w-0 space-y-6">
+          <section aria-labelledby="step-timing" className="space-y-4 rounded-lg border border-border bg-muted/30 p-4">
+            <h3 id="step-timing" className="text-sm font-semibold">
+              When to send
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-[9rem_minmax(0,1fr)_minmax(0,1fr)]">
               <FormField
                 control={form.control}
-                name="conditionStepId"
+                name="dayDelay"
                 render={({ field }) => (
                   <FormItem className="min-w-0">
-                    <FormLabel>Which email</FormLabel>
-                    <Select
-                      value={field.value ? field.value : ANY_EARLIER_STEP}
-                      onValueChange={(value) => field.onChange(value === ANY_EARLIER_STEP ? "" : value)}
-                      disabled={isPending}
-                    >
+                    <FormLabel>{earlierSteps.length > 0 ? "Wait" : "Send after"}</FormLabel>
+                    <div className="flex items-center gap-2">
                       <FormControl>
-                        <SelectTrigger className="w-full min-w-0">
-                          <span className="min-w-0 truncate">
-                            <SelectValue />
-                          </span>
-                        </SelectTrigger>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={365}
+                          className="w-20"
+                          name={field.name}
+                          ref={field.ref}
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                        />
                       </FormControl>
-                      <SelectContent>
-                        <SelectItem value={ANY_EARLIER_STEP}>Any earlier email</SelectItem>
-                        {earlierSteps.map((earlier) => (
-                          <SelectItem key={earlier.id} value={earlier.id}>
-                            Step {earlier.number}
-                            {earlier.subject ? `: ${earlier.subject}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <span className="text-sm text-muted-foreground">days</span>
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            )}
-            {conditionValue !== "always" && (
-              <p className="text-xs text-muted-foreground sm:col-span-2">
-                Leads who don&apos;t match skip this step and go on to the next one. Opens and clicks by security
-                scanners don&apos;t count. To give openers and non-openers different follow-ups, add two steps with the
-                same delay: one &ldquo;only if they opened&rdquo; and one &ldquo;only if they didn&apos;t open&rdquo;.
-              </p>
-            )}
-          </div>
-        )}
 
-        <FormField
-          control={form.control}
-          name="subject"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Subject</FormLabel>
-              <FormControl>
-                <ComposerEditor
-                  ref={subjectEditorRef}
-                  variant="subject"
-                  ariaLabel="Subject"
-                  placeholder="Quick question about your team"
-                  value={field.value ?? ""}
-                  onChange={field.onChange}
-                  onBlur={field.onBlur}
-                  onFocus={() => setActiveField("subject")}
-                  disabled={isPending}
+              {earlierSteps.length > 0 && (
+                <FormField
+                  control={form.control}
+                  name="condition"
+                  render={({ field }) => (
+                    <FormItem className="min-w-0">
+                      <FormLabel>Send this step</FormLabel>
+                      <Select value={field.value ?? "always"} onValueChange={field.onChange} disabled={isPending}>
+                        <FormControl>
+                          <SelectTrigger className="w-full min-w-0">
+                            <span className="min-w-0 truncate">
+                              <SelectValue />
+                            </span>
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {CONDITION_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+              )}
 
-        <FormField
-          control={form.control}
-          name="body"
-          render={({ field }) => (
-            <FormItem>
-              <div className="flex items-center justify-between gap-2">
-                <FormLabel>Body</FormLabel>
+              {earlierSteps.length > 0 && conditionValue !== "always" && (
+                <FormField
+                  control={form.control}
+                  name="conditionStepId"
+                  render={({ field }) => (
+                    <FormItem className="min-w-0">
+                      <FormLabel>Which email</FormLabel>
+                      <Select
+                        value={field.value ? field.value : ANY_EARLIER_STEP}
+                        onValueChange={(value) => field.onChange(value === ANY_EARLIER_STEP ? "" : value)}
+                        disabled={isPending}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full min-w-0">
+                            <span className="min-w-0 truncate">
+                              <SelectValue />
+                            </span>
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value={ANY_EARLIER_STEP}>Any earlier email</SelectItem>
+                          {earlierSteps.map((earlier) => (
+                            <SelectItem key={earlier.id} value={earlier.id}>
+                              Step {earlier.number}
+                              {earlier.subject ? `: ${earlier.subject}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {earlierSteps.length === 0
+                ? "The first email. 0 days sends it in the campaign's next sending hours after a lead is added."
+                : conditionValue === "always"
+                  ? "Counted from the last email this lead actually received, inside the campaign's sending hours."
+                  : "Leads who don't match skip this step and move on. Scanner opens and clicks don't count. For a different follow-up to non-openers, add a second step with the same wait set to the opposite condition."}
+            </p>
+          </section>
+
+          <section aria-labelledby="step-email" className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 id="step-email" className="text-sm font-semibold">
+                Email
+              </h3>
+              <div className="lg:hidden">
                 <EmailPreviewDialog subject={subjectValue} body={bodyValue} attachments={attachments} />
               </div>
-              <FormControl>
-                <ComposerEditor
-                  ref={bodyEditorRef}
-                  variant="body"
-                  ariaLabel="Body"
-                  placeholder="Hi there, ..."
-                  value={field.value ?? ""}
-                  onChange={field.onChange}
-                  onBlur={field.onBlur}
-                  onFocus={() => setActiveField("body")}
-                  disabled={isPending}
-                  toolbarExtra={<MergeTagPicker onInsert={insertMergeTag} disabled={isPending} />}
-                />
-              </FormControl>
-              <p className="text-xs text-muted-foreground">
-                Variables go into whichever field you last clicked, and appear as chips. Select text to make it bold,
-                italic or a link. Press Enter for a new paragraph and Shift+Enter for a line break. A web address like
-                https://example.com becomes clickable automatically.
-              </p>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+            </div>
 
-        <AttachmentManager
-          attachments={attachments}
-          onChange={setAttachments}
-          onUploaded={(id) => uploadedThisSessionRef.current.add(id)}
-          disabled={isPending}
-        />
+            <TemplatePicker templates={templates} setValue={form.setValue} />
 
-        <TemplateValidationList issues={validationIssues} />
+            <FormField
+              control={form.control}
+              name="subject"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Subject</FormLabel>
+                  <FormControl>
+                    <ComposerEditor
+                      ref={subjectEditorRef}
+                      variant="subject"
+                      ariaLabel="Subject"
+                      placeholder="Quick question about your team"
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      onFocus={() => setActiveField("subject")}
+                      disabled={isPending}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-        <DialogFooter>
+            <FormField
+              control={form.control}
+              name="body"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Message</FormLabel>
+                  <FormControl>
+                    <ComposerEditor
+                      ref={bodyEditorRef}
+                      variant="body"
+                      ariaLabel="Body"
+                      placeholder="Hi {{first_name}}, ..."
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      onFocus={() => setActiveField("body")}
+                      disabled={isPending}
+                      toolbarExtra={<MergeTagPicker onInsert={insertMergeTag} disabled={isPending} />}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Variables go where you last clicked. Select text for bold, italic or a link. Enter starts a new
+                    paragraph, Shift+Enter a new line.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <AttachmentManager
+              attachments={attachments}
+              onChange={setAttachments}
+              onUploaded={(id) => uploadedThisSessionRef.current.add(id)}
+              disabled={isPending}
+            />
+
+            <TemplateValidationList issues={validationIssues} />
+          </section>
+        </div>
+
+        <aside aria-label="Live preview" className="hidden min-w-0 lg:block">
+          <div className="sticky top-0 space-y-2">
+            <h3 className="text-sm font-semibold">Live preview</h3>
+            <EmailPreviewPane subject={previewSubject} body={previewBody} attachments={attachments} />
+          </div>
+        </aside>
+
+        <DialogFooter className="lg:col-span-2">
           <Button type="submit" disabled={isPending}>
             {isPending ? "Saving…" : mode === "create" ? "Add step" : "Save changes"}
           </Button>

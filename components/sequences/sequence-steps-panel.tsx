@@ -128,7 +128,7 @@ export function SequenceStepsPanel({
               Add step
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-6xl">
             <DialogHeader>
               <DialogTitle>Add a step</DialogTitle>
               <DialogDescription>Added to the end of the sequence.</DialogDescription>
@@ -244,7 +244,7 @@ export function SequenceStepsPanel({
       </CardContent>
 
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-6xl">
           <DialogHeader>
             <DialogTitle>Edit step</DialogTitle>
           </DialogHeader>

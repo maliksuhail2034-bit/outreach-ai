@@ -66,7 +66,7 @@ const FEATURES: { title: string; description: string; icon: LucideIcon }[] = [
 
 export function Features() {
   return (
-    <section id="features" className="scroll-mt-16 border-b border-border bg-sidebar/40 py-20 sm:py-28">
+    <section id="features" className="scroll-mt-16 border-b border-border bg-card py-20 sm:py-28">
       <Container>
         <FadeIn>
           <div className="mx-auto max-w-2xl text-center">

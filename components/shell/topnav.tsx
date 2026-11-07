@@ -8,7 +8,7 @@ import { UserMenuData } from "./user-menu-data";
 
 export function TopNav() {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-background/80 px-4 backdrop-blur-sm sm:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card/85 px-4 shadow-sm backdrop-blur-md sm:px-6">
       <MobileNav />
       <Breadcrumbs />
       <div className="ml-auto flex items-center gap-2">

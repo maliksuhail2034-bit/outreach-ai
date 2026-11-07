@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Client } from "./shared";
-import { listCrmLeadsPage } from "./crm-leads";
+import { countCrmLeads, listCrmLeadsPage } from "./crm-leads";
 
 type Call = [string, ...unknown[]];
 
@@ -85,6 +85,23 @@ describe("listCrmLeadsPage", () => {
     expect(result).toMatchObject({ page: 2, totalCount: 75, leads: [{ id: "z" }] });
     expect(queries[1][0][3]).toMatchObject({ head: true });
     expect(queries[2]).toContainEqual(["range", 50, 99]);
+  });
+
+  it("filters on how many times a person opened / clicked", async () => {
+    const { client, queries } = fakeClient([{ data: [], count: 0 }]);
+
+    await listCrmLeadsPage(client, "user-1", { opens: { operator: "gte", value: 3 }, clicks: { operator: "eq", value: 0 } }, 1);
+
+    expect(queries[0]).toContainEqual(["filter", "crm_opens", "gte", 3]);
+    expect(queries[0]).toContainEqual(["filter", "crm_clicks", "eq", 0]);
+  });
+
+  it("counts with the same query the table uses, as a head request", async () => {
+    const { client, queries } = fakeClient([{ count: 7 }]);
+
+    expect(await countCrmLeads(client, "user-1", { engagement: "opened", status: "won" })).toBe(7);
+    expect(queries[0][0][3]).toMatchObject({ count: "exact", head: true });
+    expect(queries[0]).toContainEqual(["eq", "status", "won"]);
   });
 
   it("throws any other error", async () => {

@@ -9,47 +9,40 @@
 :root {
   --radius: 0.625rem;
 
-  --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
+  /* Surface system (2026-11 refresh). Three layers that must read as three
+     layers: a soft lavender-grey canvas, white cards and tiles lifted off
+     it by a border and a faint brand-tinted shadow, and a deep indigo-ink
+     navigation (--nav). Previously canvas, cards and sidebar sat at 100%,
+     99% and 99% lightness, so nothing stood apart. Hues stay near the
+     brand purple (262) and the wordmark ink (#171820, 240 16% 11%). */
+  --background: 250 33% 97%;
+  --foreground: 240 16% 11%;
 
-  /* 240 20% 99% — the same barely-off-white recipe --sidebar already uses,
-     applied to cards so a card reads as a surface (not just a border) on
-     the page in light mode, where --card previously equaled --background
-     exactly. */
-  --card: 240 20% 99%;
-  --card-foreground: 240 10% 3.9%;
-  /* Elevated one step above --card — dropdowns/dialogs/sheets need a
-     visible lift off a card sitting behind them, which --popover ==
-     --card couldn't provide. Aligned with --card in light mode (border +
-     shadow already carry separation there); genuinely lighter in dark
-     mode (see .dark below). */
-  --popover: 240 20% 99%;
-  --popover-foreground: 240 10% 3.9%;
-  /* One step between --card and --muted/--secondary (95.9%) — for content
-     nested one level deeper than a plain card (e.g. the bg-card/60 +
-     backdrop-blur-sm and bg-muted/30 approximations already in use
-     elsewhere). Not yet consumed by any component; reserved for a later
-     phase so those files aren't touched twice. */
-  --surface-2: 240 15% 97%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 16% 11%;
+  /* Dialogs and menus: white like cards; their shadow carries the lift. */
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 16% 11%;
+  /* Nested inside a card (an inner panel, a table header): a step toward
+     the canvas so it reads as recessed, not as another card. */
+  --surface-2: 250 30% 98%;
 
-  /* Premium purple brand primary (Phase 6 rebrand — warm orange through
-     Phase 5). Reuses Phase 5's --accent-purple value exactly, now
-     promoted to --primary rather than duplicated as a separate token.
-     White foreground reaches ~5.67:1 here (passes AA with real margin) —
-     unlike the previous orange token, which needed a near-black
-     -foreground workaround because white only reached 3.4:1 at that
-     hue/lightness. */
+  /* Brand purple #7C3AED, the wordmark's gradient end. White text on it
+     is ~5.7:1 (AA). Reserved for action and focus: buttons, the active
+     nav item, links, focus rings. Status uses success/warning/info. */
   --primary: 262 83% 58%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
+  --secondary: 252 30% 95%;
+  --secondary-foreground: 240 16% 11%;
 
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
+  /* Muted text stays >= 4.5:1 on both white cards and the canvas. */
+  --muted: 250 24% 95%;
+  --muted-foreground: 245 9% 42%;
 
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
+  /* Hover and selected tint: a whisper of brand purple. */
+  --accent: 262 70% 96%;
+  --accent-foreground: 263 70% 32%;
 
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 100%;
@@ -65,56 +58,66 @@
   --info: 217 80% 50%;
   --info-foreground: 0 0% 100%;
 
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
+  --border: 250 20% 88%;
+  /* Form fields one step stronger than card borders, so inputs are findable. */
+  --input: 250 16% 83%;
   --ring: 262 83% 58%;
 
-  /* Shadow color/opacity as separate tokens (see @theme inline below)
-     so dark mode can raise opacity for visibility against near-black
-     surfaces without changing hue — no tint, no glow, same neutral
-     black shadow just tuned to actually read on a dark background. */
-  --shadow-color: 0 0% 0%;
-  --shadow-opacity-1: 0.1;
-  --shadow-opacity-2: 0.25;
+  /* Shadows tinted toward the ink so white cards lift softly off the
+     lavender canvas instead of looking grey and dirty. */
+  --shadow-color: 252 40% 18%;
+  --shadow-opacity-1: 0.08;
+  --shadow-opacity-2: 0.2;
 
-  --sidebar: 240 20% 99%;
-  --sidebar-foreground: 240 10% 3.9%;
+  /* --sidebar: light side panels outside the product (staff console,
+     marketing bands). White, so it stands apart from the canvas. */
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 240 16% 11%;
   --sidebar-primary: 262 83% 58%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 240 4.8% 95.9%;
-  --sidebar-accent-foreground: 240 5.9% 10%;
-  --sidebar-border: 240 5.9% 90%;
+  --sidebar-accent: 262 70% 96%;
+  --sidebar-accent-foreground: 263 70% 32%;
+  --sidebar-border: 250 20% 88%;
   --sidebar-ring: 262 83% 58%;
+
+  /* --nav: the product's own navigation (sidebar and mobile menu). Deep
+     indigo ink: it anchors the screen, reads as stable and focused, and
+     makes the purple active item unmistakable. Text on it is ~14:1. */
+  --nav: 250 30% 12%;
+  --nav-foreground: 250 30% 94%;
+  --nav-muted-foreground: 250 15% 70%;
+  --nav-accent: 250 26% 19%;
+  --nav-accent-foreground: 0 0% 100%;
+  --nav-border: 250 24% 19%;
 }
 
 .dark {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
+  /* Same three layers in the dark: a near-black canvas, cards a clear step
+     lighter, and the nav darker still, so it recedes and the content leads. */
+  --background: 250 20% 6%;
+  --foreground: 250 20% 96%;
 
-  --card: 240 8% 7%;
-  --card-foreground: 0 0% 98%;
-  /* Genuinely lighter than --card (unlike light mode, where border/shadow
-     already carry it) so a dialog/dropdown visibly separates from a card
-     sitting behind it instead of matching it exactly. */
-  --popover: 240 10% 12%;
-  --popover-foreground: 0 0% 98%;
-  --surface-2: 240 7% 10%;
+  --card: 250 16% 10%;
+  --card-foreground: 250 20% 96%;
+  /* Genuinely lighter than --card so a dialog or menu separates from a
+     card behind it. */
+  --popover: 250 15% 13%;
+  --popover-foreground: 250 20% 96%;
+  --surface-2: 250 14% 12.5%;
 
-  /* Lighter than the light-mode value for visibility against near-black,
-     mirroring the previous orange token's own light/dark split. White
-     foreground would only reach ~3.36:1 here (fails AA) — near-black
-     reaches ~6.0:1. Reuses Phase 5's dark --accent-purple value exactly. */
+  /* Lighter purple for visibility on near-black; white text on it would
+     fail AA, so its foreground is the near-black ink (~6:1). */
   --primary: 263 85% 70%;
-  --primary-foreground: 240 10% 3.9%;
+  --primary-foreground: 250 30% 8%;
 
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
+  --secondary: 250 12% 16%;
+  --secondary-foreground: 250 20% 96%;
 
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
+  --muted: 250 12% 16%;
+  --muted-foreground: 250 9% 66%;
 
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
+  --accent: 262 30% 19%;
+  --accent-foreground: 262 90% 86%;
 
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 98%;
@@ -126,22 +129,29 @@
   --info: 217 85% 65%;
   --info-foreground: 240 10% 3.9%;
 
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
+  --border: 250 12% 19%;
+  --input: 250 12% 24%;
   --ring: 263 85% 70%;
 
   --shadow-color: 0 0% 0%;
-  --shadow-opacity-1: 0.3;
-  --shadow-opacity-2: 0.5;
+  --shadow-opacity-1: 0.35;
+  --shadow-opacity-2: 0.55;
 
-  --sidebar: 240 9% 6%;
-  --sidebar-foreground: 0 0% 98%;
+  --sidebar: 250 16% 10%;
+  --sidebar-foreground: 250 20% 96%;
   --sidebar-primary: 263 85% 70%;
-  --sidebar-primary-foreground: 240 10% 3.9%;
-  --sidebar-accent: 240 3.7% 15.9%;
-  --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-border: 240 3.7% 15.9%;
+  --sidebar-primary-foreground: 250 30% 8%;
+  --sidebar-accent: 262 30% 19%;
+  --sidebar-accent-foreground: 262 90% 86%;
+  --sidebar-border: 250 12% 19%;
   --sidebar-ring: 263 85% 70%;
+
+  --nav: 250 28% 4.5%;
+  --nav-foreground: 250 20% 92%;
+  --nav-muted-foreground: 250 10% 64%;
+  --nav-accent: 250 20% 12%;
+  --nav-accent-foreground: 0 0% 100%;
+  --nav-border: 250 16% 12%;
 }
 
 @theme inline {
@@ -191,6 +201,13 @@
   --shadow-xl: 0 20px 25px -5px hsl(var(--shadow-color) / var(--shadow-opacity-1)),
     0 8px 10px -6px hsl(var(--shadow-color) / var(--shadow-opacity-1));
   --shadow-2xl: 0 25px 50px -12px hsl(var(--shadow-color) / var(--shadow-opacity-2));
+
+  --color-nav: hsl(var(--nav));
+  --color-nav-foreground: hsl(var(--nav-foreground));
+  --color-nav-muted-foreground: hsl(var(--nav-muted-foreground));
+  --color-nav-accent: hsl(var(--nav-accent));
+  --color-nav-accent-foreground: hsl(var(--nav-accent-foreground));
+  --color-nav-border: hsl(var(--nav-border));
 
   --color-sidebar: hsl(var(--sidebar));
   --color-sidebar-foreground: hsl(var(--sidebar-foreground));

@@ -49,6 +49,8 @@ export async function resolveCrmFilters(supabase: Client, userId: string, params
       engagement: params.engagement,
       campaignId: params.campaign,
       stepId: params.step,
+      opens: params.opens,
+      clicks: params.clicks,
       sort: params.sort,
     },
     activeSegment,

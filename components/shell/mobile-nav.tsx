@@ -22,10 +22,10 @@ export function MobileNav() {
           <MenuIcon className="size-5" />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-64 gap-0 bg-sidebar p-0 text-sidebar-foreground">
-        <SheetHeader className="border-b border-sidebar-border">
+      <SheetContent side="left" className="w-64 gap-0 border-nav-border bg-nav p-0 text-nav-foreground">
+        <SheetHeader className="border-b border-nav-border">
           <SheetTitle className="flex items-center text-left">
-            <PolimatiqLogo width={120} />
+            <PolimatiqLogo width={120} onDark />
           </SheetTitle>
         </SheetHeader>
         <nav className="flex flex-col gap-1.5 p-3">
@@ -41,8 +41,8 @@ export function MobileNav() {
                 className={cn(
                   "group flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-150",
                   isActive
-                    ? "bg-primary/10 text-primary shadow-sm"
-                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                    ? "bg-primary text-primary-foreground shadow-md shadow-primary/30"
+                    : "text-nav-muted-foreground hover:bg-nav-accent hover:text-nav-accent-foreground",
                 )}
               >
                 <Icon className="size-4 transition-transform duration-150 group-hover:translate-x-0.5" />

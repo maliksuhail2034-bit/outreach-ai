@@ -44,7 +44,7 @@ export async function PricingPreview() {
   const paymentCurrency = currencyForRegion(await getBillingRegion());
 
   return (
-    <section id="pricing" className="scroll-mt-16 border-b border-border bg-sidebar/40 py-20 sm:py-28">
+    <section id="pricing" className="scroll-mt-16 border-b border-border bg-card py-20 sm:py-28">
       <Container>
         <FadeIn>
           <div className="mx-auto max-w-2xl text-center">

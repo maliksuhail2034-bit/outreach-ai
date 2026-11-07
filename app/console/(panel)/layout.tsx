@@ -64,7 +64,7 @@ export default async function ConsolePanelLayout({ children }: { children: React
         </div>
       </aside>
 
-      <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-background/90 px-4 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-card/90 px-4 shadow-sm backdrop-blur lg:hidden">
         <div className="flex items-center gap-1">
           <ConsoleMobileNav items={items} />
           <PolimatiqLogo width={96} />

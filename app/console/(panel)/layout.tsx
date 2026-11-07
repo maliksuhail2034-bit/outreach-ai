@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
-import { LogOutIcon, ShieldCheckIcon } from "lucide-react";
+import Link from "next/link";
+import { LogOutIcon, ShieldCheckIcon, UserCogIcon } from "lucide-react";
 
 import { requireStaffPage } from "@/lib/staff/auth";
 import { consoleNavFor } from "@/lib/staff/navigation";
 import { STAFF_ROLE_LABELS } from "@/lib/staff/permissions";
-import { signOut } from "@/lib/actions/auth";
+import { staffSignOutAction } from "@/app/console/session-actions";
 import { ConsoleMobileNav, ConsoleNav } from "@/components/console/console-nav";
+import { ConsolePresence } from "@/components/console/console-presence";
 import { PolimatiqLogo } from "@/components/shell/polimatiq-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,7 +50,12 @@ export default async function ConsolePanelLayout({ children }: { children: React
               <p className="truncate text-sm font-medium">{session.staff.display_name}</p>
               <p className="truncate text-xs text-sidebar-foreground/60">{roleLabel}</p>
             </div>
-            <form action={signOut}>
+            <Button asChild variant="ghost" size="icon" title="Your account">
+              <Link href="/console/account" aria-label="Your account: password and username">
+                <UserCogIcon className="size-4" aria-hidden="true" />
+              </Link>
+            </Button>
+            <form action={staffSignOutAction}>
               <Button type="submit" variant="ghost" size="icon" aria-label="Sign out" title="Sign out">
                 <LogOutIcon className="size-4" aria-hidden="true" />
               </Button>
@@ -67,7 +74,12 @@ export default async function ConsolePanelLayout({ children }: { children: React
             <ShieldCheckIcon className="size-3" aria-hidden="true" />
             {roleLabel}
           </Badge>
-          <form action={signOut}>
+          <Button asChild variant="ghost" size="icon" title="Your account">
+            <Link href="/console/account" aria-label="Your account: password and username">
+              <UserCogIcon className="size-4" aria-hidden="true" />
+            </Link>
+          </Button>
+          <form action={staffSignOutAction}>
             <Button type="submit" variant="ghost" size="icon" aria-label="Sign out" title="Sign out">
               <LogOutIcon className="size-4" aria-hidden="true" />
             </Button>
@@ -75,6 +87,7 @@ export default async function ConsolePanelLayout({ children }: { children: React
         </div>
       </header>
 
+      <ConsolePresence />
       <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-10">{children}</main>
     </div>
   );

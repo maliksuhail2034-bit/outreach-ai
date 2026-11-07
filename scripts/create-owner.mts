@@ -4,7 +4,7 @@
 //
 //   systemd-run --working-directory=/srv/polimatiq/current \
 //     --property=EnvironmentFile=/etc/polimatiq/prod.env --wait --pipe --collect \
-//     /usr/bin/node --no-warnings scripts/create-owner.mts --email owner@company.com --name "Full Name"
+//     /usr/bin/node --no-warnings scripts/create-owner.mts --email owner@company.com --name "Full Name" --username owner.name
 //
 // Refuses when an active owner already exists, unless --additional is given
 // (a second owner created by an existing one should use the console).
@@ -19,6 +19,7 @@ const { values } = parseArgs({
   options: {
     email: { type: "string" },
     name: { type: "string" },
+    username: { type: "string" },
     additional: { type: "boolean", default: false },
   },
   strict: true,
@@ -37,6 +38,11 @@ async function main(): Promise<number> {
   const name = (values.name ?? "").trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return refuse("--email must be a valid address.");
   if (name.length < 1 || name.length > 120) return refuse("--name is required (1-120 characters).");
+  // Same rule as lib/staff/password-policy.ts (this script stays self-contained).
+  const username = (values.username ?? "").trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) {
+    return refuse("--username is required: 3-32 characters, letters, numbers, dots, dashes or underscores (not an email).");
+  }
 
   const supabase = createClient<Database>(projectUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
@@ -66,7 +72,7 @@ async function main(): Promise<number> {
 
   const { data: staff, error: insertError } = await supabase
     .from("staff_members")
-    .insert({ user_id: created.user.id, role: "owner", display_name: name, status: "invited" })
+    .insert({ user_id: created.user.id, role: "owner", display_name: name, username, status: "invited", password_must_change: true })
     .select("id")
     .single();
   if (insertError || !staff) {
@@ -94,9 +100,9 @@ async function main(): Promise<number> {
   const url = new URL("/auth/confirm", new URL(appUrl).origin);
   url.searchParams.set("token_hash", link.properties.hashed_token);
   url.searchParams.set("type", "recovery");
-  url.searchParams.set("next", "/reset-password");
+  url.searchParams.set("next", "/console/account?required=password");
 
-  console.log(`Owner staff account created for ${email}.`);
+  console.log(`Owner staff account created for ${email} (username: ${username}). Sign in later at /console/login.`);
   console.log("One-time setup link (hand it over privately; it is not stored):");
   console.log(url.toString());
   return 0;

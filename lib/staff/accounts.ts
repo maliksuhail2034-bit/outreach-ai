@@ -11,6 +11,8 @@ import {
   type StaffRole,
 } from "@/lib/db";
 import { canManageStaffRole } from "./permissions";
+import { normalizeUsername, STAFF_PASSWORD_POLICY_VERSION, staffPasswordProblems } from "./password-policy";
+import { endStaffActivity } from "./work-session";
 
 // Staff account lifecycle, shared by the console's Server Functions and the
 // owner bootstrap script. The caller has already authorized the actor
@@ -43,14 +45,14 @@ export async function issueSetupLink(admin: Admin, email: string): Promise<strin
   const url = appUrl("/auth/confirm");
   url.searchParams.set("token_hash", data.properties.hashed_token);
   url.searchParams.set("type", "recovery");
-  url.searchParams.set("next", "/reset-password");
+  url.searchParams.set("next", "/console/account?required=password");
   return url.toString();
 }
 
 export async function createStaffAccount(
   admin: Admin,
   actor: { userId: string; role: StaffRole },
-  input: { email: string; displayName: string; role: StaffRole },
+  input: { email: string; displayName: string; username: string; role: StaffRole },
 ): Promise<{ staff: Tables<"staff_members">; setupLink: string }> {
   if (!canManageStaffRole(actor.role, input.role)) {
     throw new StaffAccountError(`Your role can't create ${input.role} accounts.`);
@@ -79,16 +81,24 @@ export async function createStaffAccount(
       user_id: created.user.id,
       role: input.role,
       display_name: input.displayName,
+      username: normalizeUsername(input.username),
       status: "invited",
+      // No password of their own yet: the setup link asks for one first.
+      password_must_change: true,
       created_by: actor.userId,
     });
   } catch (insertError) {
     // Don't leave an auth user behind that isn't a staff member.
     await admin.auth.admin.deleteUser(created.user.id);
+    if (isUniqueViolation(insertError)) throw new StaffAccountError("That username is already taken. Choose another.");
     throw insertError;
   }
 
   return { staff, setupLink: await issueSetupLink(admin, input.email) };
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === "23505";
 }
 
 async function loadManageableTarget(admin: Admin, actor: { userId: string; role: StaffRole }, staffId: string) {
@@ -126,7 +136,10 @@ export async function setStaffDisabled(
 
   const { error } = await admin.auth.admin.updateUserById(target.user_id, { ban_duration: disabled ? BAN_FOREVER : "none" });
   if (error) throw new StaffAccountError("Couldn't update the account's sign-in.");
-  if (disabled) await revokeUserSessions(admin, target.user_id);
+  if (disabled) {
+    await revokeUserSessions(admin, target.user_id);
+    await endStaffActivity(target.id, "access_changed");
+  }
 
   return updateStaffMember(admin, target.id, { status: disabled ? "disabled" : "invited" });
 }
@@ -166,7 +179,115 @@ export async function resetStaffAccess(
     await admin.auth.admin.mfa.deleteFactor({ userId: target.user_id, id: factor.id });
   }
   await revokeUserSessions(admin, target.user_id);
-  await updateStaffMember(admin, target.id, { status: "invited" });
+  await endStaffActivity(target.id, "access_changed");
+  await updateStaffMember(admin, target.id, { status: "invited", password_must_change: true });
 
   return { setupLink: await issueSetupLink(admin, await authEmail(admin, target.user_id)) };
 }
+
+// Sets an employee's password (e.g. they're locked out and can't receive a
+// setup link). Checked against the target's role policy; every session ends.
+// With mustChange (the console's default), they choose their own password at
+// their next sign-in, so the operator never knows it for long.
+export async function setStaffPassword(
+  admin: Admin,
+  actor: { userId: string; role: StaffRole },
+  staffId: string,
+  password: string,
+  mustChange: boolean,
+): Promise<Tables<"staff_members">> {
+  const target = await loadManageableTarget(admin, actor, staffId);
+  if (target.status === "disabled") throw new StaffAccountError("Unblock the account before setting its password.");
+  const problems = staffPasswordProblems(target.role as StaffRole, password, { username: target.username });
+  if (problems.length > 0) throw new StaffAccountError(problems[0]);
+
+  const { error } = await admin.auth.admin.updateUserById(target.user_id, { password });
+  if (error) throw new StaffAccountError("Couldn't set the password. Try a different one.");
+  await revokeUserSessions(admin, target.user_id);
+  await endStaffActivity(target.id, "access_changed");
+  return updateStaffMember(admin, target.id, {
+    password_must_change: mustChange,
+    password_policy_version: STAFF_PASSWORD_POLICY_VERSION,
+    password_changed_at: new Date().toISOString(),
+  });
+}
+
+async function renameStaff(admin: Admin, target: Tables<"staff_members">, username: string) {
+  const next = normalizeUsername(username);
+  if (next === target.username) return { staff: target, previous: target.username };
+  try {
+    return { staff: await updateStaffMember(admin, target.id, { username: next }), previous: target.username };
+  } catch (error) {
+    if (isUniqueViolation(error)) throw new StaffAccountError("That username is already taken. Choose another.");
+    throw error;
+  }
+}
+
+export async function changeStaffUsername(
+  admin: Admin,
+  actor: { userId: string; role: StaffRole },
+  staffId: string,
+  username: string,
+): Promise<{ staff: Tables<"staff_members">; previous: string }> {
+  const target = await loadManageableTarget(admin, actor, staffId);
+  return renameStaff(admin, target, username);
+}
+
+// Ends every session of an employee (lost laptop, suspicious activity)
+// without blocking the account.
+export async function signOutStaffEverywhere(admin: Admin, actor: { userId: string; role: StaffRole }, staffId: string): Promise<number> {
+  const target = await loadManageableTarget(admin, actor, staffId);
+  const ended = await revokeUserSessions(admin, target.user_id);
+  await endStaffActivity(target.id, "access_changed");
+  return ended;
+}
+
+// Permanently removes the login and the staff record (their work sessions
+// go with it). The audit log keeps everything they did; the caller records
+// who they were in the deletion entry so that history stays readable.
+export async function deleteStaffAccount(
+  admin: Admin,
+  actor: { userId: string; role: StaffRole },
+  staffId: string,
+  confirmUsername: string,
+): Promise<Tables<"staff_members">> {
+  const target = await loadManageableTarget(admin, actor, staffId);
+  if (normalizeUsername(confirmUsername) !== target.username) throw new StaffAccountError("Type the username exactly to confirm.");
+  await assertNotLastOwner(admin, target);
+  await revokeUserSessions(admin, target.user_id);
+  const { error } = await admin.auth.admin.deleteUser(target.user_id);
+  if (error) throw new StaffAccountError("Couldn't delete the account. Try again.");
+  return target;
+}
+
+// --- The signed-in staff member's own account -----------------------------------------
+
+// `updateOwnPassword` changes the password through the person's own session
+// (supabase.auth.updateUser). The admin API would also end the session
+// they're using, signing them out in the middle of first-time setup.
+export async function setOwnPassword(
+  admin: Admin,
+  staff: Tables<"staff_members">,
+  email: string | null,
+  password: string,
+  updateOwnPassword: (password: string) => Promise<{ error: { message: string } | null }>,
+): Promise<void> {
+  const problems = staffPasswordProblems(staff.role as StaffRole, password, { username: staff.username, email: email ?? undefined });
+  if (problems.length > 0) throw new StaffAccountError(problems[0]);
+  const { error } = await updateOwnPassword(password);
+  if (error) {
+    throw new StaffAccountError(
+      /different from the old/i.test(error.message) ? "Choose a password you haven't used before." : "Couldn't save that password. Try a different one.",
+    );
+  }
+  await updateStaffMember(admin, staff.id, {
+    password_must_change: false,
+    password_policy_version: STAFF_PASSWORD_POLICY_VERSION,
+    password_changed_at: new Date().toISOString(),
+  });
+}
+
+export async function changeOwnUsername(admin: Admin, staff: Tables<"staff_members">, username: string) {
+  return renameStaff(admin, staff, username);
+}
+

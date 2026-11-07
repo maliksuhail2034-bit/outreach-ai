@@ -92,3 +92,32 @@ export async function listUnhealthyJobRuns(supabase: Client, sinceIso: string, l
   if (error) throw error;
   return data ?? [];
 }
+
+// One account's sign-in outcomes since a point in time (employee page).
+// Successes carry the user id; failures carry only a hash of what was typed
+// (the email, or "staff:<username>" at /console/login), so those are matched
+// by hash.
+export async function listAuthEventsForUser(supabase: Client, userId: string, sinceIso: string, emailHashes: string[] = [], limit = 50) {
+  const hashes = emailHashes.filter((hash) => /^[0-9a-f]{64}$/.test(hash));
+  const { data, error } = await supabase
+    .from("auth_events")
+    .select("event_type, ip, country, created_at")
+    .or([`user_id.eq.${userId}`, ...(hashes.length ? [`email_hash.in.(${hashes.join(",")})`] : [])].join(","))
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Which of these users have a verified 2-step factor (the Auth admin
+// list-users API omits factors). Chunked to keep each call small.
+export async function listUsersWithVerifiedMfa(supabase: Client, userIds: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let index = 0; index < userIds.length; index += 500) {
+    const { data, error } = await supabase.rpc("users_with_verified_mfa", { p_user_ids: userIds.slice(index, index + 500) });
+    if (error) throw error;
+    for (const id of (data ?? []) as string[]) found.add(id);
+  }
+  return found;
+}

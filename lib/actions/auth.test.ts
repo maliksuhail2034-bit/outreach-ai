@@ -105,6 +105,19 @@ describe("signIn", () => {
     expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_failure", { email: "ada@example.com" });
   });
 
+  it("refuses staff accounts here and signs them straight back out", async () => {
+    supabaseAuth.signInWithPassword.mockResolvedValue({
+      data: { user: { id: "staff-user", app_metadata: { polimatiq_staff: true } } },
+      error: null,
+    });
+
+    await expect(signIn(undefined, form({ email: "owner@polimatiq.test", password: "x" }))).resolves.toEqual({
+      error: "Staff accounts sign in at /console/login with their username.",
+    });
+    expect(supabaseAuth.signOut).toHaveBeenCalled();
+    expect(vi.mocked(recordSignInEvent)).toHaveBeenLastCalledWith("sign_in_failure", { email: "owner@polimatiq.test" });
+  });
+
   it("redirects to the dashboard on success", async () => {
     supabaseAuth.signInWithPassword.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 

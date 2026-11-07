@@ -16,16 +16,19 @@ export function PasswordRequirements({
   id,
   password,
   showUnmet = false,
+  rules = PASSWORD_RULES,
 }: {
   id: string;
   password: string;
   showUnmet?: boolean;
+  // A stricter policy (e.g. staff accounts); defaults to the customer rules.
+  rules?: readonly { id: string; label: string; test: (value: string) => boolean }[];
 }) {
   return (
     <div id={id} className="rounded-md border border-border bg-muted/30 px-3 py-2.5">
       <p className="text-xs font-medium text-muted-foreground">Your password must contain:</p>
       <ul className="mt-1.5 grid gap-1 sm:grid-cols-2" aria-live="polite">
-        {PASSWORD_RULES.map((rule) => {
+        {rules.map((rule) => {
           const met = rule.test(password);
           const failed = !met && showUnmet;
           const Icon = met ? CheckCircle2Icon : failed ? XCircleIcon : CircleIcon;

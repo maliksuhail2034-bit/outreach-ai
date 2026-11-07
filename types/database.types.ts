@@ -1821,10 +1821,14 @@ export type Database = {
           display_name: string
           id: string
           last_seen_at: string | null
+          password_changed_at: string | null
+          password_must_change: boolean
+          password_policy_version: number
           role: string
           status: string
           updated_at: string
           user_id: string
+          username: string
         }
         Insert: {
           created_at?: string
@@ -1832,10 +1836,14 @@ export type Database = {
           display_name: string
           id?: string
           last_seen_at?: string | null
+          password_changed_at?: string | null
+          password_must_change?: boolean
+          password_policy_version?: number
           role: string
           status?: string
           updated_at?: string
           user_id: string
+          username: string
         }
         Update: {
           created_at?: string
@@ -1843,12 +1851,60 @@ export type Database = {
           display_name?: string
           id?: string
           last_seen_at?: string | null
+          password_changed_at?: string | null
+          password_must_change?: boolean
+          password_policy_version?: number
           role?: string
           status?: string
           updated_at?: string
           user_id?: string
+          username?: string
         }
         Relationships: []
+      }
+      staff_work_sessions: {
+        Row: {
+          country: string | null
+          created_at: string
+          end_reason: string | null
+          ended_at: string | null
+          id: string
+          last_activity_at: string
+          staff_id: string
+          started_at: string
+          updated_at: string
+        }
+        Insert: {
+          country?: string | null
+          created_at?: string
+          end_reason?: string | null
+          ended_at?: string | null
+          id?: string
+          last_activity_at?: string
+          staff_id: string
+          started_at?: string
+          updated_at?: string
+        }
+        Update: {
+          country?: string | null
+          created_at?: string
+          end_reason?: string | null
+          ended_at?: string | null
+          id?: string
+          last_activity_at?: string
+          staff_id?: string
+          started_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_work_sessions_staff_id_fkey"
+            columns: ["staff_id"]
+            isOneToOne: false
+            referencedRelation: "staff_members"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       stripe_webhook_events: {
         Row: {
@@ -2850,9 +2906,17 @@ export type Database = {
         Args: { p_campaign_lead_id: string }
         Returns: boolean
       }
+      staff_end_work_session: {
+        Args: { p_reason?: string; p_staff_id: string }
+        Returns: undefined
+      }
       staff_revoke_user_sessions: {
         Args: { p_user_id: string }
         Returns: number
+      }
+      staff_touch_work_session: {
+        Args: { p_country?: string; p_idle_minutes?: number; p_staff_id: string }
+        Returns: undefined
       }
       staff_verify_audit_chain: {
         Args: never
@@ -2861,9 +2925,21 @@ export type Database = {
           first_broken_seq: number | null
         }[]
       }
+      staff_work_seconds: {
+        Args: { p_since: string }
+        Returns: {
+          seconds: number
+          sessions: number
+          staff_id: string
+        }[]
+      }
       traffic_summary: {
         Args: { p_from: string; p_limit?: number; p_to: string }
         Returns: Json
+      }
+      users_with_verified_mfa: {
+        Args: { p_user_ids: string[] }
+        Returns: string[]
       }
     }
     Enums: {

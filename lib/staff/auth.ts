@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStaffMemberByUserId, updateStaffMember, type StaffRole } from "@/lib/db/staff";
 import { hasStaffPermission, isStaffRole, type StaffPermission } from "./permissions";
+import { needsPasswordChange } from "./password-policy";
+import { recordStaffActivity } from "./work-session";
 
 // The staff console's authorization boundary. Every console page calls
 // requireStaffPage() and every console Server Function calls
@@ -75,15 +77,18 @@ async function markSeen(session: StaffSession): Promise<void> {
 // 2-step pages; missing permission -> console home.
 export async function requireStaffPage(permission?: StaffPermission): Promise<StaffSession> {
   const user = await getUser();
-  if (!user) redirect("/login");
+  if (!user) redirect("/console/login");
 
   const session = await getStaffSession();
   if (!session) notFound();
-  if (session.mfa === "needs_enrollment") redirect("/console/2fa/setup");
+  // An existing factor is verified first; a password that doesn't meet the
+  // staff policy is replaced before 2-step setup or any console page.
   if (session.mfa === "needs_verification") redirect("/console/2fa/verify");
+  if (needsPasswordChange(session.staff)) redirect("/console/account?required=password");
+  if (session.mfa === "needs_enrollment") redirect("/console/2fa/setup");
   if (permission && !hasStaffPermission(session.role, permission)) redirect("/console");
 
-  await markSeen(session);
+  await Promise.all([markSeen(session), recordStaffActivity(session.staff.id)]);
   return session;
 }
 
@@ -92,15 +97,33 @@ export async function requireStaffAction(permission: StaffPermission): Promise<S
   const session = await getStaffSession();
   if (!session) throw new StaffAccessError("Sign in with a staff account.");
   if (session.mfa !== "verified") throw new StaffAccessError("Complete 2-step login first.");
+  if (needsPasswordChange(session.staff)) throw new StaffAccessError("Set a new password first.");
   if (!hasStaffPermission(session.role, permission)) throw new StaffAccessError();
+  await recordStaffActivity(session.staff.id);
   return session;
 }
 
 // For the 2-step login pages, which must work before aal2.
 export async function requireStaffPendingMfa(): Promise<StaffSession> {
   const user = await getUser();
-  if (!user) redirect("/login");
+  if (!user) redirect("/console/login");
   const session = await getStaffSession();
   if (!session) notFound();
+  return session;
+}
+
+// For "your account" (password + username): a signed-in staff member who has
+// either completed 2-step login, or has no factor yet (first-time setup).
+// Someone with a factor must verify it before changing their password.
+export async function requireStaffAccountAccess(): Promise<StaffSession> {
+  const session = await requireStaffPendingMfa();
+  if (session.mfa === "needs_verification") redirect("/console/2fa/verify");
+  return session;
+}
+
+export async function requireStaffAccountAction(): Promise<StaffSession> {
+  const session = await getStaffSession();
+  if (!session) throw new StaffAccessError("Sign in with a staff account.");
+  if (session.mfa === "needs_verification") throw new StaffAccessError("Complete 2-step login first.");
   return session;
 }

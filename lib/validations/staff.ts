@@ -1,10 +1,21 @@
 import { z } from "zod";
 
+import { normalizeUsername, usernameProblem } from "@/lib/staff/password-policy";
+
 export const staffRoleSchema = z.enum(["owner", "security", "sales"]);
+
+export const usernameSchema = z
+  .string()
+  .transform(normalizeUsername)
+  .superRefine((value, ctx) => {
+    const problem = usernameProblem(value);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
 
 export const createStaffSchema = z.object({
   email: z.string().trim().toLowerCase().email({ message: "Enter a valid email address." }).max(254),
   displayName: z.string().trim().min(1, { message: "Enter the person's name." }).max(120),
+  username: usernameSchema,
   role: staffRoleSchema,
 });
 export type CreateStaffInput = z.infer<typeof createStaffSchema>;
@@ -44,3 +55,27 @@ export const planLeadQuotaSchema = z.object({
     .max(100_000, { message: "The quota can be at most 100,000 a month." }),
 });
 export type PlanLeadQuotaInput = z.infer<typeof planLeadQuotaSchema>;
+
+// --- Employees ----------------------------------------------------------------------
+
+// Password strength is checked against the target's role in
+// lib/staff/password-policy.ts; this only bounds the input.
+export const passwordInputSchema = z.string().min(1, { message: "Enter a password." }).max(200);
+
+export const setStaffPasswordSchema = z.object({
+  staffId: staffIdSchema,
+  password: passwordInputSchema,
+  mustChange: z.boolean(),
+});
+export type SetStaffPasswordInput = z.infer<typeof setStaffPasswordSchema>;
+
+export const changeUsernameSchema = z.object({ staffId: staffIdSchema, username: usernameSchema });
+
+export const ownPasswordSchema = z
+  .object({ password: passwordInputSchema, confirmPassword: z.string() })
+  .refine((value) => value.password === value.confirmPassword, { message: "The passwords don't match.", path: ["confirmPassword"] });
+
+export const staffSignInSchema = z.object({
+  username: z.string().trim().toLowerCase().min(1, { message: "Enter your username." }).max(64),
+  password: z.string().min(1, { message: "Enter your password." }).max(200),
+});

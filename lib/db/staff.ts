@@ -87,3 +87,56 @@ export async function listStaffAuditLog(supabase: Client, options: { limit?: num
   if (error) throw error;
   return data ?? [];
 }
+
+// --- Usernames ---------------------------------------------------------------
+
+// Case-insensitive (usernames are stored lowercase; the unique index is on
+// lower(username)).
+export async function getStaffMemberByUsername(supabase: Client, username: string) {
+  const { data, error } = await supabase.from("staff_members").select("*").eq("username", username.trim().toLowerCase()).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// --- Work sessions -----------------------------------------------------------
+
+export async function touchStaffWorkSession(supabase: Client, staffId: string, country: string | null) {
+  const { error } = await supabase.rpc("staff_touch_work_session", { p_staff_id: staffId, p_country: country ?? undefined });
+  if (error) throw error;
+}
+
+export async function endStaffWorkSession(supabase: Client, staffId: string, reason: "signed_out" | "access_changed" = "signed_out") {
+  const { error } = await supabase.rpc("staff_end_work_session", { p_staff_id: staffId, p_reason: reason });
+  if (error) throw error;
+}
+
+export async function listStaffWorkSessions(supabase: Client, staffId: string, sinceIso: string, limit = 500) {
+  const { data, error } = await supabase
+    .from("staff_work_sessions")
+    .select("id, started_at, last_activity_at, ended_at, end_reason, country")
+    .eq("staff_id", staffId)
+    .gte("last_activity_at", sinceIso)
+    .order("started_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getStaffWorkSeconds(supabase: Client, sinceIso: string) {
+  const { data, error } = await supabase.rpc("staff_work_seconds", { p_since: sinceIso });
+  if (error) throw error;
+  return new Map((data ?? []).map((row) => [row.staff_id, { seconds: Number(row.seconds), sessions: Number(row.sessions) }]));
+}
+
+// Audit entries one staff member made since a point in time (for "work done").
+export async function listStaffActionsSince(supabase: Client, actorUserId: string, sinceIso: string, limit = 1000) {
+  const { data, error } = await supabase
+    .from("staff_audit_log")
+    .select("seq, action, target_type, target_id, metadata, created_at")
+    .eq("actor_user_id", actorUserId)
+    .gte("created_at", sinceIso)
+    .order("seq", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}

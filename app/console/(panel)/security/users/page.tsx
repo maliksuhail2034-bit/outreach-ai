@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { listStaffMembers } from "@/lib/db";
+import { listStaffMembers, listUsersWithVerifiedMfa } from "@/lib/db";
 import { requireStaffPage } from "@/lib/staff/auth";
 import { isBanned, listAuthUsers } from "@/lib/staff/directory";
 import { canManageStaffRole, hasStaffPermission, isStaffRole, STAFF_ROLE_LABELS } from "@/lib/staff/permissions";
@@ -34,6 +34,7 @@ export default async function SecurityUsersPage({ searchParams }: { searchParams
     .sort((a, b) => (b.last_sign_in_at ?? "").localeCompare(a.last_sign_in_at ?? ""));
   const pageCount = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
   const rows = matching.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const withMfa = await listUsersWithVerifiedMfa(admin, rows.map((user) => user.id));
   const lockedCount = users.filter((user) => isBanned(user)).length;
 
   function pageHref(next: number) {
@@ -80,7 +81,7 @@ export default async function SecurityUsersPage({ searchParams }: { searchParams
                 const member = staffByUserId.get(user.id);
                 const staffRole = member && isStaffRole(member.role) ? member.role : null;
                 const locked = isBanned(user);
-                const mfa = (user.factors ?? []).some((factor) => factor.status === "verified");
+                const mfa = withMfa.has(user.id);
                 const allowed =
                   canAct && user.id !== session.user.id && (!staffRole || canManageStaffRole(session.role, staffRole));
                 return (

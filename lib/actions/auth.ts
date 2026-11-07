@@ -70,6 +70,15 @@ export async function signIn(_prevState: AuthActionState, formData: FormData): P
     return { error: error.message };
   }
 
+  // Staff sign in only at /console/login with their username, so knowing a
+  // staff member's email is never enough to start a session. Said only after
+  // a correct password, so it reveals nothing to someone guessing.
+  if (data.user?.app_metadata?.polimatiq_staff === true) {
+    await supabase.auth.signOut();
+    await recordSignInEvent("sign_in_failure", { email: parsed.data.email });
+    return { error: "Staff accounts sign in at /console/login with their username." };
+  }
+
   await recordSignInEvent("sign_in_success", { userId: data.user?.id ?? null });
 
   // Only failed attempts count toward the limits — refund the two this

@@ -33,7 +33,7 @@ const ICONS: Record<ConsoleNavItem["icon"], LucideIcon> = {
   upload: UploadIcon,
 };
 
-const GROUPS = ["Company", "Security", "Sales"] as const;
+const GROUPS = ["Company", "Team", "Security", "Sales"] as const;
 
 function isActive(pathname: string, href: string) {
   if (href === "/console") return pathname === "/console";

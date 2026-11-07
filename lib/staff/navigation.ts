@@ -6,7 +6,7 @@ export interface ConsoleNavItem {
   title: string;
   icon: "overview" | "customers" | "traffic" | "leadProgram" | "staff" | "security" | "pool" | "upload";
   permission: StaffPermission;
-  group: "Company" | "Security" | "Sales";
+  group: "Company" | "Team" | "Security" | "Sales";
 }
 
 const ITEMS: ConsoleNavItem[] = [
@@ -14,7 +14,7 @@ const ITEMS: ConsoleNavItem[] = [
   { href: "/console/customers", title: "Customers", icon: "customers", permission: "customers:view", group: "Company" },
   { href: "/console/traffic", title: "Traffic", icon: "traffic", permission: "traffic:view", group: "Company" },
   { href: "/console/lead-program", title: "Lead program", icon: "leadProgram", permission: "quotas:edit", group: "Company" },
-  { href: "/console/staff", title: "Staff accounts", icon: "staff", permission: "staff:view", group: "Company" },
+  { href: "/console/staff", title: "Employees", icon: "staff", permission: "staff:view", group: "Team" },
   { href: "/console/security", title: "Security center", icon: "security", permission: "security:view", group: "Security" },
   { href: "/console/sales", title: "Lead pool", icon: "pool", permission: "leads:view", group: "Sales" },
   { href: "/console/sales/upload", title: "Upload leads", icon: "upload", permission: "leads:manage", group: "Sales" },

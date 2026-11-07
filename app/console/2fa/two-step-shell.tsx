@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ShieldCheckIcon } from "lucide-react";
 
-import { signOut } from "@/lib/actions/auth";
+import { staffSignOutAction } from "@/app/console/session-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -18,7 +18,7 @@ export function TwoStepShell({ title, description, children }: { title: string; 
         </CardHeader>
         <CardContent className="space-y-4">
           {children}
-          <form action={signOut} className="text-center">
+          <form action={staffSignOutAction} className="text-center">
             <Button type="submit" variant="link" size="sm">
               Sign out
             </Button>

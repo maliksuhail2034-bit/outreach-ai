@@ -104,6 +104,7 @@ function isUniqueViolation(error: unknown): boolean {
 async function loadManageableTarget(admin: Admin, actor: { userId: string; role: StaffRole }, staffId: string) {
   const target = await getStaffMember(admin, staffId);
   if (!target) throw new StaffAccountError("That staff account no longer exists.");
+  if (target.status === "archived") throw new StaffAccountError("This account is archived. Add a new account to give them access again.");
   if (target.user_id === actor.userId) throw new StaffAccountError("You can't change your own staff account here.");
   if (!canManageStaffRole(actor.role, target.role as StaffRole)) {
     throw new StaffAccountError(`Your role can't manage ${target.role} accounts.`);
@@ -242,10 +243,10 @@ export async function signOutStaffEverywhere(admin: Admin, actor: { userId: stri
   return ended;
 }
 
-// Permanently removes the login and the staff record (their work sessions
-// go with it). The audit log keeps everything they did; the caller records
-// who they were in the deletion entry so that history stays readable.
-export async function deleteStaffAccount(
+// A leaver: sign-in is refused for good and every session ends, but the
+// record, work sessions and audit trail stay (payroll, disputes). Permanent
+// from the console — rehiring means a new account.
+export async function archiveStaffAccount(
   admin: Admin,
   actor: { userId: string; role: StaffRole },
   staffId: string,
@@ -254,10 +255,12 @@ export async function deleteStaffAccount(
   const target = await loadManageableTarget(admin, actor, staffId);
   if (normalizeUsername(confirmUsername) !== target.username) throw new StaffAccountError("Type the username exactly to confirm.");
   await assertNotLastOwner(admin, target);
+
+  const { error } = await admin.auth.admin.updateUserById(target.user_id, { ban_duration: BAN_FOREVER });
+  if (error) throw new StaffAccountError("Couldn't block the account's sign-in. Try again.");
   await revokeUserSessions(admin, target.user_id);
-  const { error } = await admin.auth.admin.deleteUser(target.user_id);
-  if (error) throw new StaffAccountError("Couldn't delete the account. Try again.");
-  return target;
+  await endStaffActivity(target.id, "access_changed");
+  return updateStaffMember(admin, target.id, { status: "archived", archived_at: new Date().toISOString(), archived_by: actor.userId });
 }
 
 // --- The signed-in staff member's own account -----------------------------------------

@@ -51,11 +51,14 @@ export default async function EmployeePage({ params }: { params: Promise<{ staff
     staff.created_by ? admin.auth.admin.getUserById(staff.created_by).then(({ data }) => data.user?.email ?? null) : Promise.resolve(null),
     listUsersWithVerifiedMfa(admin, [staff.user_id]),
   ]);
+  const archivedBy =
+    staff.archived_by ? (await admin.auth.admin.getUserById(staff.archived_by)).data.user?.email ?? null : null;
 
   const totals = workTotals(sessions, now);
   const done = workDone(actions);
   const isSelf = staff.user_id === session.user.id;
-  const canManage = !isSelf && canManageStaffRole(session.role, role);
+  const archived = staff.status === "archived";
+  const canManage = !isSelf && !archived && canManageStaffRole(session.role, role);
   const mfa = withMfa.has(staff.user_id);
   const locked = user ? isBanned(user) : false;
 
@@ -87,6 +90,13 @@ export default async function EmployeePage({ params }: { params: Promise<{ staff
           ) : undefined
         }
       />
+
+      {archived && (
+        <p role="status" className="rounded-lg border border-border bg-muted px-4 py-3 text-sm">
+          Archived {fmt(staff.archived_at)}
+          {archivedBy && ` by ${archivedBy}`}. They can&apos;t sign in. Their hours and history below are kept.
+        </p>
+      )}
 
       <StatGrid>
         <StatCard label="Worked today" icon={ClockIcon} value={formatDuration(totals.todaySeconds)} hint="UTC day" />

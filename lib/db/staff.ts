@@ -8,7 +8,7 @@ import { unwrap } from "./shared";
 // none of these tables has an RLS policy a customer could use.
 
 export type StaffRole = "owner" | "security" | "sales";
-export type StaffStatus = "invited" | "active" | "disabled";
+export type StaffStatus = "invited" | "active" | "disabled" | "archived";
 
 export async function getStaffMemberByUserId(supabase: Client, userId: string) {
   const { data, error } = await supabase.from("staff_members").select("*").eq("user_id", userId).maybeSingle();

@@ -79,7 +79,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "ip.unblocked": "Addresses unblocked",
   "grc.updated": "Compliance controls updated",
   "staff.created": "Employees added",
-  "staff.deleted": "Employees deleted",
+  "staff.archived": "Employees archived",
   "staff.disabled": "Employees blocked",
   "staff.enabled": "Employees unblocked",
   "staff.role_changed": "Employee roles changed",

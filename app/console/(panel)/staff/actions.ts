@@ -9,7 +9,7 @@ import {
   changeStaffRole,
   changeStaffUsername,
   createStaffAccount,
-  deleteStaffAccount,
+  archiveStaffAccount,
   resetStaffAccess,
   setStaffDisabled,
   setStaffPassword,
@@ -144,18 +144,17 @@ export async function signOutStaffEverywhereAction(staffId: string) {
   });
 }
 
-export async function deleteStaffAccountAction(staffId: string, confirmUsername: string) {
+export async function archiveStaffAccountAction(staffId: string, confirmUsername: string) {
   return runStaffAction(async () => {
     const session = await requireStaffAction("staff:manage");
     const id = staffIdSchema.parse(staffId);
-    const deleted = await deleteStaffAccount(createAdminClient(), actor(session), id, String(confirmUsername ?? ""));
-    // Who they were, so their earlier audit entries stay attributable.
-    await recordStaffAction(session, "staff.deleted", {
+    const archived = await archiveStaffAccount(createAdminClient(), actor(session), id, String(confirmUsername ?? ""));
+    await recordStaffAction(session, "staff.archived", {
       targetType: "staff_member",
-      targetId: deleted.id,
-      metadata: { username: deleted.username, displayName: deleted.display_name, role: deleted.role, userId: deleted.user_id },
+      targetId: archived.id,
+      metadata: { username: archived.username, role: archived.role },
     });
-    revalidateEmployee();
+    revalidateEmployee(archived.id);
     return null;
   });
 }

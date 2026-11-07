@@ -9,8 +9,9 @@ import { PageHeader } from "@/components/console/page-header";
 
 const WEEK_MS = 7 * 86_400_000;
 
-export default async function EmployeesPage() {
+export default async function EmployeesPage({ searchParams }: { searchParams: Promise<{ archived?: string }> }) {
   const session = await requireStaffPage("staff:view");
+  const showArchived = (await searchParams).archived === "1";
   const admin = createAdminClient();
   const [members, users, hours] = await Promise.all([
     listStaffMembers(admin),
@@ -20,8 +21,9 @@ export default async function EmployeesPage() {
   const userById = new Map(users.map((user) => [user.id, user]));
   const withMfa = await listUsersWithVerifiedMfa(admin, members.map((member) => member.user_id));
 
+  const archivedCount = members.filter((member) => member.status === "archived").length;
   const rows: StaffRow[] = members
-    .filter((member) => isStaffRole(member.role))
+    .filter((member) => isStaffRole(member.role) && (showArchived || member.status !== "archived"))
     .map((member) => {
       const user = userById.get(member.user_id);
       return {
@@ -44,7 +46,7 @@ export default async function EmployeesPage() {
         title="Employees"
         description="Owners can manage every role. Security can manage security and sales accounts, never owners. Every change is recorded in the staff audit log."
       />
-      <StaffManager rows={rows} manageableRoles={[...manageableRoles(session.role)]} />
+      <StaffManager rows={rows} manageableRoles={[...manageableRoles(session.role)]} archivedCount={archivedCount} showArchived={showArchived} />
     </div>
   );
 }

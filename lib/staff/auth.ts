@@ -53,7 +53,7 @@ export const getStaffSession = cache(async (): Promise<StaffSession | null> => {
   if (!user) return null;
 
   const staff = await getStaffMemberByUserId(createAdminClient(), user.id);
-  if (!staff || staff.status === "disabled" || !isStaffRole(staff.role)) return null;
+  if (!staff || staff.status === "disabled" || staff.status === "archived" || !isStaffRole(staff.role)) return null;
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();

@@ -1816,6 +1816,8 @@ export type Database = {
       }
       staff_members: {
         Row: {
+          archived_at: string | null
+          archived_by: string | null
           created_at: string
           created_by: string | null
           display_name: string
@@ -1831,6 +1833,8 @@ export type Database = {
           username: string
         }
         Insert: {
+          archived_at?: string | null
+          archived_by?: string | null
           created_at?: string
           created_by?: string | null
           display_name: string
@@ -1846,6 +1850,8 @@ export type Database = {
           username: string
         }
         Update: {
+          archived_at?: string | null
+          archived_by?: string | null
           created_at?: string
           created_by?: string | null
           display_name?: string

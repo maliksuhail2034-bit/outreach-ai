@@ -23,7 +23,7 @@ export interface StaffRow {
   username: string;
   email: string;
   role: StaffRole;
-  status: "invited" | "active" | "disabled";
+  status: "invited" | "active" | "disabled" | "archived";
   mfa: boolean;
   lastSeenAt: string | null;
   weekHours: string;
@@ -33,7 +33,17 @@ export interface StaffRow {
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export function StaffManager({ rows, manageableRoles }: { rows: StaffRow[]; manageableRoles: StaffRole[] }) {
+export function StaffManager({
+  rows,
+  manageableRoles,
+  archivedCount,
+  showArchived,
+}: {
+  rows: StaffRow[];
+  manageableRoles: StaffRole[];
+  archivedCount: number;
+  showArchived: boolean;
+}) {
   const [pending, startTransition] = useTransition();
   const [link, setLink] = useState<{ url: string; name: string } | null>(null);
   const [form, setForm] = useState({
@@ -129,7 +139,17 @@ export function StaffManager({ rows, manageableRoles }: { rows: StaffRow[]; mana
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Employees</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">Employees</CardTitle>
+            {archivedCount > 0 && (
+              <Link
+                href={showArchived ? "/console/staff" : "/console/staff?archived=1"}
+                className="rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+              </Link>
+            )}
+          </div>
           <CardDescription>
             Everyone with access to this console. Open someone to block them, set their password, change their username or
             role, see their hours and what they&apos;ve done.

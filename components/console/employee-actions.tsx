@@ -3,7 +3,7 @@
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { BanIcon, KeyRoundIcon, LogOutIcon, PencilIcon, RotateCcwIcon, ShieldCheckIcon, Trash2Icon, WandSparklesIcon } from "lucide-react";
+import { ArchiveIcon, BanIcon, KeyRoundIcon, LogOutIcon, PencilIcon, RotateCcwIcon, ShieldCheckIcon, WandSparklesIcon } from "lucide-react";
 
 import type { StaffRole } from "@/lib/db/staff";
 import { STAFF_ROLE_LABELS } from "@/lib/staff/permissions";
@@ -11,7 +11,7 @@ import { staffPasswordRules, usernameProblem } from "@/lib/staff/password-policy
 import {
   changeStaffRoleAction,
   changeStaffUsernameAction,
-  deleteStaffAccountAction,
+  archiveStaffAccountAction,
   resetStaffAccessAction,
   setStaffDisabledAction,
   setStaffPasswordAction,
@@ -26,7 +26,7 @@ import { Label } from "@/components/ui/label";
 import { SetupLinkNotice } from "./setup-link-notice";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
-type DialogKind = "block" | "password" | "username" | "signout" | "reset" | "delete" | null;
+type DialogKind = "block" | "password" | "username" | "signout" | "reset" | "archive" | null;
 
 // A strong random password for "set password" (24 characters from every
 // class), generated in the browser and never sent anywhere but the action.
@@ -131,8 +131,8 @@ export function EmployeeActions({
           <ActionButton icon={blocked ? ShieldCheckIcon : BanIcon} onClick={() => setOpen("block")} disabled={pending} destructive={!blocked}>
             {blocked ? "Unblock" : "Block"}
           </ActionButton>
-          <ActionButton icon={Trash2Icon} onClick={() => { setConfirmName(""); setOpen("delete"); }} disabled={pending} destructive>
-            Delete account
+          <ActionButton icon={ArchiveIcon} onClick={() => { setConfirmName(""); setOpen("archive"); }} disabled={pending} destructive>
+            Archive (leaver)
           </ActionButton>
         </div>
       </CardContent>
@@ -226,13 +226,14 @@ export function EmployeeActions({
         onConfirm={() => run(() => setStaffDisabledAction(staffId, !blocked), blocked ? "Unblocked." : "Blocked and signed out everywhere.")}
       />
 
-      <Dialog open={open === "delete"} onOpenChange={(value) => !value && setOpen(null)}>
+      <Dialog open={open === "archive"} onOpenChange={(value) => !value && setOpen(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {displayName}&apos;s account?</DialogTitle>
+            <DialogTitle>Archive {displayName}&apos;s account?</DialogTitle>
             <DialogDescription>
-              Permanently removes their login and work-time history. This can&apos;t be undone. What they did stays in the audit
-              log. To pause access instead, use Block.
+              For someone who has left: they can never sign in again and every session ends now. Their hours, work sessions and
+              audit history are kept. This can&apos;t be undone from the console — to give them access again, add a new account. To
+              pause access temporarily, use Block instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
@@ -247,10 +248,10 @@ export function EmployeeActions({
               variant="destructive"
               disabled={pending || confirmName.trim().toLowerCase() !== username}
               onClick={() =>
-                run(() => deleteStaffAccountAction(staffId, confirmName), "Account deleted.", () => router.push("/console/staff"))
+                run(() => archiveStaffAccountAction(staffId, confirmName), "Account archived.")
               }
             >
-              Delete permanently
+              Archive account
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -51,7 +51,7 @@ export async function staffSignInAction(_previous: StaffSignInState, formData: F
   const admin = createAdminClient();
   const staff = await getStaffMemberByUsername(admin, username);
   let email: string | null = null;
-  if (staff && staff.status !== "disabled") {
+  if (staff && staff.status !== "disabled" && staff.status !== "archived") {
     const { data } = await admin.auth.admin.getUserById(staff.user_id);
     email = data.user?.email ?? null;
   }

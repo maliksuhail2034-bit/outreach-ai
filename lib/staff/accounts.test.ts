@@ -15,7 +15,7 @@ vi.mock("@/lib/app-url", () => ({ appUrl: (path: string) => new URL(path, "https
 import {
   changeStaffUsername,
   createStaffAccount,
-  deleteStaffAccount,
+  archiveStaffAccount,
   setOwnPassword,
   setStaffDisabled,
   setStaffPassword,
@@ -91,7 +91,7 @@ describe("setStaffPassword", () => {
   });
 });
 
-describe("blocking, sign-out and deletion", () => {
+describe("blocking, sign-out and archiving", () => {
   it("blocking bans sign-in, ends sessions and closes the work session", async () => {
     await setStaffDisabled(admin, OWNER, "staff-1", true);
     expect(authAdmin.updateUserById).toHaveBeenCalledWith("user-1", { ban_duration: "876000h" });
@@ -104,18 +104,32 @@ describe("blocking, sign-out and deletion", () => {
     expect(authAdmin.updateUserById).not.toHaveBeenCalled();
   });
 
-  it("deletes only after the username is typed exactly", async () => {
-    await expect(deleteStaffAccount(admin, OWNER, "staff-1", "sam")).rejects.toThrow("Type the username exactly to confirm.");
+  it("archives only after the username is typed exactly, keeping the record", async () => {
+    await expect(archiveStaffAccount(admin, OWNER, "staff-1", "sam")).rejects.toThrow("Type the username exactly to confirm.");
+    expect(authAdmin.updateUserById).not.toHaveBeenCalled();
+
+    const archived = await archiveStaffAccount(admin, OWNER, "staff-1", " SAM.SALES ");
+    expect(authAdmin.updateUserById).toHaveBeenCalledWith("user-1", { ban_duration: "876000h" });
+    expect(db.revokeUserSessions).toHaveBeenCalledWith(admin, "user-1");
+    expect(work.endStaffActivity).toHaveBeenCalledWith("staff-1", "access_changed");
+    expect(archived).toMatchObject({ status: "archived", archived_by: "owner-user", archived_at: expect.any(String) });
+    // Never deleted: hours and history stay.
     expect(authAdmin.deleteUser).not.toHaveBeenCalled();
-    await expect(deleteStaffAccount(admin, OWNER, "staff-1", " SAM.SALES ")).resolves.toMatchObject({ id: "staff-1" });
-    expect(authAdmin.deleteUser).toHaveBeenCalledWith("user-1");
   });
 
-  it("never deletes the last active owner", async () => {
+  it("never archives the last active owner", async () => {
     db.getStaffMember.mockResolvedValue(staffRow({ role: "owner", username: "the.owner" }));
     db.countActiveOwners.mockResolvedValue(1);
-    await expect(deleteStaffAccount(admin, { userId: "other-owner", role: "owner" }, "staff-1", "the.owner")).rejects.toThrow(/only active owner/);
-    expect(authAdmin.deleteUser).not.toHaveBeenCalled();
+    await expect(archiveStaffAccount(admin, { userId: "other-owner", role: "owner" }, "staff-1", "the.owner")).rejects.toThrow(/only active owner/);
+    expect(authAdmin.updateUserById).not.toHaveBeenCalled();
+  });
+
+  it("refuses every management action on an archived account", async () => {
+    db.getStaffMember.mockResolvedValue(staffRow({ status: "archived" }));
+    await expect(setStaffDisabled(admin, OWNER, "staff-1", false)).rejects.toThrow(/archived/);
+    await expect(setStaffPassword(admin, OWNER, "staff-1", STRONG, true)).rejects.toThrow(/archived/);
+    await expect(archiveStaffAccount(admin, OWNER, "staff-1", "sam.sales")).rejects.toThrow(/archived/);
+    expect(authAdmin.updateUserById).not.toHaveBeenCalled();
   });
 });
 

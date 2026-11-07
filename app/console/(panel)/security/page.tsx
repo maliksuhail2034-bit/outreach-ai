@@ -17,11 +17,11 @@ const SEVERITY = {
 
 export default async function SecurityAlertsPage() {
   const session = await requireStaffPage("security:view");
-  const { alerts, authEvents, blocks, auditChain } = await loadSecurityAlerts(createAdminClient());
+  const { alerts, summary, blocks, auditChain } = await loadSecurityAlerts(createAdminClient());
   const canAct = hasStaffPermission(session.role, "security:act");
 
-  const successes = authEvents.filter((event) => event.event_type === "sign_in_success").length;
-  const failures = authEvents.length - successes;
+  const successes = summary.successes;
+  const failures = summary.failures + summary.rate_limited;
   const stats = [
     { label: "Sign-ins (24 h)", value: successes },
     { label: "Failed / refused (24 h)", value: failures },

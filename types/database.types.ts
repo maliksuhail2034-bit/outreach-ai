@@ -2912,6 +2912,10 @@ export type Database = {
         Args: { p_campaign_lead_id: string }
         Returns: boolean
       }
+      auth_event_summary: {
+        Args: { p_list_limit?: number; p_since: string }
+        Returns: Json
+      }
       is_staff_email: {
         Args: { p_email: string }
         Returns: boolean

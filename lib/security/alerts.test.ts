@@ -1,22 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildSecurityAlerts, signInsByCountry, type AlertInputs } from "./alerts";
 
-type Event = AlertInputs["authEvents"][number];
+import { buildSecurityAlerts, type AlertInputs } from "./alerts";
+import { EMPTY_AUTH_SUMMARY, type AuthEventSummary } from "./auth-summary";
 
-function failure(ip: string, emailHash = "h1"): Event {
-  return { event_type: "sign_in_failure", ip, email_hash: emailHash, user_id: null, country: "US" };
-}
-
-function inputs(overrides: Partial<AlertInputs> = {}): AlertInputs {
+function inputs(overrides: Partial<Omit<AlertInputs, "summary">> & { summary?: Partial<AuthEventSummary> } = {}): AlertInputs {
   return {
-    authEvents: [],
     unhealthyJobs: [],
     blockedIps: new Set(),
-    staffUserIds: new Set(),
-    auditChain: { checked: 10, firstBrokenSeq: null },
+    auditChain: { checked: 0, firstBrokenSeq: null },
     ...overrides,
+    summary: { ...EMPTY_AUTH_SUMMARY, ...overrides.summary },
   };
 }
+
+const ip = (address: string, failures: number) => ({ ip: address, failures, refused: failures, country: null });
 
 describe("buildSecurityAlerts", () => {
   it("is quiet when nothing is wrong", () => {
@@ -24,67 +21,52 @@ describe("buildSecurityAlerts", () => {
   });
 
   it("flags an IP with many failures, critical past 50 unless already blocked", () => {
-    const ten = Array.from({ length: 10 }, (_, i) => failure("203.0.113.7", `h${i}`));
-    expect(buildSecurityAlerts(inputs({ authEvents: ten }))).toEqual([
-      expect.objectContaining({ severity: "warning", ip: "203.0.113.7", alreadyBlocked: false }),
+    expect(buildSecurityAlerts(inputs({ summary: { by_ip: [ip("203.0.113.7", 10)] } }))).toEqual([
+      expect.objectContaining({ id: "ip-failures:203.0.113.7", severity: "warning", ip: "203.0.113.7", alreadyBlocked: false }),
     ]);
-
-    const fifty = Array.from({ length: 50 }, (_, i) => failure("203.0.113.7", `h${i}`));
-    expect(buildSecurityAlerts(inputs({ authEvents: fifty }))[0]).toMatchObject({ severity: "critical" });
+    expect(buildSecurityAlerts(inputs({ summary: { by_ip: [ip("203.0.113.7", 50)] } }))[0]).toMatchObject({ severity: "critical" });
     expect(
-      buildSecurityAlerts(inputs({ authEvents: fifty, blockedIps: new Set(["203.0.113.7"]) }))[0],
+      buildSecurityAlerts(inputs({ summary: { by_ip: [ip("203.0.113.7", 50)] }, blockedIps: new Set(["203.0.113.7"]) }))[0],
     ).toMatchObject({ severity: "warning", alreadyBlocked: true });
   });
 
-  it("doesn't flag a few failures", () => {
-    const nine = Array.from({ length: 9 }, (_, i) => failure("203.0.113.7", `h${i}`));
-    expect(buildSecurityAlerts(inputs({ authEvents: nine }))).toEqual([]);
+  it("doesn't flag a few failures, and counts failures rather than rate-limited attempts", () => {
+    expect(buildSecurityAlerts(inputs({ summary: { by_ip: [ip("203.0.113.7", 9)] } }))).toEqual([]);
+    expect(
+      buildSecurityAlerts(inputs({ summary: { by_ip: [{ ip: "203.0.113.8", failures: 2, refused: 40, country: null }] } })),
+    ).toEqual([]);
   });
 
-  it("flags repeated failures against one account from many IPs, without naming it", () => {
-    const spread = Array.from({ length: 5 }, (_, i) => failure(`198.51.100.${i}`, "same-hash"));
-    const alerts = buildSecurityAlerts(inputs({ authEvents: spread }));
-    expect(alerts).toEqual([expect.objectContaining({ severity: "warning", title: "5 failed sign-ins against one account" })]);
-    expect(JSON.stringify(alerts)).not.toContain("same-hash");
+  it("flags repeated failures against one account, without naming it", () => {
+    const alerts = buildSecurityAlerts(inputs({ summary: { by_account: [6, 2] } }));
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ severity: "warning", title: "6 failed sign-ins against one account" });
+    expect(JSON.stringify(alerts)).not.toMatch(/@/);
   });
 
   it("puts a broken audit chain first, as critical", () => {
     const alerts = buildSecurityAlerts(
-      inputs({ auditChain: { checked: 10, firstBrokenSeq: 4 }, unhealthyJobs: [{ job: "send-emails", error: "boom" }] }),
+      inputs({ auditChain: { checked: 10, firstBrokenSeq: 4 }, summary: { by_ip: [ip("203.0.113.7", 12)] } }),
     );
     expect(alerts[0]).toMatchObject({ id: "audit-chain", severity: "critical" });
-    expect(alerts[1]).toMatchObject({ id: "job:send-emails", detail: "boom" });
   });
 
-  it("flags a staff account signing in from two countries, but not a customer", () => {
-    const events: Event[] = [
-      { event_type: "sign_in_success", ip: "1.1.1.1", email_hash: null, user_id: "staff-1", country: "IN" },
-      { event_type: "sign_in_success", ip: "2.2.2.2", email_hash: null, user_id: "staff-1", country: "RU" },
-      { event_type: "sign_in_success", ip: "1.1.1.1", email_hash: null, user_id: "cust-1", country: "IN" },
-      { event_type: "sign_in_success", ip: "2.2.2.2", email_hash: null, user_id: "cust-1", country: "US" },
-    ];
-    const alerts = buildSecurityAlerts(inputs({ authEvents: events, staffUserIds: new Set(["staff-1"]) }));
-    expect(alerts).toEqual([expect.objectContaining({ id: "staff-countries:staff-1", detail: expect.stringContaining("IN, RU") })]);
+  it("flags a staff account signing in from several countries", () => {
+    const alerts = buildSecurityAlerts(inputs({ summary: { staff_multi_country: [{ user_id: "staff-1", countries: ["US", "IN"] }] } }));
+    expect(alerts).toEqual([expect.objectContaining({ id: "staff-countries:staff-1", severity: "warning" })]);
+    expect(alerts[0].detail).toContain("IN, US");
   });
 
   it("notes rate-limited attempts as info", () => {
-    const events: Event[] = [{ event_type: "sign_in_rate_limited", ip: "1.1.1.1", email_hash: "h", user_id: null, country: null }];
-    expect(buildSecurityAlerts(inputs({ authEvents: events }))).toEqual([expect.objectContaining({ severity: "info" })]);
-  });
-});
-
-describe("signInsByCountry", () => {
-  it("groups outcomes by country, busiest first, unknown kept", () => {
-    const events: Event[] = [
-      { event_type: "sign_in_success", ip: null, email_hash: null, user_id: "u", country: "IN" },
-      failure("1.1.1.1"),
-      failure("1.1.1.2"),
-      { event_type: "sign_in_failure", ip: null, email_hash: "h", user_id: null, country: null },
-    ];
-    expect(signInsByCountry(events)).toEqual([
-      { country: "US", successes: 0, failures: 2 },
-      { country: "IN", successes: 1, failures: 0 },
-      { country: "Unknown", successes: 0, failures: 1 },
+    expect(buildSecurityAlerts(inputs({ summary: { rate_limited: 3 } }))).toEqual([
+      expect.objectContaining({ severity: "info", title: "3 sign-in attempts stopped by the rate limit" }),
     ]);
+  });
+
+  it("groups unhealthy background jobs", () => {
+    const alerts = buildSecurityAlerts(
+      inputs({ unhealthyJobs: [{ job: "send-emails", error: "boom" }, { job: "send-emails", error: null }] }),
+    );
+    expect(alerts).toEqual([expect.objectContaining({ id: "job:send-emails", title: 'Background job "send-emails" reported 2 problems', detail: "boom" })]);
   });
 });

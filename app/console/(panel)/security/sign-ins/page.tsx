@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { listAuthEvents } from "@/lib/db";
 import { requireStaffPage } from "@/lib/staff/auth";
 import { listAuthUsers } from "@/lib/staff/directory";
-import { signInsByCountry } from "@/lib/security/alerts";
+import { getAuthEventSummary } from "@/lib/security/auth-summary";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -24,18 +24,16 @@ export default async function SignInsPage() {
   await requireStaffPage("security:view");
   const admin = createAdminClient();
   const sinceIso = new Date(new Date().getTime() - WINDOW_DAYS * 86_400_000).toISOString();
-  const [events, users] = await Promise.all([listAuthEvents(admin, { sinceIso, limit: 10_000 }), listAuthUsers(admin)]);
+  // Countries and top addresses are aggregated in SQL over the whole window;
+  // only the recent list reads rows, and only as many as it shows.
+  const [summary, events, users] = await Promise.all([
+    getAuthEventSummary(admin, sinceIso, 15),
+    listAuthEvents(admin, { sinceIso, limit: RECENT_LIMIT }),
+    listAuthUsers(admin),
+  ]);
   const emailById = new Map(users.map((user) => [user.id, user.email ?? user.id]));
-
-  const countries = signInsByCountry(events);
-  const failuresByIp = new Map<string, { count: number; country: string | null }>();
-  for (const event of events) {
-    if (event.event_type === "sign_in_success" || !event.ip) continue;
-    const row = failuresByIp.get(event.ip) ?? { count: 0, country: event.country };
-    row.count += 1;
-    failuresByIp.set(event.ip, row);
-  }
-  const topIps = [...failuresByIp.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 15);
+  const countries = summary.countries;
+  const topIps = summary.by_ip;
 
   return (
     <div className="space-y-6">
@@ -62,7 +60,7 @@ export default async function SignInsPage() {
                     <tr key={row.country}>
                       <td className="py-2 pr-4">{row.country}</td>
                       <td className="py-2 pr-4 text-right tabular-nums">{row.successes}</td>
-                      <td className="py-2 text-right tabular-nums">{row.failures}</td>
+                      <td className="py-2 text-right tabular-nums">{row.refused}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -89,11 +87,11 @@ export default async function SignInsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {topIps.map(([ip, row]) => (
-                    <tr key={ip}>
-                      <td className="py-2 pr-4 font-mono text-xs">{ip}</td>
+                  {topIps.map((row) => (
+                    <tr key={row.ip}>
+                      <td className="py-2 pr-4 font-mono text-xs">{row.ip}</td>
                       <td className="py-2 pr-4">{row.country ?? "Unknown"}</td>
-                      <td className="py-2 text-right tabular-nums">{row.count}</td>
+                      <td className="py-2 text-right tabular-nums">{row.refused}</td>
                     </tr>
                   ))}
                 </tbody>

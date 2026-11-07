@@ -49,11 +49,15 @@ export function LegalDocument({
   title,
   summary,
   sections,
+  lastUpdated,
 }: {
   href: LegalPageHref;
   title: string;
   summary: ReactNode;
   sections: LegalSection[];
+  // A document revised on its own (e.g. the privacy policy) shows its own
+  // date; otherwise the shared date from business-details.ts.
+  lastUpdated?: string;
 }) {
   return (
     <div className="grid gap-10 py-10 sm:py-14 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-14">
@@ -81,7 +85,7 @@ export function LegalDocument({
         <header className="border-b border-border pb-6">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{title}</h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            Last updated: <BusinessDetail field="lastUpdated" />
+            Last updated: {lastUpdated ?? <BusinessDetail field="lastUpdated" />}
           </p>
           <div className="mt-4 text-base leading-relaxed text-muted-foreground">{summary}</div>
         </header>

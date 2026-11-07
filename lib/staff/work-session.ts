@@ -27,7 +27,7 @@ export async function recordStaffActivity(staffId: string, now: number = Date.no
   }
 }
 
-export async function endStaffActivity(staffId: string, reason: "signed_out" | "access_changed" = "signed_out"): Promise<void> {
+export async function endStaffActivity(staffId: string, reason: "signed_out" | "access_changed" | "idle" = "signed_out"): Promise<void> {
   lastTouch.delete(staffId);
   try {
     await endStaffWorkSession(createAdminClient(), staffId, reason);

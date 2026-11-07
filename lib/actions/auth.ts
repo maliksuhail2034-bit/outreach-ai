@@ -3,6 +3,8 @@
 import { createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { isStaffEmail } from "@/lib/db/staff";
 import {
   forgotPasswordSchema,
   resetPasswordSchema,
@@ -162,6 +164,13 @@ export async function forgotPassword(
   } catch (error) {
     if (error instanceof RateLimitError) return { error: error.message };
     throw error;
+  }
+
+  // Staff passwords are reset only by an owner or security in the console.
+  // Same answer as for any address, so this reveals nothing about who is
+  // staff.
+  if (await isStaffEmail(createAdminClient(), parsed.data.email)) {
+    return { success: true };
   }
 
   const supabase = await createClient();

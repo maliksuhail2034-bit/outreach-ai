@@ -21,6 +21,9 @@ vi.mock("@/lib/rate-limit/get-client-ip", () => ({
   getClientIp: vi.fn(async () => "203.0.113.7"),
 }));
 vi.mock("@/lib/security/auth-events", () => ({ recordSignInEvent: vi.fn() }));
+const staffLookup = vi.hoisted(() => ({ isStaffEmail: vi.fn() }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
+vi.mock("@/lib/db/staff", () => staffLookup);
 vi.mock("@/lib/rate-limit/check-rate-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit/check-rate-limit")>()),
   checkRateLimit: vi.fn(),
@@ -214,6 +217,15 @@ describe("signUp profile seed", () => {
 });
 
 describe("forgotPassword", () => {
+  beforeEach(() => staffLookup.isStaffEmail.mockResolvedValue(false));
+
+  it("never sends a reset email to a staff account, and answers exactly as for anyone else", async () => {
+    staffLookup.isStaffEmail.mockResolvedValue(true);
+
+    await expect(forgotPassword(undefined, form({ email: "owner@polimatiq.test" }))).resolves.toEqual({ success: true });
+    expect(supabaseAuth.resetPasswordForEmail).not.toHaveBeenCalled();
+  });
+
   it("reports success for an unknown address so it can't be used to enumerate accounts", async () => {
     supabaseAuth.resetPasswordForEmail.mockResolvedValue({ error: { code: "user_not_found", message: "User not found" } });
 

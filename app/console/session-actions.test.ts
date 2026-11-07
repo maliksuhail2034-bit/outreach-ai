@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   checkRateLimit: vi.fn(),
   releaseRateLimitAttempt: vi.fn(),
   getStaffSession: vi.fn(),
+  markStaffSeen: vi.fn(),
   endStaffActivity: vi.fn(),
   recordStaffActivity: vi.fn(),
 }));
@@ -26,7 +27,7 @@ vi.mock("@/lib/rate-limit/check-rate-limit", () => {
   }
   return { checkRateLimit: mocks.checkRateLimit, releaseRateLimitAttempt: mocks.releaseRateLimitAttempt, RateLimitError };
 });
-vi.mock("@/lib/staff/auth", () => ({ getStaffSession: mocks.getStaffSession }));
+vi.mock("@/lib/staff/auth", () => ({ getStaffSession: mocks.getStaffSession, markStaffSeen: mocks.markStaffSeen }));
 vi.mock("@/lib/staff/work-session", () => ({ endStaffActivity: mocks.endStaffActivity, recordStaffActivity: mocks.recordStaffActivity }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -34,7 +35,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-import { staffHeartbeatAction, staffSignInAction, staffSignOutAction } from "./session-actions";
+import { staffHeartbeatAction, staffIdleSignOutAction, staffSignInAction, staffSignOutAction } from "./session-actions";
 
 function form(values: Record<string, string>) {
   const data = new FormData();
@@ -110,5 +111,13 @@ describe("sign-out and heartbeat", () => {
     mocks.getStaffSession.mockResolvedValueOnce({ staff: { id: "staff-1" }, mfa: "verified" });
     await staffHeartbeatAction();
     expect(mocks.recordStaffActivity).toHaveBeenCalledWith("staff-1");
+    expect(mocks.markStaffSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it("idle sign-out closes the work session as idle and ends only this browser's session", async () => {
+    mocks.getStaffSession.mockResolvedValue({ staff: { id: "staff-1" }, mfa: "verified" });
+    await expect(staffIdleSignOutAction()).rejects.toThrow("NEXT_REDIRECT:/console/login?reason=idle");
+    expect(mocks.endStaffActivity).toHaveBeenCalledWith("staff-1", "idle");
+    expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 });

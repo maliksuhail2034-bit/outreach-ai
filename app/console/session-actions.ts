@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStaffMemberByUsername } from "@/lib/db";
-import { getStaffSession } from "@/lib/staff/auth";
+import { getStaffSession, markStaffSeen } from "@/lib/staff/auth";
 import { endStaffActivity, recordStaffActivity } from "@/lib/staff/work-session";
 import { recordSignInEvent } from "@/lib/security/auth-events";
 import { checkRateLimit, RateLimitError, releaseRateLimitAttempt } from "@/lib/rate-limit/check-rate-limit";
@@ -93,5 +93,14 @@ export async function staffSignOutAction(): Promise<void> {
 export async function staffHeartbeatAction(): Promise<void> {
   const session = await getStaffSession().catch(() => null);
   if (!session || session.mfa !== "verified") return;
-  await recordStaffActivity(session.staff.id);
+  await Promise.all([recordStaffActivity(session.staff.id), markStaffSeen(session)]);
+}
+
+// The browser's own idle timer reached 30 minutes without input.
+export async function staffIdleSignOutAction(): Promise<void> {
+  const session = await getStaffSession().catch(() => null);
+  if (session) await endStaffActivity(session.staff.id, "idle");
+  const supabase = await createClient();
+  await supabase.auth.signOut({ scope: "local" });
+  redirect("/console/login?reason=idle");
 }

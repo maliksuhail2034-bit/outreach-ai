@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 // Staff sign-in by username. Signed-in staff go straight on; a signed-in
 // customer is sent back to the customer app (the console isn't advertised).
-export default async function StaffSignInPage() {
+export default async function StaffSignInPage({ searchParams }: { searchParams: Promise<{ reason?: string }> }) {
+  const { reason } = await searchParams;
   const user = await getUser();
   if (user) redirect(user.app_metadata?.polimatiq_staff === true ? "/console" : "/dashboard");
 
@@ -23,7 +24,12 @@ export default async function StaffSignInPage() {
           <CardTitle className="text-xl">Staff sign-in</CardTitle>
           <CardDescription>Use your staff username. You&apos;ll confirm with your authenticator app next.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {reason === "idle" && (
+            <p role="status" className="rounded-md border border-border bg-muted px-3 py-2 text-sm">
+              You were signed out after 30 minutes without activity.
+            </p>
+          )}
           <StaffSignInForm />
         </CardContent>
       </Card>

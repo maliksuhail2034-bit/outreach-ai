@@ -382,7 +382,7 @@ export function LeadTable({
               </div>
             )}
 
-            <div className="overflow-x-auto" style={{ contain: "layout" }}>
+            <div className="relative overflow-x-auto" style={{ contain: "layout" }}>
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
@@ -404,7 +404,7 @@ export function LeadTable({
                     <th className="py-2 pr-4 font-medium">List</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
                     <th className="py-2 pr-4 font-medium">Verification</th>
-                    <th className="py-2 pl-4 text-right font-medium">
+                    <th className="sticky right-0 bg-card py-2 pl-4 text-right font-medium">
                       <span className="sr-only">Actions</span>
                     </th>
                   </tr>
@@ -440,7 +440,8 @@ export function LeadTable({
                           {VERIFICATION_STATUS_LABEL[lead.verification_status] ?? lead.verification_status}
                         </Badge>
                       </td>
-                      <td className="py-3 pl-4">
+                      {/* Pinned so the row actions stay visible while the table scrolls sideways. */}
+                      <td className="sticky right-0 bg-card py-3 pl-4">
                         <div className="flex items-center justify-end gap-1">
                           {!isVerifiedPoolLead(lead) && (
                             <Button

@@ -105,7 +105,7 @@ export async function touchStaffWorkSession(supabase: Client, staffId: string, c
   if (error) throw error;
 }
 
-export async function endStaffWorkSession(supabase: Client, staffId: string, reason: "signed_out" | "access_changed" = "signed_out") {
+export async function endStaffWorkSession(supabase: Client, staffId: string, reason: "signed_out" | "access_changed" | "idle" = "signed_out") {
   const { error } = await supabase.rpc("staff_end_work_session", { p_staff_id: staffId, p_reason: reason });
   if (error) throw error;
 }
@@ -139,4 +139,12 @@ export async function listStaffActionsSince(supabase: Client, actorUserId: strin
     .limit(limit);
   if (error) throw error;
   return data ?? [];
+}
+
+// Whether an email belongs to a staff account (service role only). Used to
+// keep staff out of self-service password reset.
+export async function isStaffEmail(supabase: Client, email: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("is_staff_email", { p_email: email });
+  if (error) throw error;
+  return data === true;
 }

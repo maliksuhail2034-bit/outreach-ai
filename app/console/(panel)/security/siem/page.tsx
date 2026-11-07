@@ -17,12 +17,16 @@ export default async function SiemPage() {
     {
       name: "Wazuh SIEM",
       connected: Boolean(process.env.WAZUH_DASHBOARD_URL),
-      detail: "Planned on a second Hostinger VPS (KVM 4) with an agent on the app server. Set WAZUH_DASHBOARD_URL once it's running.",
+      // Polimatiq runs on a single server (production and staging share the
+      // Hostinger VPS), and a self-hosted Wazuh manager needs several GB of
+      // RAM — so only a hosted manager with a lightweight agent here.
+      detail:
+        "Optional, as a hosted service: everything runs on one server, which has no room for a self-hosted Wazuh manager. Connect a hosted Wazuh (agent on the server) and set WAZUH_DASHBOARD_URL.",
     },
     {
       name: "CrowdSec",
       connected: Boolean(process.env.CROWDSEC_LAPI_URL),
-      detail: "Firewall-level blocking of scanners and brute-force sources on the app server. Set CROWDSEC_LAPI_URL once installed.",
+      detail: "Recommended first: lightweight firewall-level blocking of scanners and brute-force sources on the server (fits alongside production). Set CROWDSEC_LAPI_URL once installed.",
     },
     { name: "App IP blocklist (proxy)", connected: true, detail: `${blocks.length} active entries enforced on every request.` },
     { name: "Sign-in rate limits", connected: true, detail: "Per IP and per account on sign-in, sign-up and password reset." },

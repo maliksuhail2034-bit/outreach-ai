@@ -2906,6 +2906,10 @@ export type Database = {
         Args: { p_campaign_lead_id: string }
         Returns: boolean
       }
+      is_staff_email: {
+        Args: { p_email: string }
+        Returns: boolean
+      }
       staff_end_work_session: {
         Args: { p_reason?: string; p_staff_id: string }
         Returns: undefined

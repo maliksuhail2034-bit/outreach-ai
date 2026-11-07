@@ -9,7 +9,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getStaffMemberByUserId, updateStaffMember, type StaffRole } from "@/lib/db/staff";
 import { hasStaffPermission, isStaffRole, type StaffPermission } from "./permissions";
 import { needsPasswordChange } from "./password-policy";
-import { recordStaffActivity } from "./work-session";
+import { endStaffActivity, recordStaffActivity } from "./work-session";
+import { isStaffIdle } from "./idle";
 
 // The staff console's authorization boundary. Every console page calls
 // requireStaffPage() and every console Server Function calls
@@ -63,6 +64,22 @@ export const getStaffSession = cache(async (): Promise<StaffSession | null> => {
 
 // First fully verified visit turns an invited account active; afterwards
 // last_seen_at is refreshed at most every few minutes.
+export async function markStaffSeen(session: StaffSession): Promise<void> {
+  return markSeen(session);
+}
+
+function idle(session: StaffSession): boolean {
+  return isStaffIdle({ lastSeenAt: session.staff.last_seen_at, lastSignInAt: session.user.last_sign_in_at });
+}
+
+// Ends this browser's session only (other devices are judged on their own
+// next request), and closes the work session as idle.
+async function endIdleSession(session: StaffSession): Promise<void> {
+  await endStaffActivity(session.staff.id, "idle");
+  const supabase = await createClient();
+  await supabase.auth.signOut({ scope: "local" });
+}
+
 async function markSeen(session: StaffSession): Promise<void> {
   const last = session.staff.last_seen_at ? new Date(session.staff.last_seen_at).getTime() : 0;
   if (session.staff.status === "active" && Date.now() - last < LAST_SEEN_THROTTLE_MS) return;
@@ -81,6 +98,10 @@ export async function requireStaffPage(permission?: StaffPermission): Promise<St
 
   const session = await getStaffSession();
   if (!session) notFound();
+  if (idle(session)) {
+    await endIdleSession(session);
+    redirect("/console/login?reason=idle");
+  }
   // An existing factor is verified first; a password that doesn't meet the
   // staff policy is replaced before 2-step setup or any console page.
   if (session.mfa === "needs_verification") redirect("/console/2fa/verify");
@@ -96,6 +117,10 @@ export async function requireStaffPage(permission?: StaffPermission): Promise<St
 export async function requireStaffAction(permission: StaffPermission): Promise<StaffSession> {
   const session = await getStaffSession();
   if (!session) throw new StaffAccessError("Sign in with a staff account.");
+  if (idle(session)) {
+    await endIdleSession(session);
+    throw new StaffAccessError("You were signed out after 30 minutes without activity. Sign in again.");
+  }
   if (session.mfa !== "verified") throw new StaffAccessError("Complete 2-step login first.");
   if (needsPasswordChange(session.staff)) throw new StaffAccessError("Set a new password first.");
   if (!hasStaffPermission(session.role, permission)) throw new StaffAccessError();

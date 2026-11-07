@@ -504,7 +504,7 @@ export function LeadTable({
                         </Link>
                         <p className="truncate text-xs text-muted-foreground">{leadEmailLabel(lead)}</p>
                         {/* On phones the engagement column is off-screen, so it's repeated here. */}
-                        <div className="mt-1 flex items-center gap-3 text-xs sm:hidden">
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:hidden">
                           <EngagementCount icon={MailOpenIcon} count={lead.crm_opens} label="opens" />
                           <EngagementCount icon={MousePointerClickIcon} count={lead.crm_clicks} label="clicks" />
                           <EngagementCount icon={ReplyIcon} count={lead.crm_replies} label="replies" />

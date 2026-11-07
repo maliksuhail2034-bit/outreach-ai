@@ -16,8 +16,34 @@ export const CRM_ENGAGEMENT_FILTERS = [
 ] as const;
 export type CrmEngagementFilter = (typeof CRM_ENGAGEMENT_FILTERS)[number];
 
+// The one-click filters above the Leads table. Here, not in the client
+// component, because the server page counts each one.
+export const QUICK_FILTERS: { engagement: CrmEngagementFilter; label: string }[] = [
+  { engagement: "any", label: "All" },
+  { engagement: "opened", label: "Opened" },
+  { engagement: "clicked", label: "Clicked" },
+  { engagement: "replied", label: "Replied" },
+  { engagement: "not_opened", label: "Didn't open" },
+  { engagement: "never_contacted", label: "Never emailed" },
+];
+
 export const CRM_SORTS = ["recent", "activity", "opens", "clicks", "name", "company"] as const;
 export type CrmSort = (typeof CRM_SORTS)[number];
+
+// "Opened at least 3 times" / "clicked exactly 2 times": a person's opens or
+// clicks across all campaigns (the crm_opens / crm_clicks counts).
+export const COUNT_OPERATORS = ["gte", "eq"] as const;
+export type CountOperator = (typeof COUNT_OPERATORS)[number];
+export const MAX_COUNT_FILTER = 1000;
+
+export interface CountFilter {
+  operator: CountOperator;
+  value: number;
+}
+
+// The Leads page's tabs.
+export const CRM_VIEWS = ["leads", "lists", "segments"] as const;
+export type CrmView = (typeof CRM_VIEWS)[number];
 
 // The Leads page's filters, from its URL. Anything invalid is dropped
 // rather than rejected, so a stale or hand-edited link still shows leads.
@@ -31,7 +57,10 @@ export interface CrmSearchParams {
   engagement: CrmEngagementFilter;
   campaign?: string;
   step?: string;
+  opens?: CountFilter;
+  clicks?: CountFilter;
   sort: CrmSort;
+  view: CrmView;
 }
 
 const uuid = z.string().uuid();
@@ -51,6 +80,12 @@ export function parseCrmSearchParams(raw: Record<string, string | string[] | und
   const campaign = uuid.safeParse(value("campaign")).success ? value("campaign") : undefined;
   // A step only narrows a campaign's engagement.
   const step = campaign && uuid.safeParse(value("step")).success ? value("step") : undefined;
+  const countFilter = (key: "opens" | "clicks"): CountFilter | undefined => {
+    const raw = value(key);
+    const count = Number(raw);
+    if (raw === undefined || raw === "" || !Number.isInteger(count) || count < 0 || count > MAX_COUNT_FILTER) return undefined;
+    return { operator: pick(COUNT_OPERATORS, value(`${key}Op`)) ?? "gte", value: count };
+  };
 
   return {
     page: Number.isInteger(page) && page > 0 ? page : 1,
@@ -62,7 +97,10 @@ export function parseCrmSearchParams(raw: Record<string, string | string[] | und
     engagement: pick(CRM_ENGAGEMENT_FILTERS, value("engagement")) ?? "any",
     campaign,
     step,
+    opens: countFilter("opens"),
+    clicks: countFilter("clicks"),
     sort: pick(CRM_SORTS, value("sort")) ?? "recent",
+    view: pick(CRM_VIEWS, value("view")) ?? "leads",
   };
 }
 
@@ -78,7 +116,14 @@ export function crmLeadsHref(params: Partial<CrmSearchParams>): string {
   if (params.engagement && params.engagement !== "any") search.set("engagement", params.engagement);
   if (params.campaign) search.set("campaign", params.campaign);
   if (params.campaign && params.step) search.set("step", params.step);
+  for (const key of ["opens", "clicks"] as const) {
+    const filter = params[key];
+    if (!filter) continue;
+    search.set(key, String(filter.value));
+    if (filter.operator !== "gte") search.set(`${key}Op`, filter.operator);
+  }
   if (params.sort && params.sort !== "recent") search.set("sort", params.sort);
+  if (params.view && params.view !== "leads") search.set("view", params.view);
   if (params.page && params.page > 1) search.set("page", String(params.page));
   const query = search.toString();
   return query ? `/leads?${query}` : "/leads";

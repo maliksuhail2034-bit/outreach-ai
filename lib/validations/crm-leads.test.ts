@@ -16,7 +16,10 @@ describe("parseCrmSearchParams", () => {
       engagement: "any",
       campaign: undefined,
       step: undefined,
+      opens: undefined,
+      clicks: undefined,
       sort: "recent",
+      view: "leads",
     });
   });
 
@@ -48,13 +51,45 @@ describe("parseCrmSearchParams", () => {
   });
 });
 
+describe("opened / clicked N times", () => {
+  it("parses a count, at least by default or exactly", () => {
+    expect(parseCrmSearchParams({ opens: "3" }).opens).toEqual({ operator: "gte", value: 3 });
+    expect(parseCrmSearchParams({ clicks: "2", clicksOp: "eq" }).clicks).toEqual({ operator: "eq", value: 2 });
+    expect(parseCrmSearchParams({ opens: "0", opensOp: "eq" }).opens).toEqual({ operator: "eq", value: 0 });
+  });
+
+  it("drops a count that isn't a whole number from 0 to 1000, and an unknown operator", () => {
+    for (const raw of ["", "-1", "1.5", "abc", "1001"]) expect(parseCrmSearchParams({ opens: raw }).opens).toBeUndefined();
+    expect(parseCrmSearchParams({ opens: "2", opensOp: "lt" }).opens).toEqual({ operator: "gte", value: 2 });
+  });
+
+  it("writes counts and the tab to the URL, leaving defaults out", () => {
+    expect(crmLeadsHref({ opens: { operator: "gte", value: 3 }, clicks: { operator: "eq", value: 1 } })).toBe(
+      "/leads?opens=3&clicks=1&clicksOp=eq",
+    );
+    expect(crmLeadsHref({ view: "lists" })).toBe("/leads?view=lists");
+    expect(crmLeadsHref({ view: "leads" })).toBe("/leads");
+    expect(parseCrmSearchParams({ view: "nope" }).view).toBe("leads");
+  });
+});
+
 describe("crmLeadsHref", () => {
   it("leaves defaults out", () => {
     expect(crmLeadsHref({ engagement: "any", sort: "recent", page: 1 })).toBe("/leads");
   });
 
   it("round-trips through parseCrmSearchParams", () => {
-    const params = parseCrmSearchParams({ q: "jane", engagement: "clicked", campaign: CAMPAIGN, step: STEP, sort: "activity", page: "2" });
+    const params = parseCrmSearchParams({
+      q: "jane",
+      engagement: "clicked",
+      campaign: CAMPAIGN,
+      step: STEP,
+      opens: "4",
+      clicks: "1",
+      clicksOp: "eq",
+      sort: "activity",
+      page: "2",
+    });
     const href = crmLeadsHref(params);
     expect(parseCrmSearchParams(Object.fromEntries(new URL(href, "https://app.test").searchParams))).toEqual(params);
   });

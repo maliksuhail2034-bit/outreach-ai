@@ -12,9 +12,9 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="fixed inset-y-0 z-40 hidden w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex">
-      <div className="flex h-16 items-center border-b border-sidebar-border px-6">
-        <PolimatiqLogo width={120} />
+    <aside className="fixed inset-y-0 z-40 hidden w-64 flex-col border-r border-nav-border bg-nav text-nav-foreground lg:flex">
+      <div className="flex h-16 items-center border-b border-nav-border px-6">
+        <PolimatiqLogo width={120} onDark />
       </div>
       <nav className="flex flex-1 flex-col gap-1.5 px-3 py-4">
         {navItems.map((item) => {
@@ -28,14 +28,14 @@ export function Sidebar() {
               className={cn(
                 "group relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-150",
                 isActive
-                  ? "text-primary"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  ? "text-primary-foreground"
+                  : "text-nav-muted-foreground hover:bg-nav-accent hover:text-nav-accent-foreground",
               )}
             >
               {isActive && (
                 <motion.span
                   layoutId="sidebar-active-pill"
-                  className="absolute inset-0 rounded-md bg-primary/10 shadow-sm"
+                  className="absolute inset-0 rounded-md bg-primary shadow-md shadow-primary/30"
                   transition={{ type: "spring", stiffness: 500, damping: 35 }}
                 />
               )}

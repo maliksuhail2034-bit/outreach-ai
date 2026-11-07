@@ -7,7 +7,7 @@ const FRAGMENTS = ["Leads", "Mailboxes", "Campaigns", "Follow-ups", "Replies", "
 
 export function ProblemSection() {
   return (
-    <section className="border-b border-border bg-sidebar/40 py-20 sm:py-28">
+    <section className="border-b border-border bg-card py-20 sm:py-28">
       <Container>
         <FadeIn>
           <div className="mx-auto max-w-2xl text-center">

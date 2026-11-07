@@ -21,6 +21,9 @@ export function MergeTagPicker({ onInsert, disabled }: { onInsert: (tag: string)
           size="sm"
           className="h-7 px-2 text-xs"
           disabled={disabled}
+          // Keeps focus (and the cursor) in the editor while clicking, as a
+          // formatting toolbar does, so typing straight on continues the text.
+          onMouseDown={(event) => event.preventDefault()}
           onClick={() => onInsert(option.tag)}
         >
           {option.label}

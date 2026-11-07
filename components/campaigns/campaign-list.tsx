@@ -150,7 +150,8 @@ export function CampaignList({
         )}
       </CardContent>
 
-      {campaigns.length > 0 && (
+      {/* Pagination renders nothing for a single page, so neither does its band. */}
+      {totalCount > pageSize && (
         <CardContent className="border-t border-border pt-4">
           <Pagination
             page={page}

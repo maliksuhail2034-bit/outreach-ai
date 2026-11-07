@@ -6,10 +6,20 @@ import type { Tables } from "@/types/database.types";
 // parser (mailparser) — so these tests exercise only the field-extraction
 // logic in imap.ts itself, same reasoning as the rest of this repo's worker
 // tests mocking "@/lib/db" rather than hitting a real database.
-const { imapFlowMock, simpleParserMock, decryptSmtpPasswordMock } = vi.hoisted(() => ({
+const { imapFlowMock, simpleParserMock, decryptSmtpPasswordMock, lookupMock } = vi.hoisted(() => ({
   imapFlowMock: vi.fn(),
   simpleParserMock: vi.fn(),
   decryptSmtpPasswordMock: vi.fn(),
+  lookupMock: vi.fn(),
+}));
+
+// The real mail-host guard (lib/email/mail-host-guard.ts) still runs, but its
+// DNS lookup is answered here with a public address — same as
+// mail-host-guard.test.ts. Unmocked, every test did a real lookup of
+// imap.example.com, which can take longer than the test timeout (11s to
+// ENOTFOUND on a dev machine) and failed the whole file.
+vi.mock("dns/promises", () => ({
+  lookup: lookupMock,
 }));
 
 vi.mock("imapflow", () => ({
@@ -75,6 +85,22 @@ function makeImapClient(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   decryptSmtpPasswordMock.mockReturnValue("plaintext-password");
+  lookupMock.mockResolvedValue([{ address: "203.0.114.10", family: 4 }]);
+});
+
+describe("ImapReplyChecker — mail host guard", () => {
+  it("checks the IMAP host through the guard without real DNS before connecting", async () => {
+    const client = makeImapClient();
+    imapFlowMock.mockImplementation(function () {
+      return client;
+    });
+
+    // Already synced up to the newest UID, so nothing is fetched or parsed.
+    await new ImapReplyChecker(makeMailbox({ imap_last_uid: 2 })).fetchNewMessages();
+
+    expect(lookupMock).toHaveBeenCalledWith("imap.example.com", expect.objectContaining({ all: true }));
+    expect(client.connect).toHaveBeenCalled();
+  });
 });
 
 describe("ImapReplyChecker.fetchNewMessages", () => {

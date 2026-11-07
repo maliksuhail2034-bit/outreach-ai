@@ -1,6 +1,6 @@
 import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types";
 import type { Client } from "./shared";
-import { countOrThrow, unwrap } from "./shared";
+import { chunkValues, countOrThrow, selectAllPages, unwrap } from "./shared";
 
 // No userId parameter: ownership is derived from campaign_id via RLS (and
 // the DB-level ownership-consistency trigger), not stored on this table.
@@ -19,6 +19,14 @@ export async function listCampaignLeads(supabase: Client, campaignId: string, op
   const { data, error } = await query;
   if (error) throw error;
   return data;
+}
+
+// How many leads a campaign has enrolled — a head count, for callers that
+// only need the number (enrollLeadAction's pool rotation index), not rows.
+export async function countCampaignLeads(supabase: Client, campaignId: string) {
+  return countOrThrow(
+    await supabase.from("campaign_leads").select("*", { count: "exact", head: true }).eq("campaign_id", campaignId),
+  );
 }
 
 // The lead-scoped counterpart to listCampaignLeads above — every campaign a
@@ -189,20 +197,38 @@ export async function addLeadsToCampaign(
   leadIds: string[],
   resolveMailboxId: (enrollmentIndex: number) => string | null,
 ) {
-  const { data: existing, error: existingError } = await supabase
-    .from("campaign_leads")
-    .select("lead_id")
-    .eq("campaign_id", campaignId);
-  if (existingError) throw existingError;
+  // A lead id can arrive twice — the caller's paged read can return a row
+  // twice when newer leads are inserted between pages — and inserting both
+  // copies fails the whole insert on campaign_leads_campaign_lead_key.
+  const requestedIds = [...new Set(leadIds)];
+
+  // Every enrolled lead_id, paged: one request stops at PostgREST's max_rows,
+  // and a lead missed here would be re-inserted, failing the whole insert on
+  // campaign_leads_campaign_lead_key.
+  const existing = await selectAllPages((from, to) =>
+    supabase
+      .from("campaign_leads")
+      .select("id, lead_id, status, enrolled_at")
+      .eq("campaign_id", campaignId)
+      .order("id")
+      .range(from, to),
+  );
+
+  // Requested leads that are already enrolled but were never scheduled
+  // ('pending'): a previous enrollment inserted them and then failed before
+  // scheduling. Returned so the caller can schedule them now — otherwise a
+  // retry skips them as "already enrolled" and they are never sent.
+  const requested = new Set(requestedIds);
+  const unscheduled = existing.filter((row) => row.status === "pending" && requested.has(row.lead_id));
 
   const alreadyEnrolled = new Set(existing.map((row) => row.lead_id));
   const startIndex = existing.length;
-  const toInsert = leadIds
+  const toInsert = requestedIds
     .filter((leadId) => !alreadyEnrolled.has(leadId))
     .map((leadId, index) => ({ campaign_id: campaignId, lead_id: leadId, mailbox_id: resolveMailboxId(startIndex + index) }));
 
   if (toInsert.length === 0) {
-    return { inserted: 0, skipped: leadIds.length, rows: [] as Tables<"campaign_leads">[] };
+    return { inserted: 0, skipped: requestedIds.length, rows: [] as Tables<"campaign_leads">[], unscheduled };
   }
 
   // .select("*") on the same insert (no extra query) so callers can
@@ -211,7 +237,7 @@ export async function addLeadsToCampaign(
   const { data, error } = await supabase.from("campaign_leads").insert(toInsert).select("*");
   if (error) throw error;
 
-  return { inserted: toInsert.length, skipped: leadIds.length - toInsert.length, rows: data ?? [] };
+  return { inserted: toInsert.length, skipped: requestedIds.length - toInsert.length, rows: data ?? [], unscheduled };
 }
 
 // Reply-tracking helper — campaign_leads has a unique(campaign_id, lead_id)
@@ -300,29 +326,55 @@ export async function consumeSendNow(
 // listCampaignLeads with each row's lead timezone (leads.timezone) read in
 // the same query, for the paths that schedule many enrolled leads at once
 // (launch, sending-window edits) — see resolveLeadSendingWindow in
-// lib/email/scheduling.ts.
+// lib/email/scheduling.ts. Paged: a single request stops at PostgREST's
+// max_rows, so launching a campaign with more than 1,000 enrolled leads
+// scheduled only 1,000 of them and left the rest 'pending' for good.
 export async function listCampaignLeadsWithTimezones(
   supabase: Client,
   campaignId: string,
   options?: { status?: string },
 ): Promise<(Tables<"campaign_leads"> & { leadTimezone: string | null })[]> {
-  let query = supabase
-    .from("campaign_leads")
-    .select("*, lead:leads(timezone)")
-    .eq("campaign_id", campaignId)
-    .order("created_at", { ascending: false });
+  const rows = await selectAllPages((from, to) => {
+    let query = supabase
+      .from("campaign_leads")
+      .select("*, lead:leads(timezone)")
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
 
-  if (options?.status) {
-    query = query.eq("status", options.status);
-  }
+    if (options?.status) {
+      query = query.eq("status", options.status);
+    }
+    return query;
+  });
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return data.map(({ lead, ...campaignLead }) => ({ ...campaignLead, leadTimezone: lead?.timezone ?? null }));
+  return rows.map(({ lead, ...campaignLead }) => ({ ...campaignLead, leadTimezone: lead?.timezone ?? null }));
 }
 
 // Upper bound on ids per update, keeping the PostgREST request URL small.
 const DEFER_ID_CHUNK = 200;
+
+// The same write applied to many enrollments of one campaign, one UPDATE per
+// DEFER_ID_CHUNK ids — the bulk counterpart of updateCampaignLead for
+// enrollment/launch scheduling, where thousands of leads share one schedule.
+// `onlyStatus` makes the write conditional on the row still having that
+// status, so scheduling a 'pending' enrollment can never overwrite one that
+// a concurrent request already scheduled (or the worker already sent).
+export async function updateCampaignLeadsByIds(
+  supabase: Client,
+  campaignId: string,
+  ids: string[],
+  values: TablesUpdate<"campaign_leads">,
+  options?: { onlyStatus?: string },
+) {
+  for (const idChunk of chunkValues(ids, DEFER_ID_CHUNK)) {
+    let query = supabase.from("campaign_leads").update(values).eq("campaign_id", campaignId).in("id", idChunk);
+    if (options?.onlyStatus) query = query.eq("status", options.onlyStatus);
+    const { error } = await query;
+    if (error) throw error;
+  }
+}
 
 // When the send worker finds a due lead outside its sending window, every
 // other due lead of that campaign that is sent in the same window — the

@@ -2,7 +2,7 @@ import type { Tables, TablesInsert, TablesUpdate } from "@/types/database.types"
 import type { LeadSegmentRule, LeadVerificationStatus } from "@/lib/validations/lead-segments";
 import { applySegmentRules, type LeadsQuery } from "./lead-segments";
 import type { Client } from "./shared";
-import { countOrThrow, unwrap } from "./shared";
+import { chunkValues, countOrThrow, EMAIL_LOOKUP_CHUNK, selectAllPages, unwrap } from "./shared";
 
 const DEFAULT_LIST_LIMIT = 100;
 
@@ -25,6 +25,39 @@ export async function listLeads(
   const { data, error } = await query;
   if (error) throw error;
   return data;
+}
+
+// listLeads for callers that need every row up to `limit` (bulk list
+// enrollment): listLeads' single request is capped at PostgREST's max_rows,
+// so a 3,000-lead list would enroll only its newest 1,000 with no error.
+// Pages with an id tiebreaker — leads imported in one batch share created_at.
+export async function listAllLeads(supabase: Client, userId: string, options: { listId?: string; limit: number }) {
+  return selectAllPages((from, to) => {
+    let query = supabase
+      .from("leads")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+    if (options.listId) query = query.eq("list_id", options.listId);
+    return query;
+  }, options.limit);
+}
+
+// Which of `emails` (already lowercased — every write path stores lead
+// emails lowercased) the user already has as leads. Looks up only the given
+// emails, in chunks, instead of reading the user's whole lead table — that
+// read was capped at max_rows, so past 1,000 leads the CSV import's dedup
+// missed existing emails.
+export async function listExistingLeadEmails(supabase: Client, userId: string, emails: string[]) {
+  const existing = new Set<string>();
+  for (const emailChunk of chunkValues([...new Set(emails)], EMAIL_LOOKUP_CHUNK)) {
+    const { data, error } = await supabase.from("leads").select("email").eq("user_id", userId).in("email", emailChunk);
+    if (error) throw error;
+    for (const row of data ?? []) existing.add(row.email.toLowerCase());
+  }
+  return existing;
 }
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -111,48 +144,35 @@ export async function listLeadsPage(
   return { leads: result.data ?? [], page, pageSize, totalCount: result.count ?? 0 };
 }
 
-// Scalability Track, Phase B (item 7, build only — not yet wired into any
-// page). Replaces the campaign detail page's current approach (fetch up to
-// 10,000 of the account's leads, fetch every campaign_leads row for the
-// campaign, diff the two in JS) with the "not yet enrolled" filter pushed
-// into SQL: enrolled lead ids for this one campaign are a small, targeted,
-// already-indexed (campaign_leads.campaign_id) read, not an account-wide
-// fetch — only that bounded set is pulled into JS, used to build a
-// `.not("id", "in", ...)` filter for the leads query itself.
+// The caller's leads not yet enrolled in this campaign, newest first, for
+// the campaign page's enroll dialog. The "not enrolled" filter is an
+// anti-join done by PostgREST: embed this campaign's campaign_leads row
+// (filtered to campaign_id; `()` selects no columns, so nothing extra is
+// returned) and keep leads where that embed is empty. This
+// used to read the campaign's enrolled lead ids and send them all back in a
+// `not.in.(...)` filter, which put every id in the request URL: past ~200
+// enrolled leads the gateway answered "URI too long" and the whole campaign
+// page failed. The request size no longer depends on the enrollment count.
+// Paged like listAllLeads, so `limit` is honoured past PostgREST's max_rows.
 export async function listLeadsAvailableForCampaign(
   supabase: Client,
   userId: string,
   campaignId: string,
   options?: { limit?: number },
-) {
-  const { data: enrolled, error: enrolledError } = await supabase
-    .from("campaign_leads")
-    .select("lead_id")
-    .eq("campaign_id", campaignId);
-  if (enrolledError) throw enrolledError;
-
-  const enrolledIds = (enrolled ?? []).map((row) => row.lead_id);
-
-  let query = supabase
-    .from("leads")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(options?.limit ?? DEFAULT_LIST_LIMIT);
-
-  // PostgREST's not(...) expects the raw filter-value syntax for the
-  // operator it wraps — for "in" that's a parenthesized, comma-separated
-  // list (see postgrest-js's own not() doc comment: `.not('id', 'in',
-  // '(5,6,7)')`), not a JS array. Safe to interpolate directly: every id
-  // here came from campaign_leads.lead_id, a DB-generated uuid column, never
-  // raw user input.
-  if (enrolledIds.length > 0) {
-    query = query.not("id", "in", `(${enrolledIds.join(",")})`);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return data;
+): Promise<Tables<"leads">[]> {
+  return selectAllPages(
+    (from, to) =>
+      supabase
+        .from("leads")
+        .select("*, enrolled:campaign_leads!left()")
+        .eq("user_id", userId)
+        .eq("enrolled.campaign_id", campaignId)
+        .is("enrolled", null)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+    options?.limit ?? DEFAULT_LIST_LIMIT,
+  );
 }
 
 export async function countLeads(supabase: Client, userId: string) {

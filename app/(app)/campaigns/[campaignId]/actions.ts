@@ -4,12 +4,13 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Client } from "@/lib/db/shared";
-import type { Tables } from "@/types/database.types";
+import type { Tables, TablesUpdate } from "@/types/database.types";
 import {
   addCampaignMailbox,
   addLeadsToCampaign,
   addLeadToCampaign,
   cancelActiveCampaignLeads,
+  countCampaignLeads,
   createAttachment,
   createSequenceStep,
   deleteAttachments,
@@ -18,6 +19,7 @@ import {
   getAttachment,
   getCampaign,
   getCampaignLead,
+  getCampaignLeadByCampaignAndLead,
   getLead,
   getLeadSegment,
   getOrCreateDefaultSequence,
@@ -27,11 +29,10 @@ import {
   getSuppressedEmails,
   getUserOrganization,
   linkAttachmentsToStep,
-  listCampaignLeads,
   listCampaignLeadsWithTimezones,
   listCampaignMailboxes,
+  listAllLeads,
   listDomains,
-  listLeads,
   listLeadsMatchingRules,
   listMailboxes,
   listOwnedAttachmentsByIds,
@@ -44,6 +45,7 @@ import {
   swapSequenceStepOrder,
   updateCampaign,
   updateCampaignLead,
+  updateCampaignLeadsByIds,
   updateSequenceStep,
 } from "@/lib/db";
 import { computeNextSchedule, resolveLeadSendingWindow } from "@/lib/email/scheduling";
@@ -104,7 +106,7 @@ async function runUserFacing<T>(action: () => Promise<T>): Promise<ActionResult<
 
 // Computes and persists the first scheduled send for a freshly-enrolled
 // campaign_lead — reuses computeNextSchedule (lib/email/scheduling.ts) for
-// the actual math and updateCampaignLead (lib/db/campaign-leads.ts) for the
+// the actual math and applyCampaignLeadWrites (below) for the guarded
 // write, so this is orchestration only, not a second scheduling algorithm.
 // Only acts when the campaign is already active and has at least one
 // sequence step; otherwise the lead stays exactly as inserted ('pending',
@@ -119,7 +121,22 @@ async function scheduleOnEnrollment(
   steps: Tables<"sequence_steps">[],
   leadTimezone: string | null,
 ) {
-  if (campaign.status !== "active" || steps.length === 0) return;
+  const values = enrollmentSchedule(campaign, campaignLead, steps, leadTimezone);
+  // Same 'pending'-only write as bulk enrollment: a retry that read the row
+  // as 'pending' must not reset it if a concurrent request already
+  // scheduled (and the worker possibly sent) it in the meantime.
+  if (values) await applyCampaignLeadWrites(supabase, campaign.id, [{ id: campaignLead.id, values }]);
+}
+
+// The write scheduleOnEnrollment makes, or null when nothing is scheduled
+// yet (campaign not active, or no steps).
+function enrollmentSchedule(
+  campaign: Tables<"campaigns">,
+  campaignLead: Pick<Tables<"campaign_leads">, "enrolled_at">,
+  steps: Tables<"sequence_steps">[],
+  leadTimezone: string | null,
+): TablesUpdate<"campaign_leads"> | null {
+  if (campaign.status !== "active" || steps.length === 0) return null;
 
   const schedule = computeNextSchedule({
     steps,
@@ -128,11 +145,37 @@ async function scheduleOnEnrollment(
     sendingWindow: resolveLeadSendingWindow(campaign.sending_window, leadTimezone),
   });
 
-  await updateCampaignLead(supabase, campaignLead.id, {
+  return {
     current_step_id: schedule.nextStepId,
     next_send_at: schedule.nextSendAt ? schedule.nextSendAt.toISOString() : null,
     status: schedule.completed ? "completed" : "active",
-  });
+  };
+}
+
+// Bulk enrollment and launch write many enrollments at once. Writing them one
+// UPDATE at a time meant up to 10,000 sequential round trips inside a single
+// Server Function. Identical writes are grouped instead — leads inserted
+// together share enrolled_at, so they differ only by effective timezone (and,
+// at launch, by backfilled mailbox) — and each group is one chunked UPDATE.
+// Every caller writes only 'pending' enrollments, and the write requires the
+// row to still be 'pending': a retry or a concurrent duplicate request can't
+// re-schedule an enrollment that was already scheduled or sent.
+async function applyCampaignLeadWrites(
+  supabase: Client,
+  campaignId: string,
+  writes: { id: string; values: TablesUpdate<"campaign_leads"> }[],
+) {
+  const groups = new Map<string, { values: TablesUpdate<"campaign_leads">; ids: string[] }>();
+  for (const { id, values } of writes) {
+    if (Object.keys(values).length === 0) continue;
+    const key = JSON.stringify(values);
+    const group = groups.get(key) ?? { values, ids: [] };
+    group.ids.push(id);
+    groups.set(key, group);
+  }
+  for (const { values, ids } of groups.values()) {
+    await updateCampaignLeadsByIds(supabase, campaignId, ids, values, { onlyStatus: "pending" });
+  }
 }
 
 // Loads the campaign's one implicit sequence and its steps, for scheduling
@@ -224,6 +267,7 @@ export async function launchCampaignAction(campaignId: string) {
     // fresh enrollment). Only increments for leads that actually get
     // backfilled below.
     let poolBackfillIndex = 0;
+    const writes: { id: string; values: TablesUpdate<"campaign_leads"> }[] = [];
 
     for (const lead of leads) {
       if (lead.status !== "pending") continue;
@@ -234,18 +278,21 @@ export async function launchCampaignAction(campaignId: string) {
       // enrollLeadListAction only ever resolve the default at the moment of
       // enrollment, they never retroactively backfill it. claim_due_sends()
       // requires mailbox_id is not null, so without this a "resolvable" lead
-      // would silently never be picked up by the send worker.
-      let scheduledLead: Tables<"campaign_leads"> = lead;
+      // would silently never be picked up by the send worker. The backfill
+      // and the first-send schedule go out as one write per lead.
+      const values: TablesUpdate<"campaign_leads"> = {};
       if (!lead.mailbox_id) {
-        const resolvedMailboxId = resolvePoolMailboxId(campaignMailboxes, poolBackfillIndex) ?? resolveLeadMailboxId(lead, campaign);
+        values.mailbox_id = resolvePoolMailboxId(campaignMailboxes, poolBackfillIndex) ?? resolveLeadMailboxId(lead, campaign);
         poolBackfillIndex += 1;
-        scheduledLead = await updateCampaignLead(supabase, lead.id, {
-          mailbox_id: resolvedMailboxId,
-        });
       }
 
-      await scheduleOnEnrollment(supabase, activatedCampaign, scheduledLead, steps, lead.leadTimezone);
+      writes.push({
+        id: lead.id,
+        values: { ...values, ...enrollmentSchedule(activatedCampaign, lead, steps, lead.leadTimezone) },
+      });
     }
+
+    await applyCampaignLeadWrites(supabase, campaignId, writes);
 
     revalidatePath("/campaigns");
     revalidatePath(`/campaigns/${campaignId}`);
@@ -351,32 +398,46 @@ export async function enrollLeadAction(
       }
     }
 
-    // Batch 8: explicit override wins outright; otherwise round-robin across
-    // the configured pool (using this campaign's current enrolled-lead count
-    // as the rotation index — see resolvePoolMailboxId), falling back to
-    // campaign.default_mailbox_id when there's no pool. The pool is only
-    // fetched/counted when there's no explicit override, so an existing
-    // campaign with no pool configured pays no extra query cost.
-    let effectiveMailboxId = mailboxId ? mailboxId : null;
-    if (!effectiveMailboxId) {
-      const pool = await listCampaignMailboxes(supabase, campaignId);
-      if (pool.length > 0) {
-        const enrollmentIndex = (await listCampaignLeads(supabase, campaignId)).length;
-        effectiveMailboxId = resolvePoolMailboxId(pool, enrollmentIndex);
-      }
-      effectiveMailboxId ??= campaign.default_mailbox_id;
-    }
-
-    const campaignLead = await addLeadToCampaign(supabase, {
-      campaign_id: campaignId,
-      lead_id: leadId,
-      mailbox_id: effectiveMailboxId,
-    });
+    // Retrying an enrollment whose scheduling failed: the lead is already
+    // enrolled but still 'pending', so it is scheduled now instead of
+    // inserted again (which the unique key would refuse, leaving it unsent).
+    const existing = await getCampaignLeadByCampaignAndLead(supabase, campaignId, leadId);
+    const campaignLead =
+      existing?.status === "pending" ? existing : await insertCampaignLead(supabase, campaign, leadId, mailboxId);
 
     const steps = await loadSequenceSteps(supabase, campaignId);
     await scheduleOnEnrollment(supabase, campaign, campaignLead, steps, lead.timezone);
 
     revalidatePath(`/campaigns/${campaignId}`);
+  });
+}
+
+// Batch 8: explicit override wins outright; otherwise round-robin across
+// the configured pool (using this campaign's current enrolled-lead count
+// as the rotation index — see resolvePoolMailboxId), falling back to
+// campaign.default_mailbox_id when there's no pool. The pool is only
+// fetched/counted when there's no explicit override, so an existing
+// campaign with no pool configured pays no extra query cost.
+async function insertCampaignLead(
+  supabase: Client,
+  campaign: Tables<"campaigns">,
+  leadId: string,
+  mailboxId: string | undefined,
+) {
+  let effectiveMailboxId = mailboxId ? mailboxId : null;
+  if (!effectiveMailboxId) {
+    const pool = await listCampaignMailboxes(supabase, campaign.id);
+    if (pool.length > 0) {
+      const enrollmentIndex = await countCampaignLeads(supabase, campaign.id);
+      effectiveMailboxId = resolvePoolMailboxId(pool, enrollmentIndex);
+    }
+    effectiveMailboxId ??= campaign.default_mailbox_id;
+  }
+
+  return addLeadToCampaign(supabase, {
+    campaign_id: campaign.id,
+    lead_id: leadId,
+    mailbox_id: effectiveMailboxId,
   });
 }
 
@@ -396,6 +457,10 @@ async function enrollLeadRows(
   mailboxId: string | undefined,
   confirmSuppressed: boolean,
 ) {
+  // One row per lead: the paged read behind leadRows can return a lead twice
+  // when newer leads are inserted between pages.
+  leadRows = [...new Map(leadRows.map((lead) => [lead.id, lead])).values()];
+
   // Batch 8: explicit override wins outright for every lead in this batch;
   // otherwise round-robin across the configured pool, falling back to
   // campaign.default_mailbox_id per lead when there's no pool — see
@@ -423,9 +488,16 @@ async function enrollLeadRows(
 
   const steps = await loadSequenceSteps(supabase, campaign.id);
   const timezoneByLeadId = new Map(leadRows.map((lead) => [lead.id, lead.timezone]));
-  for (const campaignLead of result.rows) {
-    await scheduleOnEnrollment(supabase, campaign, campaignLead, steps, timezoneByLeadId.get(campaignLead.lead_id) ?? null);
-  }
+  // Newly inserted rows, plus any of these leads a previous attempt enrolled
+  // but never scheduled (see addLeadsToCampaign's `unscheduled`).
+  await applyCampaignLeadWrites(
+    supabase,
+    campaign.id,
+    [...result.rows, ...result.unscheduled].map((campaignLead) => ({
+      id: campaignLead.id,
+      values: enrollmentSchedule(campaign, campaignLead, steps, timezoneByLeadId.get(campaignLead.lead_id) ?? null) ?? {},
+    })),
+  );
 
   revalidatePath(`/campaigns/${campaign.id}`);
   return { inserted: result.inserted, skipped: result.skipped };
@@ -445,7 +517,7 @@ export async function enrollLeadListAction(
     const organization = await getUserOrganization(supabase, user);
     await checkRateLimit("campaign:enroll", organization.id);
 
-    const leads = await listLeads(supabase, user.id, { listId, limit: BULK_ENROLLMENT_LIMIT });
+    const leads = await listAllLeads(supabase, user.id, { listId, limit: BULK_ENROLLMENT_LIMIT });
     return enrollLeadRows(supabase, user.id, campaign, leads ?? [], "list", mailboxId, confirmSuppressed);
   });
 }

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/console/page-header";
 
 const PAGE_SIZE = 50;
 const FILTERS = [
@@ -76,15 +77,10 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   }
 
   return (
-    <div className="max-w-6xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Customers</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {customers.length.toLocaleString()} workspaces
+    <div className="space-y-6">
+      <PageHeader title="Customers" description={<>{customers.length.toLocaleString()} workspaces
           {canSeeBilling && ` · ${payingCount.toLocaleString()} paying`}. To lock an account or end its sessions, use
-          Security center → Users.
-        </p>
-      </div>
+          Security center → Users.</>} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         {canSeeBilling ? (
@@ -106,12 +102,12 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         ) : (
           <span />
         )}
-        <form className="flex gap-2" role="search" action="/console/customers">
+        <form className="flex w-full gap-2 sm:w-auto" role="search" action="/console/customers">
           {filter !== "all" && <input type="hidden" name="filter" value={filter} />}
           <label htmlFor="customer-search" className="sr-only">
             Search by workspace or owner email
           </label>
-          <Input id="customer-search" name="q" defaultValue={query} placeholder="Workspace or owner email" className="w-64" />
+          <Input id="customer-search" name="q" defaultValue={query} placeholder="Workspace or owner email" className="w-full sm:w-64" />
           <Button type="submit" variant="outline">
             Search
           </Button>
@@ -123,7 +119,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
           <CardTitle>Customer list</CardTitle>
           <CardDescription>Newest first.</CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto pt-6">
+        <CardContent className="relative overflow-x-auto pt-6">
           {rows.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">No customers match.</p>
           ) : (

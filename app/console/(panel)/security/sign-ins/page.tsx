@@ -110,7 +110,7 @@ export default async function SignInsPage() {
             The latest {RECENT_LIMIT}. Failed attempts are stored only as a hash of the address typed, never the address itself. Kept 90 days.
           </CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="relative overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">

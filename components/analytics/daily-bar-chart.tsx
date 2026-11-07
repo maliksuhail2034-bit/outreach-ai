@@ -40,7 +40,7 @@ export function DailyBarChart({
       ) : (
         <div className="mt-6 flex h-32 items-end gap-1">
           {data.map((point) => (
-            <div key={point.date} className="group relative flex flex-1 flex-col items-center justify-end">
+            <div key={point.date} className="group relative flex h-full flex-1 flex-col items-center justify-end" title={`${formatDay(point.date)}: ${point.value}`}>
               <span className="pointer-events-none absolute -top-6 hidden rounded bg-popover px-1.5 py-0.5 text-xs text-popover-foreground shadow-sm group-hover:block">
                 {point.value}
               </span>

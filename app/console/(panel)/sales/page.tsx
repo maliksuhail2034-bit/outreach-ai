@@ -1,10 +1,13 @@
 import Link from "next/link";
+import { ArchiveIcon, BanIcon, DatabaseIcon, UploadIcon } from "lucide-react";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { countVerifiedLeadsByStatus, listVerifiedLeads, type VerifiedLeadStatus } from "@/lib/db";
 import { requireStaffPage } from "@/lib/staff/auth";
 import { hasStaffPermission } from "@/lib/staff/permissions";
 import { LeadPoolRowActions } from "@/components/console/lead-pool-actions";
+import { PageHeader } from "@/components/console/page-header";
+import { StatCard, StatGrid } from "@/components/console/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,31 +50,26 @@ export default async function LeadPoolPage({ searchParams }: { searchParams: Pro
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Lead pool</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Verified leads available for monthly delivery. Each goes to at most {MAX_SHARES} customers, never twice to the
-            same one, with at least 30 days between deliveries.
-          </p>
-        </div>
-        {canManage && (
-          <Button asChild>
-            <Link href="/console/sales/upload">Upload leads</Link>
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Lead pool"
+        description={`Verified leads available for monthly delivery. Each goes to at most ${MAX_SHARES} customers, never twice to the same one, with at least 30 days between deliveries.`}
+        actions={
+          canManage ? (
+            <Button asChild>
+              <Link href="/console/sales/upload">
+                <UploadIcon aria-hidden="true" />
+                Upload leads
+              </Link>
+            </Button>
+          ) : undefined
+        }
+      />
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        {(["active", "retired", "suppressed"] as const).map((key) => (
-          <Card key={key}>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">{key === "suppressed" ? "Opted out" : key[0].toUpperCase() + key.slice(1)}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{counts[key].toLocaleString()}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <StatGrid columns={3}>
+        <StatCard label="Active" icon={DatabaseIcon} value={counts.active.toLocaleString()} />
+        <StatCard label="Retired" icon={ArchiveIcon} value={counts.retired.toLocaleString()} />
+        <StatCard label="Opted out" icon={BanIcon} value={counts.suppressed.toLocaleString()} />
+      </StatGrid>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label="Filter by status" className="flex flex-wrap gap-1.5">
@@ -89,15 +87,15 @@ export default async function LeadPoolPage({ searchParams }: { searchParams: Pro
             </Link>
           ))}
         </nav>
-        <form className="flex gap-2" action="/console/sales">
+        <form className="flex w-full gap-2 sm:w-auto" action="/console/sales">
           <input type="hidden" name="status" value={status} />
-          <Input name="q" defaultValue={search} placeholder="Search email, company, surname" aria-label="Search the pool" className="w-64" />
+          <Input name="q" defaultValue={search} placeholder="Search email, company, surname" aria-label="Search the pool" className="w-full sm:w-64" />
           <Button type="submit" variant="outline">Search</Button>
         </form>
       </div>
 
       <Card>
-        <CardContent className="-mx-4 overflow-x-auto px-4 pt-6 sm:mx-0 sm:px-6">
+        <CardContent className="-mx-4 relative overflow-x-auto px-4 pt-6 sm:mx-0 sm:px-6">
           {rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">No leads match.</p>
           ) : (

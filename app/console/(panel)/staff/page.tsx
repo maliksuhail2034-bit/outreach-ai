@@ -5,6 +5,7 @@ import { listAuthUsers } from "@/lib/staff/directory";
 import { manageableRoles } from "@/lib/staff/permissions";
 import { isStaffRole } from "@/lib/staff/permissions";
 import { StaffManager, type StaffRow } from "@/components/console/staff-manager";
+import { PageHeader } from "@/components/console/page-header";
 
 export default async function StaffPage() {
   const session = await requireStaffPage("staff:view");
@@ -25,13 +26,8 @@ export default async function StaffPage() {
     }));
 
   return (
-    <div className="max-w-5xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Staff accounts</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Owners can manage every role. Security can manage security and sales accounts. All staff must use 2-step login.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="Staff accounts" description={<>Owners can manage every role. Security can manage security and sales accounts. All staff must use 2-step login.</>} />
       <StaffManager rows={rows} manageableRoles={[...manageableRoles(session.role)]} />
     </div>
   );

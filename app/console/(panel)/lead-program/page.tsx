@@ -7,7 +7,11 @@ import { hasStaffPermission } from "@/lib/staff/permissions";
 import { listAuthUsers } from "@/lib/staff/directory";
 import { buildCustomerRows, countCustomersByPlan, isPayingCustomer, loadCustomerInputs } from "@/lib/staff/customers";
 import { periodFor } from "@/lib/verified-leads/period";
+import { DatabaseIcon, SparklesIcon, TargetIcon, TriangleAlertIcon } from "lucide-react";
+
 import { PlanQuotaEditor, RunAllocationButton } from "@/components/console/lead-program-controls";
+import { PageHeader } from "@/components/console/page-header";
+import { StatCard, StatGrid } from "@/components/console/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -48,36 +52,28 @@ export default async function LeadProgramPage() {
   ).length;
 
   return (
-    <div className="max-w-6xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Lead program</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Verified leads each paying customer receives per calendar month (UTC), with no rollover. Allocation runs daily at
-            03:20 UTC and tops customers up after an upgrade. Only an owner can change quotas.
-          </p>
-        </div>
-        {canRun && <RunAllocationButton />}
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Lead program"
+        description="Verified leads each paying customer receives per calendar month (UTC), with no rollover. Allocation runs daily at 03:20 UTC and tops customers up after an upgrade. Only an owner can change quotas."
+        actions={canRun ? <RunAllocationButton /> : undefined}
+      />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: `Delivered in ${period}`, value: `${delivered.toLocaleString()} / ${quotaTotal.toLocaleString()}` },
-          { label: "Monthly need at current quotas", value: monthlyNeed.toLocaleString() },
-          { label: "Active leads in pool", value: poolCounts.active.toLocaleString() },
-          { label: "Customers short this month", value: shortfalls.length.toLocaleString() },
-        ].map((stat) => (
-          <Card key={stat.label}>
-            <CardHeader className="pb-2">
-              <CardDescription>{stat.label}</CardDescription>
-              <CardTitle className="text-2xl tabular-nums">{stat.value}</CardTitle>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
+      <StatGrid>
+        <StatCard label={`Delivered in ${period}`} icon={SparklesIcon} value={`${delivered.toLocaleString()} / ${quotaTotal.toLocaleString()}`} />
+        <StatCard label="Monthly need" icon={TargetIcon} value={monthlyNeed.toLocaleString()} hint="at current quotas" />
+        <StatCard label="Active leads in pool" icon={DatabaseIcon} value={poolCounts.active.toLocaleString()} />
+        <StatCard
+          label="Customers short"
+          icon={TriangleAlertIcon}
+          value={shortfalls.length.toLocaleString()}
+          tone={shortfalls.length > 0 ? "warning" : "default"}
+          hint="this month"
+        />
+      </StatGrid>
 
       {poolCounts.active < monthlyNeed && (
-        <p role="status" className="rounded-md border border-border bg-muted px-4 py-3 text-sm">
+        <p role="status" className="rounded-lg border border-warning/50 bg-warning/10 px-4 py-3 text-sm">
           <strong className="font-medium">Pool is smaller than one month&apos;s need.</strong> Each lead can go to up to 3
           customers, so this may still be enough — but if shortfalls appear, ask sales to upload more.
         </p>
@@ -90,7 +86,7 @@ export default async function LeadProgramPage() {
             Changes apply from the next allocation run. Lowering a quota never takes back leads already delivered this month.
           </CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="relative overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -132,7 +128,7 @@ export default async function LeadProgramPage() {
             {payingWithoutAllocation > 0 && ` ${payingWithoutAllocation} paying customer(s) haven't been allocated yet this month.`}
           </CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="relative overflow-x-auto">
           {shortfalls.length === 0 ? (
             <p className="text-sm text-muted-foreground">Everyone allocated this month got their full quota.</p>
           ) : (
@@ -168,7 +164,7 @@ export default async function LeadProgramPage() {
           <CardTitle>Recent scheduled runs</CardTitle>
           <CardDescription>The daily cron job. Manual runs appear in the Security center audit log.</CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="relative overflow-x-auto">
           {runs.length === 0 ? (
             <p className="text-sm text-muted-foreground">No scheduled runs recorded yet.</p>
           ) : (

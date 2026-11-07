@@ -38,7 +38,7 @@ export default async function IpBlocksPage() {
           <CardTitle>Blocked addresses</CardTitle>
           <CardDescription>{blocks.length} entries.</CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="relative overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">

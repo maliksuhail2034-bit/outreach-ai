@@ -10,6 +10,7 @@ import { recordMfaEnrolledAction } from "@/app/console/2fa/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { totpQrDataUri } from "@/lib/staff/totp-qr";
 
 const CODE_PATTERN = /^\d{6}$/;
 
@@ -61,7 +62,7 @@ export function MfaSetupForm() {
         setError(enrollError?.message ?? "Couldn't start 2-step setup. Try again.");
         return;
       }
-      setFactor({ id: data.id, qr: data.totp.qr_code, secret: data.totp.secret });
+      setFactor({ id: data.id, qr: totpQrDataUri(data.totp.qr_code), secret: data.totp.secret });
     });
   }
 

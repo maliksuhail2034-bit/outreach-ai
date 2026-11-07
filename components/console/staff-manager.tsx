@@ -124,7 +124,7 @@ export function StaffManager({ rows, manageableRoles }: { rows: StaffRow[]; mana
           <CardTitle>Staff</CardTitle>
           <CardDescription>Everyone with access to this console. Every change here is recorded in the audit log.</CardDescription>
         </CardHeader>
-        <CardContent className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <CardContent className="-mx-4 relative overflow-x-auto px-4 sm:mx-0 sm:px-0">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
               <tr className="border-b border-border text-xs text-muted-foreground">

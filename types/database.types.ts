@@ -1459,6 +1459,48 @@ export type Database = {
         }
         Relationships: []
       }
+      page_views: {
+        Row: {
+          country: string | null
+          created_at: string
+          day: string
+          device: string
+          id: string
+          path: string
+          referrer_host: string | null
+          signed_in: boolean
+          updated_at: string
+          utm_source: string | null
+          visitor_hash: string
+        }
+        Insert: {
+          country?: string | null
+          created_at?: string
+          day?: string
+          device: string
+          id?: string
+          path: string
+          referrer_host?: string | null
+          signed_in?: boolean
+          updated_at?: string
+          utm_source?: string | null
+          visitor_hash: string
+        }
+        Update: {
+          country?: string | null
+          created_at?: string
+          day?: string
+          device?: string
+          id?: string
+          path?: string
+          referrer_host?: string | null
+          signed_in?: boolean
+          updated_at?: string
+          utm_source?: string | null
+          visitor_hash?: string
+        }
+        Relationships: []
+      }
       payment_webhook_events: {
         Row: {
           event_id: string
@@ -2818,6 +2860,10 @@ export type Database = {
           checked: number
           first_broken_seq: number | null
         }[]
+      }
+      traffic_summary: {
+        Args: { p_from: string; p_limit?: number; p_to: string }
+        Returns: Json
       }
     }
     Enums: {

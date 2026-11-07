@@ -10,7 +10,7 @@ export function SecurityTabs() {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="Security center" className="-mx-1 flex gap-1 overflow-x-auto border-b border-border pb-px">
+    <nav aria-label="Security center" className="-mx-1 flex gap-1 relative overflow-x-auto border-b border-border pb-px">
       {SECURITY_TABS.map((tab) => {
         const active = pathname === tab.href;
         return (

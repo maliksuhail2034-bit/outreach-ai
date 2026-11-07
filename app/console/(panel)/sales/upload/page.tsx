@@ -32,7 +32,7 @@ export default async function UploadLeadsPage() {
           <CardTitle>Recent uploads</CardTitle>
           <CardDescription>The last 25 batches.</CardDescription>
         </CardHeader>
-        <CardContent className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <CardContent className="-mx-4 relative overflow-x-auto px-4 sm:mx-0 sm:px-0">
           {batches.length === 0 ? (
             <p className="text-sm text-muted-foreground">No uploads yet.</p>
           ) : (

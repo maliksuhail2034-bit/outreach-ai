@@ -8,6 +8,7 @@ export type StaffPermission =
   | "console:overview"
   | "customers:view"
   | "billing:view"
+  | "traffic:view"
   | "quotas:edit"
   | "allocation:run"
   | "staff:view"
@@ -23,6 +24,7 @@ const OWNER: readonly StaffPermission[] = [
   "console:overview",
   "customers:view",
   "billing:view",
+  "traffic:view",
   "quotas:edit",
   "allocation:run",
   "staff:view",
@@ -35,12 +37,14 @@ const OWNER: readonly StaffPermission[] = [
   "leads:manage",
 ];
 
-// Security sees everything security-related, including every user and the
-// customer list, and can act on accounts and IPs — but cannot change plan
-// quotas, billing, or run allocations.
+// Security sees everything security-related, including every user, the
+// customer list and site traffic (to spot unusual spikes), and can act on
+// accounts and IPs — but cannot change plan quotas, billing, or run
+// allocations.
 const SECURITY: readonly StaffPermission[] = [
   "console:overview",
   "customers:view",
+  "traffic:view",
   "staff:view",
   "staff:manage",
   "security:view",

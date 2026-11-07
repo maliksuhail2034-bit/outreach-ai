@@ -33,7 +33,7 @@ export default async function AuditLogPage() {
             : `Hash chain broken at entry #${chain.firstBrokenSeq}. The log was changed outside the app — investigate immediately.`}
         </p>
 
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">

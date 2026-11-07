@@ -1,9 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { Database } from "@/types/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { trustedClientIp } from "@/lib/rate-limit/get-client-ip";
 import { isRequestIpBlocked } from "@/lib/security/ip-blocklist";
+import { recordPageView } from "@/lib/traffic/record";
 
 // Next.js 16 renamed Middleware to Proxy (same file-convention mechanics,
 // new file name and export name) — see AGENTS.md and CLAUDE.md.
@@ -22,7 +23,7 @@ function hasSupabaseSession(request: NextRequest): boolean {
   return request.cookies.getAll().some(({ name }) => name.startsWith("sb-") && /-auth-token(\.\d+)?$/.test(name));
 }
 
-export async function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest, event: NextFetchEvent) {
   // The security team's IP blocklist (lib/security/ip-blocklist.ts), checked
   // before anything else, signed in or not.
   if (await isRequestIpBlocked(trustedClientIp(request.headers), createAdminClient)) {
@@ -32,12 +33,19 @@ export async function proxy(request: NextRequest) {
     });
   }
 
+  const signedIn = hasSupabaseSession(request);
+
+  // Cookieless page-load analytics for the staff console's Traffic page
+  // (lib/traffic/page-view.ts decides what counts). Written after the
+  // response is sent, so it never delays the page.
+  event.waitUntil(recordPageView(request, signedIn));
+
   // Anonymous visitors (marketing, legal, login/signup pages) have no
   // session to refresh, so skip the round trip to Supabase Auth entirely.
   // That call used to run on every public page view, adding latency and an
   // Auth API request per visitor — the most traffic-sensitive path the app
   // has.
-  if (!hasSupabaseSession(request)) {
+  if (!signedIn) {
     return NextResponse.next({ request });
   }
 

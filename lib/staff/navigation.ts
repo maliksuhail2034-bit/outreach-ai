@@ -4,7 +4,7 @@ import { hasStaffPermission, type StaffPermission } from "./permissions";
 export interface ConsoleNavItem {
   href: string;
   title: string;
-  icon: "overview" | "customers" | "leadProgram" | "staff" | "security" | "pool" | "upload";
+  icon: "overview" | "customers" | "traffic" | "leadProgram" | "staff" | "security" | "pool" | "upload";
   permission: StaffPermission;
   group: "Company" | "Security" | "Sales";
 }
@@ -12,6 +12,7 @@ export interface ConsoleNavItem {
 const ITEMS: ConsoleNavItem[] = [
   { href: "/console", title: "Overview", icon: "overview", permission: "console:overview", group: "Company" },
   { href: "/console/customers", title: "Customers", icon: "customers", permission: "customers:view", group: "Company" },
+  { href: "/console/traffic", title: "Traffic", icon: "traffic", permission: "traffic:view", group: "Company" },
   { href: "/console/lead-program", title: "Lead program", icon: "leadProgram", permission: "quotas:edit", group: "Company" },
   { href: "/console/staff", title: "Staff accounts", icon: "staff", permission: "staff:view", group: "Company" },
   { href: "/console/security", title: "Security center", icon: "security", permission: "security:view", group: "Security" },
